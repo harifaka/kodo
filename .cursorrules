@@ -1,0 +1,78 @@
+# Kodo — Architecture Rules
+
+Kodo is an Architecture Control Center for multi-stack codebases (Spring Boot, C#/.NET, Node.js).
+This file is binding for every human and AI contributor.
+
+## 1. Core IR is the single source of truth
+
+- The canonical contract lives in `packages/core-ir/schema.json` (JSON Schema 2020-12).
+- The same model MUST be implemented identically in three languages:
+  - Python: `services/api-python/app/models/ir.py` (Pydantic v2)
+  - C#: `services/analyzer-csharp/Models/CoreIr.cs` (records)
+  - TypeScript: `apps/web/src/types/core-ir.ts`
+- Any change to `WorkspaceIR`, `ComponentNode`, `ComponentRelation` requires updating the schema **and** all three implementations in the same change.
+- Do not add fields to one implementation only. Do not rename wire fields. Do not invent parallel DTOs that drift from the contract.
+
+## 2. Layer boundaries (no cross-layer leaks)
+
+```
+apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──▶  services/analyzer-csharp
+(UI only)                 (orchestrator, IR owner)             (Roslyn, C# AST only)
+```
+
+- `apps/web` MUST NOT parse source code, infer architecture, or know about Roslyn/Tree-sitter internals.
+  It renders the Core IR and reads file text through `GET /api/v1/file`.
+- `services/api-python` is the only orchestrator. It owns scanning, IR assembly, relation resolution,
+  Mermaid generation, and warning aggregation. It never calls language tooling directly for C#.
+- `services/analyzer-csharp` is a pure, stateless AST service. It knows nothing about the frontend,
+  Mermaid, or orchestration. It never writes to disk.
+- No shared code between services via file imports. Only the JSON contract crosses process boundaries.
+
+## 3. Read-only Phase 1 (hard rule)
+
+Phase 1 is **100% read-only** with respect to user source code.
+
+Forbidden until explicitly scoped in a later phase:
+- Writing, patching, moving, or deleting user source files.
+- AST rewriting / code generation / `dotnet format` style mutations.
+- Audit rule engines, architecture scoring, or LLM/DeepSeek clients.
+- Dockerfile / compose generation.
+- Any "fix it for me" action in the UI.
+
+Allowed:
+- Reading source text from a root that the user explicitly provides.
+- Parsing it in memory and returning Core IR.
+- Serving cached in-memory analysis results to the UI.
+
+## 4. Filesystem safety
+
+- Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
+  (`Path.resolve()` + `is_relative_to`) before opening. Reject traversal with HTTP 400.
+- Never follow symlinks out of the root. Never expose absolute filesystem paths to the UI except the
+  scanned `rootPath` the user supplied.
+- Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv` when walking.
+- Enforce file count / file size limits and report them as `WorkspaceIR.warnings`, not exceptions.
+
+## 5. Degradation, never crashing
+
+- The C# analyzer is optional at runtime. If it is offline, the orchestrator MUST still return
+  Java/TS/JS results and append a human-readable entry to `WorkspaceIR.warnings`.
+- Unparsable files, unknown extensions, and oversized files produce warnings, never 500s.
+- The UI must render a usable empty state when `nodes` is empty.
+
+## 6. Code style
+
+- Strong typing everywhere: Pydantic v2 models (no raw dicts in the IR path), C# records + nullable
+  annotations, TypeScript `strict` with no `any` in the IR path.
+- Keep analyzers pure: `parse(text, context) -> nodes + references`. No I/O inside parsing functions.
+- Deterministic output: stable node ordering (stack, filePath, name) and deduplicated ids/relations so
+  scans of the same tree are diffable.
+- Files under ~400 lines. One responsibility per module.
+- Comments only where the code cannot explain itself.
+
+## 7. Definition of done for any change
+
+- `dotnet build services/analyzer-csharp` succeeds.
+- `python -m pytest services/api-python/tests` succeeds.
+- `npm run build` in `apps/web` succeeds (type-check + bundle).
+- The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens read-only.

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodo.dev/schemas/core-ir/workspace-ir.schema.json",
+  "title": "Kodo Core IR — WorkspaceIR",
+  "description": "Canonical, stack-agnostic architecture representation produced by the Kodo analyzers and consumed by the Kodo UI. Phase 1 is read-only: this document describes discovered structure, never proposed edits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "rootPath",
+    "detectedStacks",
+    "nodes",
+    "relations",
+    "mermaidClassDiagram",
+    "warnings"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human readable workspace name (usually the scanned folder name).",
+      "minLength": 1
+    },
+    "rootPath": {
+      "type": "string",
+      "description": "Absolute path of the scanned root, exactly as resolved by the orchestrator.",
+      "minLength": 1
+    },
+    "detectedStacks": {
+      "type": "array",
+      "description": "Stacks detected in the workspace. `unknown` is only present when nothing else was detected.",
+      "items": { "$ref": "#/$defs/stack" },
+      "uniqueItems": true
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Discovered components.",
+      "items": { "$ref": "#/$defs/componentNode" }
+    },
+    "relations": {
+      "type": "array",
+      "description": "Directed edges between discovered components.",
+      "items": { "$ref": "#/$defs/componentRelation" }
+    },
+    "mermaidClassDiagram": {
+      "type": "string",
+      "description": "Server-generated Mermaid `classDiagram` source, grouped by layer.",
+      "default": ""
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Non-fatal issues (offline analyzers, skipped files, parse failures).",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "stack": {
+      "type": "string",
+      "enum": ["spring-boot", "csharp-dotnet", "nodejs", "unknown"]
+    },
+    "layer": {
+      "type": "string",
+      "enum": [
+        "controller",
+        "service",
+        "repository",
+        "entity",
+        "viewmodel",
+        "view",
+        "component",
+        "other"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["class", "interface", "record", "enum", "module"]
+    },
+    "relationType": {
+      "type": "string",
+      "enum": ["depends_on", "inherits", "implements", "references"]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "annotations"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" },
+        "visibility": { "type": "string" },
+        "annotations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "parameters"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "returnType": { "type": "string" },
+        "parameters": {
+          "type": "array",
+          "description": "Rendered parameter signatures, e.g. `String name` or `Order order`.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "componentNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "stack",
+        "layer",
+        "kind",
+        "filePath",
+        "annotations",
+        "fields",
+        "methods"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique across the workspace (FQN for Java/C#, `<relativePath>#<symbol>` for TS/JS)."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "stack": { "$ref": "#/$defs/stack" },
+        "layer": { "$ref": "#/$defs/layer" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "filePath": {
+          "type": "string",
+          "description": "Path relative to WorkspaceIR.rootPath, using forward slashes.",
+          "minLength": 1
+        },
+        "annotations": {
+          "type": "array",
+          "description": "Framework annotations/decorators/attributes, e.g. `@RestController`, `[ApiController]`.",
+          "items": { "type": "string" }
+        },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/method" } }
+      }
+    },
+    "componentRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "targetId", "type"],
+      "properties": {
+        "sourceId": { "type": "string", "minLength": 1 },
+        "targetId": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/relationType" }
+      }
+    }
+  }
+}

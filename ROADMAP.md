@@ -4,17 +4,19 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 
 ---
 
-## Phase 1: Vibe-Code X-Ray (Read-Only Visualizer)
+## Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) ✅
 **Goal:** Open any existing multi-stack repository and immediately visualize its architecture with zero risk of modifying source files.
 
-- [ ] Define canonical **Core IR** schema (`WorkspaceIR`, `ComponentNode`, `ComponentRelation`) shared across Python, C#, and TypeScript.
-- [ ] Build **C# Semantic Analyzer** microservice (ASP.NET Core + Roslyn) for deep `.cs` / WPF / .NET parsing.
-- [ ] Build **Python FastAPI Orchestrator** with **Tree-sitter** analyzers for Java (Spring Boot) and TypeScript/JavaScript (Node.js).
-- [ ] Build shared **React + TypeScript** frontend with:
-  - [ ] **React Flow** interactive Macro Graph (layer-grouped, color-coded).
-  - [ ] **Mermaid** (`classDiagram`) zoomable UML preview.
-  - [ ] **Monaco Editor** read-only Code Inspector.
-- [ ] Configure minimal **Tauri v2** desktop wrapper for local builds and GitHub Actions CI/CD.
+**Status:** Delivered — see [DEV_SETUP.md](DEV_SETUP.md) to run it locally.
+
+- [x] Define canonical **Core IR** schema (`WorkspaceIR`, `ComponentNode`, `ComponentRelation`) shared across Python, C#, and TypeScript.
+- [x] Build **C# Semantic Analyzer** microservice (ASP.NET Core + Roslyn) for deep `.cs` / WPF / .NET parsing.
+- [x] Build **Python FastAPI Orchestrator** with **Tree-sitter** analyzers for Java (Spring Boot) and TypeScript/JavaScript (Node.js).
+- [x] Build shared **React + TypeScript** frontend with:
+  - [x] **React Flow** interactive Macro Graph (layer-grouped, color-coded).
+  - [x] **Mermaid** (`classDiagram`) zoomable UML preview.
+  - [x] **Monaco Editor** read-only Code Inspector.
+- [x] Configure minimal **Tauri v2** desktop wrapper for local builds and GitHub Actions CI/CD.
 - **Definition of Done:** Point Kodo at a real Spring Boot, C#, or Node.js folder and render the interactive graph, UML diagram, and source code inspector in under 3 seconds.
 
 ---

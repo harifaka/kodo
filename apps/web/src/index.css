@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 font-sans text-slate-200 antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #243249;
+  border: 2px solid #0b0f16;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #33455f;
+}
+
+/* ---------- React Flow ---------- */
+
+.kodo-flow {
+  --xy-background-color: #080b11;
+  --xy-node-border-radius: 12px;
+}
+
+.kodo-flow .react-flow__node {
+  font-family: inherit;
+}
+
+.kodo-flow .react-flow__edge-path {
+  transition: opacity 140ms ease;
+}
+
+.kodo-flow .react-flow__node.selected {
+  outline: none;
+}
+
+.react-flow__controls {
+  border: 1px solid #243249;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 24px -18px #000;
+}
+
+.react-flow__controls-button {
+  background: #131a25 !important;
+  border-bottom: 1px solid #243249 !important;
+  color: #94a3b8 !important;
+  fill: #94a3b8 !important;
+  width: 26px !important;
+  height: 26px !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #1e2839 !important;
+  fill: #e2e8f0 !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__minimap {
+  border: 1px solid #243249;
+  border-radius: 8px;
+  background: #0b0f16 !important;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(8, 11, 17, 0.82);
+}
+
+.kodo-handle {
+  width: 6px !important;
+  height: 6px !important;
+  background: #334155 !important;
+  border: none !important;
+  opacity: 0.7;
+}
+
+/* ---------- Mermaid ---------- */
+
+.kodo-uml svg {
+  max-width: none !important;
+  height: auto;
+  background: transparent;
+}
+
+.kodo-uml .cluster rect {
+  fill: #0f141d !important;
+  stroke: #243249 !important;
+}
+
+.kodo-uml .cluster .cluster-label text,
+.kodo-uml .cluster text {
+  fill: #93a4bd !important;
+}
+
+.kodo-uml .classGroup text,
+.kodo-uml .classGroup .label,
+.kodo-uml .classText {
+  fill: #cbd5e1 !important;
+}
+
+.kodo-uml .classTitle,
+.kodo-uml .classGroup .classTitle {
+  fill: #f1f5f9 !important;
+  font-weight: 600;
+}
+
+.react-flow__attribution {
+  background: transparent !important;
+}
+
+.react-flow__attribution a {
+  color: #334155 !important;
+  font-size: 9px !important;
+}
+.kodo-uml .classGroup rect {
+  fill: #131a25 !important;
+  stroke: #334155 !important;
+}
+
+.kodo-uml .classGroup .title,
+.kodo-uml .classTitle {
+  fill: #e2e8f0 !important;
+}
+
+.kodo-uml .classLabel .box {
+  fill: #182130 !important;
+  stroke: #334155 !important;
+}
+
+.kodo-uml .classLabel .label {
+  fill: #e2e8f0 !important;
+}
+
+.kodo-uml .node rect,
+.kodo-uml .node polygon {
+  stroke: #334155 !important;
+}
+
+.kodo-uml .edgePath path,
+.kodo-uml .relation {
+  stroke: #475569 !important;
+}
+
+.kodo-uml .divider {
+  stroke: #2a374c !important;
+}
+
+/* ---------- Monaco ---------- */
+
+.monaco-editor,
+.monaco-editor-background,
+.monaco-editor .margin {
+  background-color: #0b0f16 !important;
+}

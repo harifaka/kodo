@@ -35,9 +35,34 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
+## Quick Start (Phase 1)
+
+Three local processes, no Docker required:
+
+```powershell
+# 1. C# Roslyn analyzer  -> http://localhost:5050
+cd services/analyzer-csharp ; dotnet run
+
+# 2. FastAPI orchestrator -> http://127.0.0.1:8000
+cd services/api-python
+python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# 3. Web UI -> http://127.0.0.1:5173
+cd apps/web ; npm install ; npm run dev
+```
+
+Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
+read-only Code Inspector. Desktop mode: `npm run tauri dev` (requires Rust).
+
+Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
+
+---
+
 ## 6-Phase MVP Roadmap
 
-### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Current
+### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
 - Directory scanner with **Tree-sitter** (Java/Spring Boot, TS/JS/Node.js) and **Roslyn** (C#/.NET) microservice.
 - Interactive **React Flow** service/layer map, **Mermaid** (`classDiagram`) zoomable UML view, and read-only **Monaco Editor** file inspector.

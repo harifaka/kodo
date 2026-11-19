@@ -221,3 +221,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Kodo monorepo additions
+# ---------------------------------------------------------------------------
+
+# Node / Vite frontend
+node_modules/
+.vite/
+*.local
+
+# .NET analyzer
+[Bb]in/
+[Oo]bj/
+
+# Rust / Tauri
+apps/web/src-tauri/gen/
+
+# The Python template above ignores any `lib/` directory; the web app keeps real source there.
+!apps/web/src/lib/
+!apps/web/src/lib/**
+
