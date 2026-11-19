@@ -3,7 +3,22 @@ using Kodo.Analyzer.CSharp.Analysis;
 using Kodo.Analyzer.CSharp.Models;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("KODO_CSHARP_URL") ?? "http://localhost:5050");
+
+// KODO_CSHARP_URL pins the bind address for local `dotnet run`; otherwise ASPNETCORE_URLS
+// (http://+:5050 in the container) wins and a plain localhost bind is the fallback.
+var pinnedUrl = Environment.GetEnvironmentVariable("KODO_CSHARP_URL");
+if (!string.IsNullOrWhiteSpace(pinnedUrl))
+{
+    builder.WebHost.UseUrls(pinnedUrl);
+}
+else if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+{
+    builder.WebHost.UseUrls("http://localhost:5050");
+}
+
+// Stateless analysis ships every file's content in a single JSON body.
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 128 * 1024 * 1024);
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -34,7 +49,7 @@ app.MapPost("/analyze", (AnalyzeRequest request) =>
 
     try
     {
-        var result = RoslynAnalyzer.Analyze(request.RootPath, request.Files);
+        var result = RoslynAnalyzer.Analyze(request.Files);
         return Results.Ok(new AnalyzeResponse(result.Nodes, result.Relations, result.Warnings));
     }
     catch (Exception ex)

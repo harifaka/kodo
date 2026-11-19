@@ -12,6 +12,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://tauri.localhost",
 )
 
+DEFAULT_API_PORT = 8088
 MAX_INSPECT_BYTES = 2_000_000
 
 

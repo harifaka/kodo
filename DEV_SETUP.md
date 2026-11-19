@@ -8,10 +8,10 @@ read-only Monaco source inspector. Nothing is ever written to the scanned projec
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
-services/api-python (FastAPI :8000)      ← owner of the Core IR
+services/api-python (FastAPI :8088)      ← owner of the Core IR
         │  HTTP/JSON
         ▼
-services/analyzer-csharp (Roslyn :5050)  ← C# / WPF / .NET AST extraction
+services/analyzer-csharp (Roslyn :5050)  ← stateless C# / WPF / .NET AST extraction (Docker)
 ```
 
 ---
@@ -20,8 +20,9 @@ services/analyzer-csharp (Roslyn :5050)  ← C# / WPF / .NET AST extraction
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
+| Docker Desktop | 4.x+ (Compose v2) | Roslyn analyzer container (recommended) |
 | Python | 3.12+ | FastAPI orchestrator, tree-sitter analyzers |
-| .NET SDK | 8.0+ | Roslyn analyzer (`net8.0` target, rolls forward to newer runtimes) |
+| .NET SDK | 8.0+ | Building/testing the Roslyn analyzer (`net8.0`, rolls forward to newer runtimes) |
 | Node.js | 20+ | React / Vite frontend |
 | Rust | 1.77+ | **only** for the Tauri desktop build (`rustup`, platform toolchain) |
 | Git | any | cloning the repo |
@@ -32,11 +33,13 @@ Windows commands are shown; macOS/Linux equivalents are noted where they differ.
 
 ## 2. Start the three processes
 
-### Terminal 1 — C# Roslyn analyzer (:5050)
+### Terminal 1 — C# Roslyn analyzer (:5050, Docker)
+
+The analyzer is **stateless**: FastAPI reads each `.cs` file and POSTs its content, so the container
+needs no workspace volume mount.
 
 ```powershell
-cd services/analyzer-csharp
-dotnet run
+docker compose up -d --build analyzer-csharp
 ```
 
 Verify:
@@ -45,14 +48,24 @@ Verify:
 curl http://localhost:5050/health      # {"status":"ok"}
 ```
 
-### Terminal 2 — Python FastAPI orchestrator (:8000)
+Container status and logs:
+
+```powershell
+docker compose ps
+docker compose logs -f analyzer-csharp
+```
+
+No Docker? Run it directly with `cd services/analyzer-csharp ; dotnet run` (same `:5050` port — stop
+one of the two before starting the other).
+
+### Terminal 2 — Python FastAPI orchestrator (:8088)
 
 ```powershell
 cd services/api-python
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8088
 ```
 
 macOS/Linux: `source .venv/bin/activate`.
@@ -60,11 +73,11 @@ macOS/Linux: `source .venv/bin/activate`.
 Verify:
 
 ```powershell
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8088/health
 # {"status":"ok", "analyzers":{"csharp":{"url":"http://localhost:5050","reachable":true}}, ...}
 ```
 
-Interactive API docs: <http://127.0.0.1:8000/docs>
+Interactive API docs: <http://127.0.0.1:8088/docs>
 
 ### Terminal 3 — React frontend (:5173)
 
@@ -125,10 +138,11 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 
 | Variable | Where | Default | Purpose |
 | --- | --- | --- | --- |
-| `VITE_API_BASE_URL` | `apps/web/.env.local` | `http://127.0.0.1:8000` | Orchestrator base URL |
+| `VITE_API_BASE_URL` | `apps/web/.env.local` | `http://localhost:8088` | Orchestrator base URL |
 | `KODO_CSHARP_URL` | FastAPI process | `http://localhost:5050` | Roslyn analyzer base URL |
 | `KODO_CORS_ORIGINS` | FastAPI process | Vite + Tauri origins | Comma-separated allow-list |
-| `KODO_CSHARP_URL` | Roslyn process | `http://localhost:5050` | Kestrel bind address |
+| `KODO_CSHARP_URL` | Roslyn process | `http://localhost:5050` | Kestrel bind address (overrides `ASPNETCORE_URLS`) |
+| `ASPNETCORE_URLS` | Roslyn container | `http://+:5050` | Container bind address |
 
 ---
 
@@ -152,13 +166,15 @@ npm run build
 
 ## 7. Troubleshooting
 
-**Port 8000 is already in use / health pill flaps red-green.**
-Docker Desktop's backend commonly listens on `0.0.0.0:8000`. Check with
-`Get-NetTCPConnection -LocalPort 8000 -State Listen`. Stop the conflicting service, or run the API
-elsewhere (`--port 8010`) and set `VITE_API_BASE_URL=http://127.0.0.1:8010` in `apps/web/.env.local`.
+**Port 8000 was taken, so FastAPI moved to 8088.** Docker Desktop's backend commonly listens on
+`0.0.0.0:8000`, which is why Kodo now defaults to `:8088`. If `8088` is also busy, run the API on
+another port (`--port 8090`) and set `VITE_API_BASE_URL=http://localhost:8090` in
+`apps/web/.env.local`.
 
-**`Roslyn` pill is red.** Start `dotnet run` in `services/analyzer-csharp`. Scans still work; `.cs`
-files are skipped with a warning.
+**`Roslyn` pill is red.** Start the container with `docker compose up -d --build analyzer-csharp` and
+check `docker compose ps` / `docker compose logs analyzer-csharp`. A local `dotnet run` on `:5050`
+conflicts with the published container port — run only one of them. Scans still work without it;
+`.cs` files are skipped with a warning.
 
 **Graph or UML is empty.** Check the diagnostics bar. Files must be `.java`, `.ts`, `.tsx`, `.js`,
 `.jsx`, `.mjs`, `.cjs` or `.cs`; generated `.g.cs` / `.Designer.cs` files are intentionally ignored.
@@ -178,9 +194,10 @@ attempt a source build and require a C compiler.
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, read-only Phase 1)
+docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
 packages/core-ir/schema.json      Canonical JSON Schema contract
-services/analyzer-csharp/         .NET 8 Minimal API + Roslyn (port 5050)
-services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8000)
+services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
+services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088)
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py
   tests/                          pytest suite incl. schema conformance

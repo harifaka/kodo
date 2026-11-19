@@ -15,6 +15,9 @@ from app.models.ir import ComponentNode, ComponentRelation
 _HEALTH_TIMEOUT = 1.5
 _ANALYZE_TIMEOUT = 90.0
 
+# The analyzer is stateless: it only sees what we send, so the cap is enforced here too.
+MAX_ANALYZER_FILE_BYTES = 2_000_000
+
 
 @dataclass
 class CSharpResult:
@@ -39,8 +42,13 @@ async def analyze_workspace(root: Path, files: list[str]) -> CSharpResult:
     if not files:
         return result
 
+    # Reading happens on the orchestrator: the Roslyn container mounts no workspace volume.
+    payload_files = await asyncio.to_thread(_read_sources, root, files, result.warnings)
+    if not payload_files:
+        return result
+
     url = f"{csharp_analyzer_url()}/analyze"
-    payload = {"rootPath": str(root), "files": files}
+    payload = {"rootPath": str(root), "files": payload_files}
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(_ANALYZE_TIMEOUT, connect=3.0)) as client:
@@ -50,7 +58,7 @@ async def analyze_workspace(root: Path, files: list[str]) -> CSharpResult:
     except (httpx.HTTPError, ValueError, asyncio.TimeoutError) as exc:
         result.warnings.append(
             f"C# analyzer unreachable at {csharp_analyzer_url()} ({type(exc).__name__}). "
-            f"{len(files)} .cs file(s) were skipped — start services/analyzer-csharp and rescan."
+            f"{len(payload_files)} .cs file(s) were skipped — start services/analyzer-csharp and rescan."
         )
         return result
 
@@ -74,3 +82,36 @@ async def analyze_workspace(root: Path, files: list[str]) -> CSharpResult:
 
     result.warnings.extend(str(warning) for warning in data.get("warnings", []))
     return result
+
+
+def _read_sources(root: Path, files: list[str], warnings: list[str]) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+
+    for rel_path in files:
+        target = root / rel_path
+        try:
+            size = target.stat().st_size
+        except OSError as exc:
+            warnings.append(f"Could not read {rel_path}: {exc}")
+            continue
+
+        if size > MAX_ANALYZER_FILE_BYTES:
+            warnings.append(
+                f"Skipped oversized C# file ({MAX_ANALYZER_FILE_BYTES // 1_000_000} MB limit): {rel_path}."
+            )
+            continue
+
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            warnings.append(f"Could not read {rel_path}: {exc}")
+            continue
+
+        payload.append({"path": rel_path.replace("\\", "/"), "content": content})
+
+    if files and not payload:
+        warnings.append(
+            f"C# analyzer: none of the {len(files)} discovered .cs file(s) could be read; nothing was analyzed."
+        )
+
+    return payload

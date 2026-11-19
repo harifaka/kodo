@@ -30,9 +30,14 @@ public sealed record ComponentNode(
 /// <summary>Mirror of packages/core-ir/schema.json — ComponentRelation.</summary>
 public sealed record ComponentRelation(string SourceId, string TargetId, string Type);
 
+/// <summary>A single source file shipped by the caller — the analyzer never touches the filesystem.</summary>
+public sealed record AnalyzeFile(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("content")] string Content);
+
 public sealed record AnalyzeRequest(
     [property: JsonPropertyName("rootPath")] string RootPath,
-    [property: JsonPropertyName("files")] IReadOnlyList<string> Files);
+    [property: JsonPropertyName("files")] IReadOnlyList<AnalyzeFile> Files);
 
 public sealed record AnalyzeResponse(
     IReadOnlyList<ComponentNode> Nodes,

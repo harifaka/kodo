@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.routes import router
-from app.config import cors_origins
+from app.config import DEFAULT_API_PORT, cors_origins
 
 app = FastAPI(
     title="Kodo API",
@@ -42,4 +42,4 @@ async def root() -> dict[str, str]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=DEFAULT_API_PORT, reload=False)

@@ -12,8 +12,9 @@ public sealed record AnalysisResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Syntax-only Roslyn analysis. Each file is parsed with <see cref="CSharpSyntaxTree.ParseText(string, CSharpParseOptions, string)"/>
-/// and mapped onto the Core IR. No compilation, no semantic model, no writes — Phase 1 is read-only.
+/// Syntax-only Roslyn analysis. Each file is parsed from the content supplied by the caller with
+/// <see cref="CSharpSyntaxTree.ParseText(string, CSharpParseOptions, string)"/> and mapped onto the Core IR.
+/// No filesystem access, no compilation, no semantic model, no writes — Phase 1 is read-only.
 /// </summary>
 public static class RoslynAnalyzer
 {
@@ -43,53 +44,50 @@ public static class RoslynAnalyzer
         public List<PendingReference> References { get; } = [];
     }
 
-    public static AnalysisResult Analyze(string rootPath, IEnumerable<string>? files)
+    public static AnalysisResult Analyze(IEnumerable<AnalyzeFile>? files)
     {
         var warnings = new List<string>();
         var units = new List<ParsedUnit>();
-        var root = Path.GetFullPath(rootPath);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (!Directory.Exists(root))
+        foreach (var file in files ?? [])
         {
-            return new AnalysisResult([], [], [$"C# analyzer: root path does not exist: {rootPath}"]);
-        }
-
-        foreach (var candidate in (files ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var fullPath = Path.GetFullPath(Path.IsPathRooted(candidate) ? candidate : Path.Combine(root, candidate));
-
-            if (!IsUnderRoot(root, fullPath))
-            {
-                warnings.Add($"C# analyzer: skipped '{candidate}' (outside of rootPath).");
-                continue;
-            }
-
-            if (!fullPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || IsGeneratedFile(fullPath))
+            var relPath = NormalizePath(file?.Path);
+            if (relPath.Length == 0)
             {
                 continue;
             }
 
-            if (!File.Exists(fullPath))
+            if (!relPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || IsGeneratedFile(relPath))
             {
-                warnings.Add($"C# analyzer: skipped missing file '{ToRelative(root, fullPath)}'.");
+                continue;
+            }
+
+            if (!seen.Add(relPath))
+            {
+                continue;
+            }
+
+            if (file!.Content is null)
+            {
+                warnings.Add($"C# analyzer: skipped '{relPath}' (no content was provided).");
                 continue;
             }
 
             try
             {
-                var source = File.ReadAllText(fullPath);
                 var tree = CSharpSyntaxTree.ParseText(
-                    source,
+                    file.Content,
                     new CSharpParseOptions(LanguageVersion.Latest),
-                    path: fullPath);
+                    path: relPath);
 
                 var unit = new ParsedUnit();
-                CollectChildren(tree.GetRoot(), scope: string.Empty, ToRelative(root, fullPath), unit);
+                CollectChildren(tree.GetRoot(), scope: string.Empty, relPath, unit);
                 units.Add(unit);
             }
             catch (Exception ex)
             {
-                warnings.Add($"C# analyzer: failed to parse '{ToRelative(root, fullPath)}': {ex.Message}");
+                warnings.Add($"C# analyzer: failed to parse '{relPath}': {ex.Message}");
             }
         }
 
@@ -439,18 +437,14 @@ public static class RoslynAnalyzer
         return GeneratedFileSuffixes.Any(suffix => fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool IsUnderRoot(string root, string candidate)
+    private static string NormalizePath(string? path)
     {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (string.Equals(root, candidate, comparison))
+        var normalized = (path ?? string.Empty).Replace('\\', '/').Trim();
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
         {
-            return true;
+            normalized = normalized[2..];
         }
 
-        var normalizedRoot = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-        return candidate.StartsWith(normalizedRoot, comparison);
+        return normalized;
     }
-
-    private static string ToRelative(string root, string path) =>
-        Path.GetRelativePath(root, path).Replace('\\', '/');
 }

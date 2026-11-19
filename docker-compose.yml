@@ -1,0 +1,18 @@
+services:
+  analyzer-csharp:
+    build:
+      context: ./services/analyzer-csharp
+      dockerfile: Dockerfile
+    image: kodo-analyzer-csharp:latest
+    container_name: kodo-analyzer-csharp
+    environment:
+      ASPNETCORE_URLS: http://+:5050
+    ports:
+      - "5050:5050"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "-O", "/dev/null", "http://127.0.0.1:5050/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped

@@ -1,6 +1,6 @@
 import type { FileContent, HealthResponse, WorkspaceIR } from '../types/core-ir';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
 export class ApiError extends Error {
   readonly status: number;

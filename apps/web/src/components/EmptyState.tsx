@@ -10,7 +10,7 @@ const STEPS = [
   {
     icon: ScanIcon,
     title: 'Start the local stack',
-    body: 'FastAPI on :8000 and the Roslyn analyzer on :5050. The desktop shell launches both in production.',
+    body: 'FastAPI on :8088 and the Roslyn analyzer on :5050. The desktop shell launches both in production.',
   },
   {
     icon: GraphIcon,
@@ -82,7 +82,7 @@ export function EmptyState({ healthStatus, scanning }: EmptyStateProps) {
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-amber-300">
               <AlertIcon className="h-3 w-3" />
-              Start FastAPI: <code className="font-mono">uvicorn app.main:app --port 8000</code>
+              Start FastAPI: <code className="font-mono">uvicorn app.main:app --port 8088</code>
             </span>
           )}
           <span>Then paste a folder path above and hit “Scan Project”.</span>

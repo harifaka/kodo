@@ -37,17 +37,15 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ## Quick Start (Phase 1)
 
-Three local processes, no Docker required:
-
 ```powershell
-# 1. C# Roslyn analyzer  -> http://localhost:5050
-cd services/analyzer-csharp ; dotnet run
+# 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
+docker compose up -d --build analyzer-csharp
 
-# 2. FastAPI orchestrator -> http://127.0.0.1:8000
+# 2. FastAPI orchestrator -> http://localhost:8088
 cd services/api-python
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8088
 
 # 3. Web UI -> http://127.0.0.1:5173
 cd apps/web ; npm install ; npm run dev

@@ -21,6 +21,16 @@ SKIPPED_DIRECTORIES = frozenset(
 
 MARKER_FILES = frozenset({"package.json"})
 
+# Mirrors RoslynAnalyzer.GeneratedFileSuffixes: generated sources never hold first-party architecture.
+GENERATED_CSHARP_SUFFIXES = (
+    ".g.cs",
+    ".g.i.cs",
+    ".designer.cs",
+    ".generated.cs",
+    ".assemblyattributes.cs",
+    ".assemblyinfo.cs",
+)
+
 MAX_SCANNED_FILES = 6000
 MAX_FILE_BYTES = 2_000_000
 
@@ -52,6 +62,9 @@ def collect_files(root: Path) -> ScanFiles:
                 scan.markers.add(lower)
 
             if lower.endswith(".d.ts"):
+                continue
+
+            if lower.endswith(".cs") and lower.endswith(GENERATED_CSHARP_SUFFIXES):
                 continue
 
             rel_path = posix_rel(os.path.relpath(current_path / filename, root))
