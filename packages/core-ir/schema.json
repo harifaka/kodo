@@ -12,7 +12,8 @@
     "nodes",
     "relations",
     "mermaidClassDiagram",
-    "warnings"
+    "warnings",
+    "audit"
   ],
   "properties": {
     "name": {
@@ -50,6 +51,10 @@
       "type": "array",
       "description": "Non-fatal issues (offline analyzers, skipped files, parse failures).",
       "items": { "type": "string" }
+    },
+    "audit": {
+      "$ref": "#/$defs/auditReport",
+      "description": "Deterministic Phase 2 architecture audit. Derived from this IR only; nothing was modified on disk."
     }
   },
   "$defs": {
@@ -152,6 +157,99 @@
         "sourceId": { "type": "string", "minLength": 1 },
         "targetId": { "type": "string", "minLength": 1 },
         "type": { "$ref": "#/$defs/relationType" }
+      }
+    },
+    "auditReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "summary", "findings"],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Architecture health score. 100 minus a fixed penalty per finding severity."
+        },
+        "summary": { "$ref": "#/$defs/auditSummary" },
+        "findings": {
+          "type": "array",
+          "description": "Deterministically ordered findings (error, warning, info), deduplicated by id.",
+          "items": { "$ref": "#/$defs/auditFinding" }
+        }
+      }
+    },
+    "auditSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "info"],
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "auditRuleId": {
+      "type": "string",
+      "enum": [
+        "LAYER_VIOLATION",
+        "CIRCULAR_DEPENDENCY",
+        "GOD_CLASS",
+        "ORPHAN_COMPONENT",
+        "ENTITY_EXPOSED_IN_CONTROLLER",
+        "MISSING_VALIDATION"
+      ]
+    },
+    "auditSeverity": {
+      "type": "string",
+      "enum": ["error", "warning", "info"]
+    },
+    "auditFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ruleId",
+        "severity",
+        "title",
+        "message",
+        "suggestion",
+        "nodeIds",
+        "edgeKeys",
+        "filePath"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable deterministic id, e.g. `LAYER_VIOLATION:com.acme.OrderController->com.acme.OrderRepository`."
+        },
+        "ruleId": { "$ref": "#/$defs/auditRuleId" },
+        "severity": { "$ref": "#/$defs/auditSeverity" },
+        "title": { "type": "string", "minLength": 1 },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human explanation naming the exact components involved."
+        },
+        "suggestion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concrete architectural fix advice. Phase 2 never applies it."
+        },
+        "nodeIds": {
+          "type": "array",
+          "description": "ComponentNode ids affected by the finding.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "edgeKeys": {
+          "type": "array",
+          "description": "Affected relations formatted as `sourceId->targetId`.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "filePath": {
+          "type": ["string", "null"],
+          "description": "Primary file for quick navigation to the Code Inspector, relative to rootPath."
+        }
       }
     }
   }

@@ -58,6 +58,42 @@ export interface WorkspaceIR {
   relations: ComponentRelation[];
   mermaidClassDiagram: string;
   warnings: string[];
+  audit: AuditReport;
+}
+
+export type AuditRuleId =
+  | 'LAYER_VIOLATION'
+  | 'CIRCULAR_DEPENDENCY'
+  | 'GOD_CLASS'
+  | 'ORPHAN_COMPONENT'
+  | 'ENTITY_EXPOSED_IN_CONTROLLER'
+  | 'MISSING_VALIDATION';
+
+export type Severity = 'error' | 'warning' | 'info';
+
+export interface AuditFinding {
+  id: string;
+  ruleId: AuditRuleId;
+  severity: Severity;
+  title: string;
+  message: string;
+  suggestion: string;
+  nodeIds: string[];
+  /** Affected relations formatted as `${sourceId}->${targetId}`. */
+  edgeKeys: string[];
+  filePath: string | null;
+}
+
+export interface AuditSummary {
+  errors: number;
+  warnings: number;
+  info: number;
+}
+
+export interface AuditReport {
+  score: number;
+  summary: AuditSummary;
+  findings: AuditFinding[];
 }
 
 export interface CSharpAnalyzerHealth {

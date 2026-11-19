@@ -11,6 +11,7 @@ This file is binding for every human and AI contributor.
   - C#: `services/analyzer-csharp/Models/CoreIr.cs` (records)
   - TypeScript: `apps/web/src/types/core-ir.ts`
 - Any change to `WorkspaceIR`, `ComponentNode`, `ComponentRelation` requires updating the schema **and** all three implementations in the same change.
+- `WorkspaceIR` is assembled by the orchestrator (`mermaidClassDiagram`, `warnings`, `audit`); `services/analyzer-csharp` only implements `ComponentNode`, `ComponentRelation` and its own request/response envelopes.
 - Do not add fields to one implementation only. Do not rename wire fields. Do not invent parallel DTOs that drift from the contract.
 
 ## 2. Layer boundaries (no cross-layer leaks)
@@ -28,21 +29,33 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   Mermaid, or orchestration. It never writes to disk.
 - No shared code between services via file imports. Only the JSON contract crosses process boundaries.
 
-## 3. Read-only Phase 1 (hard rule)
+## 3. Read-only Phases 1 & 2 (hard rule)
 
-Phase 1 is **100% read-only** with respect to user source code.
+Phases 1 (visualizer) and 2 (pattern audit) are **100% read-only** with respect to user source code.
 
 Forbidden until explicitly scoped in a later phase:
 - Writing, patching, moving, or deleting user source files.
 - AST rewriting / code generation / `dotnet format` style mutations.
-- Audit rule engines, architecture scoring, or LLM/DeepSeek clients.
-- Dockerfile / compose generation.
-- Any "fix it for me" action in the UI.
+- Applying audit suggestions automatically ("fix it for me" actions in the UI).
+- LLM/DeepSeek clients of any kind.
+- Dockerfile / compose generation for the scanned workspace.
 
 Allowed:
 - Reading source text from a root that the user explicitly provides.
 - Parsing it in memory and returning Core IR.
+- Running the deterministic audit engine over the Core IR and returning `WorkspaceIR.audit`.
 - Serving cached in-memory analysis results to the UI.
+
+## 3a. Audit engine rules
+
+- Every audit rule is deterministic, pure and derives from `WorkspaceIR` nodes/relations only.
+  No filesystem access, no network, no clock, no randomness.
+- Rules are registered through `app.audit.engine.audit_rule` and live in `app/audit/rules/`.
+  Adding a rule must not require touching the orchestrator.
+- Finding ids are stable (`RULE_ID:target`) and findings are emitted in a deterministic order
+  (severity, ruleId, id) so two scans of the same tree produce byte-identical reports.
+- The score is a fixed penalty per finding severity (error 10, warning 4, info 1), clamped to 0–100.
+- Findings name the exact components involved and always include a concrete, human-applied suggestion.
 
 ## 4. Filesystem safety
 

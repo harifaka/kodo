@@ -4,6 +4,7 @@ import { STACK_META } from '../lib/layers';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
 import { FolderIcon, LogoMark, ScanIcon, Spinner } from './icons';
+import { HealthChip } from './HealthScore';
 
 interface TopBarProps {
   path: string;
@@ -61,6 +62,7 @@ export function TopBar({ path, onPathChange, onScan, scanning, health, workspace
       </form>
 
       <div className="flex items-center gap-3">
+        {workspace && <HealthChip report={workspace.audit} />}
         {workspace && workspace.detectedStacks.length > 0 && (
           <div className="flex items-center gap-1.5">
             {workspace.detectedStacks.map((stack) => (

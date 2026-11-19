@@ -21,17 +21,19 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 
 ---
 
-## Phase 2: Pattern & Vibe-Audit Engine
+## Phase 2: Pattern & Vibe-Audit Engine ✅
 **Goal:** Detect architectural drift and common AI-generated ("vibe-code") anti-patterns deterministically on the Core IR (no LLM required).
 
-- [ ] Implement pluggable **IR Rule Engine** in FastAPI.
-- [ ] Add core architectural rules:
-  - [ ] Layer violations (e.g., Controller directly calling Repository).
-  - [ ] Circular dependencies between services or modules.
-  - [ ] God Classes (excessive fields/methods) and orphan components.
-  - [ ] Missing DTOs or validation annotations on exposed entities.
-- [ ] Highlight violations directly on the React Flow graph (red/yellow nodes and edges).
-- [ ] Add an **Audit Panel** with file jump-to-line links and an overall **Architecture Health Score**.
+**Status:** Delivered — read-only and fully deterministic on the Core IR.
+
+- [x] Implement pluggable **IR Rule Engine** in FastAPI (`app/audit`, `@audit_rule` registry).
+- [x] Add core architectural rules:
+  - [x] Layer violations (e.g., Controller directly calling Repository).
+  - [x] Circular dependencies between services or modules.
+  - [x] God Classes (excessive fields/methods) and orphan components.
+  - [x] Missing DTOs or validation annotations on exposed entities.
+- [x] Highlight violations directly on the React Flow graph (red/yellow nodes and edges).
+- [x] Add an **Audit Panel** with file jump-to-line links and an overall **Architecture Health Score**.
 - **Definition of Done:** Scanning a messy codebase surfaces actionable pattern violations visually on the canvas and in the audit list.
 
 ---

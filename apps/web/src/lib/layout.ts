@@ -1,8 +1,12 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import { LAYER_META, LAYER_ORDER, RELATION_META } from './layers';
-import type { ComponentNode, ComponentRelation, Layer } from '../types/core-ir';
+import type { ComponentNode, ComponentRelation, Layer, Severity } from '../types/core-ir';
 
-export type ComponentNodeData = { component: ComponentNode; relationCount: number };
+export type ComponentNodeData = {
+  component: ComponentNode;
+  relationCount: number;
+  audit?: { severity: Severity; count: number };
+};
 export type LayerHeaderData = { label: string; color: string; count: number };
 
 export const NODE_WIDTH = 248;

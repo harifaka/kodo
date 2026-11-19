@@ -10,7 +10,7 @@ import { AlertIcon, CodeIcon, GraphIcon, UmlIcon } from './components/icons';
 import { useHealth } from './hooks/useHealth';
 import { api } from './lib/api';
 import { buildGraph } from './lib/layout';
-import type { ComponentNode, WorkspaceIR } from './types/core-ir';
+import type { AuditFinding, ComponentNode, WorkspaceIR } from './types/core-ir';
 
 type TabId = 'graph' | 'uml' | 'code';
 
@@ -38,6 +38,24 @@ export default function App() {
   const handleSelect = useCallback((node: ComponentNode | null) => {
     setSelectedId(node?.id ?? null);
   }, []);
+
+  const handleSelectNodeId = useCallback((nodeId: string) => {
+    setSelectedId(nodeId);
+  }, []);
+
+  const handleOpenFinding = useCallback(
+    (finding: AuditFinding) => {
+      const nodes = workspace?.nodes ?? [];
+      const target =
+        nodes.find((node) => node.filePath === finding.filePath) ??
+        nodes.find((node) => node.id === finding.nodeIds[0]);
+      if (target) {
+        setSelectedId(target.id);
+      }
+      setTab('code');
+    },
+    [workspace],
+  );
 
   const handleScan = useCallback(async () => {
     const target = path.trim();
@@ -107,6 +125,7 @@ export default function App() {
                     relations={workspace.relations}
                     flowNodes={graph.nodes}
                     flowEdges={graph.edges}
+                    audit={workspace.audit}
                     selectedId={selectedId}
                     onSelect={handleSelect}
                   />
@@ -133,7 +152,9 @@ export default function App() {
             workspace={workspace}
             selected={selected}
             onSelect={handleSelect}
+            onSelectNodeId={handleSelectNodeId}
             onOpenInInspector={openInspector}
+            onOpenFinding={handleOpenFinding}
           />
         )}
       </div>

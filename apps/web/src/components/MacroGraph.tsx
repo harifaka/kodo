@@ -5,6 +5,7 @@ import {
   Controls,
   Handle,
   MiniMap,
+  MarkerType,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -18,14 +19,17 @@ import {
 import '@xyflow/react/dist/style.css';
 import { edgeTouchesNode, type ComponentNodeData, type LayerHeaderData } from '../lib/layout';
 import { KIND_LABEL, LAYER_META, RELATION_META } from '../lib/layers';
-import type { ComponentNode, ComponentRelation } from '../types/core-ir';
+import { SEVERITY_META, auditedEdgeKeys, edgeKey, nodeAuditIndex } from '../lib/audit';
+import type { AuditReport, ComponentNode, ComponentRelation } from '../types/core-ir';
 import { GraphIcon } from './icons';
+import { AlertBadge } from './AuditPanel';
 
 interface MacroGraphProps {
   nodes: ComponentNode[];
   relations: ComponentRelation[];
   flowNodes: Node[];
   flowEdges: Edge[];
+  audit: AuditReport;
   selectedId: string | null;
   onSelect: (node: ComponentNode | null) => void;
 }
@@ -35,6 +39,7 @@ export function MacroGraph({
   relations,
   flowNodes,
   flowEdges,
+  audit,
   selectedId,
   onSelect,
 }: MacroGraphProps) {
@@ -45,6 +50,7 @@ export function MacroGraph({
         relations={relations}
         flowNodes={flowNodes}
         flowEdges={flowEdges}
+        audit={audit}
         selectedId={selectedId}
         onSelect={onSelect}
       />
@@ -57,6 +63,7 @@ function MacroGraphCanvas({
   relations,
   flowNodes,
   flowEdges,
+  audit,
   selectedId,
   onSelect,
 }: MacroGraphProps) {
@@ -74,21 +81,45 @@ function MacroGraphCanvas({
     return () => window.cancelAnimationFrame(frame);
   }, [initialized, fitView]);
 
+  const auditByNode = useMemo(() => nodeAuditIndex(audit), [audit]);
+  const flaggedEdges = useMemo(() => auditedEdgeKeys(audit), [audit]);
+
   const decoratedNodes = useMemo(
-    () => flowNodes.map((node) => ({ ...node, selected: node.id === selectedId })),
-    [flowNodes, selectedId],
+    () =>
+      flowNodes.map((node) => ({
+        ...node,
+        selected: node.id === selectedId,
+        data: { ...node.data, audit: auditByNode.get(node.id) },
+      })),
+    [flowNodes, selectedId, auditByNode],
   );
 
   const decoratedEdges = useMemo(
     () =>
-      selectedId === null
-        ? flowEdges
-        : flowEdges.map((edge) =>
-            edgeTouchesNode(edge, selectedId)
-              ? { ...edge, style: { ...edge.style, opacity: 1, strokeWidth: 2 }, zIndex: 5 }
-              : { ...edge, style: { ...edge.style, opacity: 0.16 } },
-          ),
-    [flowEdges, selectedId],
+      flowEdges.map((edge) => {
+        const flagged = flaggedEdges.has(edgeKey(edge.source, edge.target));
+        const base = flagged
+          ? {
+              ...edge,
+              style: { ...edge.style, stroke: SEVERITY_META.error.color, strokeWidth: 2.2 },
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                color: SEVERITY_META.error.color,
+                width: 18,
+                height: 18,
+              },
+            }
+          : edge;
+
+        if (selectedId === null) {
+          return base;
+        }
+
+        return edgeTouchesNode(base, selectedId)
+          ? { ...base, style: { ...base.style, opacity: 1, strokeWidth: flagged ? 2.6 : 2 }, zIndex: 5 }
+          : { ...base, style: { ...base.style, opacity: 0.16 } };
+      }),
+    [flowEdges, selectedId, flaggedEdges],
   );
 
   return (
@@ -146,6 +177,14 @@ function MacroGraphCanvas({
         <span className="text-[11px] text-slate-400">
           <span className="font-semibold text-slate-200">{relations.length}</span> relations
         </span>
+        {audit.findings.length > 0 && (
+          <>
+            <span className="h-3 w-px bg-ink-600" />
+            <span className="text-[11px] text-slate-400">
+              <span className="font-semibold text-rose-300">{audit.findings.length}</span> audit findings
+            </span>
+          </>
+        )}
       </div>
 
       <div className="pointer-events-none absolute bottom-3 left-4 flex flex-wrap items-center gap-3 rounded-lg border border-ink-700/70 bg-ink-900/75 px-3 py-1.5 backdrop-blur">
@@ -189,6 +228,8 @@ const nodeTypes = {
 function ComponentCard({ data, selected }: NodeProps<Node<ComponentNodeData, 'component'>>) {
   const component = data.component;
   const meta = LAYER_META[component.layer];
+  const audit = data.audit;
+  const auditMeta = audit ? SEVERITY_META[audit.severity] : null;
 
   return (
     <div
@@ -197,17 +238,24 @@ function ComponentCard({ data, selected }: NodeProps<Node<ComponentNodeData, 'co
           ? 'border-sky-400/90 ring-2 ring-sky-400/25'
           : 'border-ink-600/70 hover:border-ink-600'
       }`}
-      style={{ borderLeft: `3px solid ${meta.color}` }}
+      style={{
+        borderLeft: `3px solid ${meta.color}`,
+        outline: auditMeta && !selected ? `1px solid ${auditMeta.color}88` : undefined,
+        outlineOffset: -1,
+      }}
       title={`${component.id}\n${component.filePath}`}
     >
       <Handle type="target" position={Position.Left} className="kodo-handle !left-[-4px]" />
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[13px] font-semibold text-slate-100">{component.name}</span>
-        <span
-          className="shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide"
-          style={{ color: meta.color, borderColor: `${meta.color}44`, backgroundColor: `${meta.color}14` }}
-        >
-          {KIND_LABEL[component.kind] ?? component.kind}
+        <span className="flex shrink-0 items-center gap-1">
+          {audit && <AlertBadge nodeAudit={audit} />}
+          <span
+            className="shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide"
+            style={{ color: meta.color, borderColor: `${meta.color}44`, backgroundColor: `${meta.color}14` }}
+          >
+            {KIND_LABEL[component.kind] ?? component.kind}
+          </span>
         </span>
       </div>
 

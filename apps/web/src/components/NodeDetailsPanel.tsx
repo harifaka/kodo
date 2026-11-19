@@ -1,16 +1,28 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { LAYER_META, LAYER_ORDER, STACK_META, KIND_LABEL } from '../lib/layers';
-import type { ComponentNode, ComponentRelation, WorkspaceIR } from '../types/core-ir';
+import { findingsForNode } from '../lib/audit';
+import type { AuditFinding, ComponentNode, ComponentRelation, WorkspaceIR } from '../types/core-ir';
 import { CodeIcon, CopyIcon, ExternalIcon } from './icons';
+import { AuditPanel, FindingRow } from './AuditPanel';
+import { HealthScoreCard } from './HealthScore';
 
 interface NodeDetailsPanelProps {
   workspace: WorkspaceIR;
   selected: ComponentNode | null;
   onSelect: (node: ComponentNode | null) => void;
+  onSelectNodeId: (nodeId: string) => void;
   onOpenInInspector: () => void;
+  onOpenFinding: (finding: AuditFinding) => void;
 }
 
-export function NodeDetailsPanel({ workspace, selected, onSelect, onOpenInInspector }: NodeDetailsPanelProps) {
+export function NodeDetailsPanel({
+  workspace,
+  selected,
+  onSelect,
+  onSelectNodeId,
+  onOpenInInspector,
+  onOpenFinding,
+}: NodeDetailsPanelProps) {
   return (
     <aside className="flex w-[344px] shrink-0 flex-col border-l border-ink-700/70 bg-ink-900/60">
       <div className="flex items-center justify-between border-b border-ink-700/70 px-4 py-2.5">
@@ -35,9 +47,15 @@ export function NodeDetailsPanel({ workspace, selected, onSelect, onOpenInInspec
             node={selected}
             onSelect={onSelect}
             onOpenInInspector={onOpenInInspector}
+            onSelectNodeId={onSelectNodeId}
+            onOpenFinding={onOpenFinding}
           />
         ) : (
-          <WorkspaceOverview workspace={workspace} />
+          <WorkspaceOverview
+            workspace={workspace}
+            onSelectNodeId={onSelectNodeId}
+            onOpenFinding={onOpenFinding}
+          />
         )}
       </div>
     </aside>
@@ -49,15 +67,23 @@ function SelectedDetails({
   node,
   onSelect,
   onOpenInInspector,
+  onSelectNodeId,
+  onOpenFinding,
 }: {
   workspace: WorkspaceIR;
   node: ComponentNode;
   onSelect: (node: ComponentNode | null) => void;
   onOpenInInspector: () => void;
+  onSelectNodeId: (nodeId: string) => void;
+  onOpenFinding: (finding: AuditFinding) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const meta = LAYER_META[node.layer];
   const byId = useMemo(() => new Map(workspace.nodes.map((item) => [item.id, item])), [workspace.nodes]);
+  const findings = useMemo(
+    () => findingsForNode(workspace.audit, node.id),
+    [workspace.audit, node.id],
+  );
 
   const outgoing = workspace.relations.filter((relation) => relation.sourceId === node.id);
   const incoming = workspace.relations.filter((relation) => relation.targetId === node.id);
@@ -114,6 +140,22 @@ function SelectedDetails({
           Open in Code Inspector
         </button>
       </Section>
+
+      {findings.length > 0 && (
+        <Section title={`Audit findings · ${findings.length}`}>
+          <ul className="space-y-1.5">
+            {findings.map((finding) => (
+              <FindingRow
+                key={finding.id}
+                finding={finding}
+                nodesById={byId}
+                onSelectNode={onSelectNodeId}
+                onOpenFile={onOpenFinding}
+              />
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {node.annotations.length > 0 && (
         <Section title={`Annotations · ${node.annotations.length}`}>
@@ -233,17 +275,30 @@ function RelationList({
   );
 }
 
-function WorkspaceOverview({ workspace }: { workspace: WorkspaceIR }) {
+function WorkspaceOverview({
+  workspace,
+  onSelectNodeId,
+  onOpenFinding,
+}: {
+  workspace: WorkspaceIR;
+  onSelectNodeId: (nodeId: string) => void;
+  onOpenFinding: (finding: AuditFinding) => void;
+}) {
   const counts = LAYER_ORDER.map((layer) => ({
     layer,
     count: workspace.nodes.filter((node) => node.layer === layer).length,
   })).filter((entry) => entry.count > 0);
   const max = Math.max(1, ...counts.map((entry) => entry.count));
+  const nodesById = useMemo(() => new Map(workspace.nodes.map((node) => [node.id, node])), [workspace.nodes]);
 
   return (
     <div className="px-4 py-3">
       <h2 className="truncate text-[14px] font-semibold text-white">{workspace.name}</h2>
       <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-slate-500">{workspace.rootPath}</p>
+
+      <div className="mt-3">
+        <HealthScoreCard report={workspace.audit} />
+      </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <Stat label="Components" value={workspace.nodes.length} />
@@ -268,6 +323,13 @@ function WorkspaceOverview({ workspace }: { workspace: WorkspaceIR }) {
           ))}
         </ul>
       </div>
+
+      <AuditPanel
+        report={workspace.audit}
+        nodesById={nodesById}
+        onSelectNode={onSelectNodeId}
+        onOpenFile={onOpenFinding}
+      />
 
       <div className="mt-5 rounded-lg border border-ink-700/60 bg-ink-950/40 px-3 py-2.5">
         <p className="text-[11px] font-medium text-slate-300">Inspect a component</p>

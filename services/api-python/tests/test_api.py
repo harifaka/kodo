@@ -82,6 +82,45 @@ def test_scan_rejects_unknown_root(client: TestClient, tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
+def test_scan_returns_deterministic_audit_findings(client: TestClient, tmp_path: Path) -> None:
+    package = tmp_path / "shop" / "src" / "main" / "java" / "com" / "acme" / "shop"
+    (package / "repository").mkdir(parents=True)
+    (package / "controller").mkdir(parents=True)
+    (package / "repository" / "OrderRepository.java").write_text(
+        "package com.acme.shop.repository;\npublic class OrderRepository {}\n",
+        encoding="utf-8",
+    )
+    (package / "controller" / "OrderController.java").write_text(
+        (
+            "package com.acme.shop.controller;\n"
+            "import com.acme.shop.repository.OrderRepository;\n"
+            "import org.springframework.web.bind.annotation.RestController;\n"
+            "@RestController\n"
+            "public class OrderController {\n"
+            "    private final OrderRepository repository;\n"
+            "    public OrderController(OrderRepository repository) { this.repository = repository; }\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post("/api/v1/scan", json={"path": str(tmp_path / "shop")})
+
+    assert response.status_code == 200
+    audit = response.json()["audit"]
+    assert audit["score"] < 100
+    finding = next(item for item in audit["findings"] if item["ruleId"] == "LAYER_VIOLATION")
+    assert finding["id"] == (
+        "LAYER_VIOLATION:com.acme.shop.controller.OrderController"
+        "->com.acme.shop.repository.OrderRepository"
+    )
+    assert finding["severity"] == "error"
+    assert finding["edgeKeys"] == [
+        "com.acme.shop.controller.OrderController->com.acme.shop.repository.OrderRepository"
+    ]
+    assert finding["filePath"] == "src/main/java/com/acme/shop/controller/OrderController.java"
+
+
 def test_file_inspector_returns_source(client: TestClient, tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()

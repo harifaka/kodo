@@ -56,6 +56,7 @@ def test_schema_rejects_unknown_properties(schema: dict) -> None:
         "relations": [],
         "mermaidClassDiagram": "",
         "warnings": [],
+        "audit": {"score": 100, "summary": {"errors": 0, "warnings": 0, "info": 0}, "findings": []},
         "unexpected": True,
     }
 

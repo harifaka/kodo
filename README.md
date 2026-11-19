@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 1](https://img.shields.io/badge/Status-Phase%201%20(MVP)-orange.svg)
+![Status: Phase 2](https://img.shields.io/badge/Status-Phase%202%20(MVP)-orange.svg)
 
 ---
 
@@ -15,6 +15,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Single Source of Truth (Core IR):** Stack-agnostic Intermediate Representation of services, classes, business fields, relations, and annotations.
 - **Local-First & SaaS-Ready:** One shared React + TypeScript UI packaged as a native desktop app with **Tauri** (built via GitHub Actions) and deployable as a **Dockerized web app**.
 - **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
+- **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
 
 ---
 
@@ -35,7 +36,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
-## Quick Start (Phase 1)
+## Quick Start (Phases 1–2)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -66,10 +67,10 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - Interactive **React Flow** service/layer map, **Mermaid** (`classDiagram`) zoomable UML view, and read-only **Monaco Editor** file inspector.
 - Tauri v2 desktop wrapper + local dev orchestration.
 
-### Phase 2: Pattern & Vibe-Audit Engine
+### Phase 2: Pattern & Vibe-Audit Engine - Delivered
 - Deterministic rule engine running on the Core IR (zero LLM required).
-- Detects architectural drift and vibe-code anti-patterns: layer violations (e.g., Controller -> Repository), circular dependencies, God Classes, missing DTOs/validations.
-- Visual error highlighting on the graph + Architecture Health Score panel.
+- Detects architectural drift and vibe-code anti-patterns: layer violations (e.g., Controller -> Repository), circular dependencies, God Classes, exposed entities, missing validation and orphan components.
+- Visual error highlighting on the graph + **Architecture Health Score** panel with file jump-to-line links.
 
 ### Phase 3: Real-Life Business Field Editor & Safe Round-Trip
 - Macro/Micro editing: edit service links on the canvas and real business fields, types, and annotations (`@Entity`, `@Column`, `[Required]`, etc.) in a keyboard-friendly inspector.

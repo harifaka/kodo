@@ -9,6 +9,7 @@ from app.analyzers.common import ReferenceCandidate
 from app.analyzers.java import parse_java
 from app.analyzers.scanner import ScanFiles, collect_files, detect_stacks
 from app.analyzers.typescript import parse_script
+from app.audit import run_audit
 from app.models.ir import ComponentNode, ComponentRelation, WorkspaceIR
 from app.services.csharp_client import analyze_workspace
 from app.services.mermaid import generate_class_diagram
@@ -66,6 +67,7 @@ async def build_workspace(raw_path: str) -> WorkspaceIR:
         relations=relations,
         mermaid_class_diagram=generate_class_diagram(nodes, relations),
         warnings=warnings,
+        audit=run_audit(nodes, relations),
     )
 
 

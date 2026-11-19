@@ -1,14 +1,15 @@
-# Kodo — Developer Setup (Phase 1: Vibe-Code X-Ray)
+# Kodo — Developer Setup (Phases 1–2: Vibe-Code X-Ray + Pattern Audit)
 
-Phase 1 is a **read-only** architecture visualizer. It scans a folder, maps Java, TypeScript,
-JavaScript and C# sources onto the Core IR, and renders a layer graph, a Mermaid UML diagram and a
-read-only Monaco source inspector. Nothing is ever written to the scanned project.
+Phases 1 and 2 are **read-only**. Kodo scans a folder, maps Java, TypeScript, JavaScript and C#
+sources onto the Core IR, runs a deterministic audit over that IR, and renders a layer graph, a
+Mermaid UML diagram, an architecture health score with findings, and a read-only Monaco source
+inspector. Nothing is ever written to the scanned project.
 
 ```
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
-services/api-python (FastAPI :8088)      ← owner of the Core IR
+services/api-python (FastAPI :8088)      ← owner of the Core IR + deterministic audit engine
         │  HTTP/JSON
         ▼
 services/analyzer-csharp (Roslyn :5050)  ← stateless C# / WPF / .NET AST extraction (Docker)
@@ -98,11 +99,31 @@ Open <http://127.0.0.1:5173>.
 2. Click **Scan Project** (or press Enter).
 3. Explore:
    - **Macro Graph** — layer-grouped React Flow map. Click a node to inspect it in the right panel;
-     double-click to zoom to it.
+     double-click to zoom to it. Nodes and edges with audit findings are outlined in red (error) or
+     amber (warning) and carry a finding count badge.
    - **UML Diagram** — server-generated Mermaid `classDiagram`. Drag to pan, `Ctrl` + scroll to zoom,
      **Fit** to see everything.
    - **Code Inspector** — read-only Monaco view of the selected component's file.
-   - **Open in Code Inspector** — jumps from the side panel to the source view.
+   - **Open in Code Inspector** — jumps from the side panel to the source view, including from an
+     audit finding's file button.
+4. Read the **audit**: the workspace panel shows the Architecture Health Score plus every finding
+   (filterable by severity). Selecting a component lists the findings that mention it.
+
+### Audit rules (Phase 2)
+
+| Rule | Severity | Detects |
+| --- | --- | --- |
+| `LAYER_VIOLATION` | error | A dependency that skips or inverts a layer boundary (e.g. Controller → Repository). |
+| `CIRCULAR_DEPENDENCY` | error | Cycles in the dependency graph (Tarjan SCC, shortest cycle reported). |
+| `GOD_CLASS` | warning | Classes/records/modules with >15 fields, >20 methods or >30 members. |
+| `ORPHAN_COMPONENT` | info | Controller/service/repository/view-model components with no relations at all. |
+| `ENTITY_EXPOSED_IN_CONTROLLER` | warning | A controller whose signature or relations expose a persistence entity. |
+| `MISSING_VALIDATION` | warning | A controller accepting a DTO-ish payload with no validation annotations. |
+
+The score starts at 100 and subtracts 10 per error, 4 per warning and 1 per info finding (clamped at
+0). Rules are pure functions of the Core IR — no filesystem, network, clock or LLM — and findings are
+ordered deterministically so repeated scans are diffable. The report is returned as
+`WorkspaceIR.audit` (`score`, `summary`, `findings`).
 
 Notes:
 
@@ -116,7 +137,7 @@ Notes:
 ## 4. Desktop app (Tauri v2)
 
 The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
-processes in Phase 1.
+processes in Phases 1–2.
 
 ```powershell
 cd apps/web
@@ -149,10 +170,11 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 ## 6. Tests & validation
 
 ```powershell
-# Python: parsers, relation resolver, Mermaid generator, security, Core IR schema conformance
+# Python: parsers, relation resolver, Mermaid generator, audit rules, security, Core IR schema conformance
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
+python -m ruff check app tests
 
 # C#: build the Roslyn service
 dotnet build services/analyzer-csharp
@@ -182,6 +204,15 @@ conflicts with the published container port — run only one of them. Scans stil
 **Mermaid shows a render error.** The raw diagram is available via the **Source** toggle, and the
 scan response contains the same string under `mermaidClassDiagram` — useful for bug reports.
 
+**The audit score is 100 but the code feels messy.** Rules only see components and relations that
+the analyzers actually discovered. Unresolved references, primitives and files outside the scan scope
+produce no edges, so the audit cannot flag them. Narrow the scan to the service/module you care
+about and check the diagnostics bar for skipped or unparsable files.
+
+**A finding seems wrong.** Findings are deterministic: the same tree always produces the same ids.
+Compare `workspace.audit.findings[].nodeIds` / `edgeKeys` with the graph, and adjust the rule
+thresholds in `services/api-python/app/audit/rules/` if the guideline is too strict for your project.
+
 **Tauri build fails immediately.** Rust/toolchain prerequisites are missing; the browser workflow
 (`npm run dev`) does not require Rust.
 
@@ -193,19 +224,20 @@ attempt a source build and require a C compiler.
 ## 8. Repository layout
 
 ```
-.cursorrules                      Architecture rules (Core IR, layers, read-only Phase 1)
+.cursorrules                      Architecture rules (Core IR, layers, read-only Phases 1-2)
 docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
 packages/core-ir/schema.json      Canonical JSON Schema contract
 services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088)
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
+  app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py
-  tests/                          pytest suite incl. schema conformance
+  tests/                          pytest suite incl. audit rules + schema conformance
 apps/web/                         React + TypeScript + Vite + Tailwind UI
-  src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, TopBar
+  src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, AuditPanel, HealthScore
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,
-`apps/web/src/types/core-ir.ts` and `services/analyzer-csharp/Models/CoreIr.cs` together — see
-[.cursorrules](/C:/source/kodo/.cursorrules).
+`apps/web/src/types/core-ir.ts` and — for node/relation shapes — `services/analyzer-csharp/Models/CoreIr.cs`,
+together. See [.cursorrules](/C:/source/kodo/.cursorrules).

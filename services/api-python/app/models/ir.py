@@ -83,6 +83,45 @@ class ComponentRelation(IrModel):
     type: RelationType
 
 
+class AuditRuleId(StrEnum):
+    LAYER_VIOLATION = "LAYER_VIOLATION"
+    CIRCULAR_DEPENDENCY = "CIRCULAR_DEPENDENCY"
+    GOD_CLASS = "GOD_CLASS"
+    ORPHAN_COMPONENT = "ORPHAN_COMPONENT"
+    ENTITY_EXPOSED_IN_CONTROLLER = "ENTITY_EXPOSED_IN_CONTROLLER"
+    MISSING_VALIDATION = "MISSING_VALIDATION"
+
+
+class Severity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+class AuditFinding(IrModel):
+    id: str
+    rule_id: AuditRuleId
+    severity: Severity
+    title: str
+    message: str
+    suggestion: str
+    node_ids: list[str] = Field(default_factory=list)
+    edge_keys: list[str] = Field(default_factory=list)
+    file_path: str | None = None
+
+
+class AuditSummary(IrModel):
+    errors: int = 0
+    warnings: int = 0
+    info: int = 0
+
+
+class AuditReport(IrModel):
+    score: int = Field(default=100, ge=0, le=100)
+    summary: AuditSummary = Field(default_factory=AuditSummary)
+    findings: list[AuditFinding] = Field(default_factory=list)
+
+
 class WorkspaceIR(IrModel):
     name: str
     root_path: str
@@ -91,3 +130,4 @@ class WorkspaceIR(IrModel):
     relations: list[ComponentRelation]
     mermaid_class_diagram: str = ""
     warnings: list[str] = Field(default_factory=list)
+    audit: AuditReport = Field(default_factory=AuditReport)

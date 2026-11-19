@@ -20,7 +20,7 @@ const STEPS = [
   {
     icon: UmlIcon,
     title: 'Scan and explore',
-    body: 'Get the layer graph, generated UML and read-only source inspection in one place.',
+    body: 'Get the layer graph, generated UML, deterministic audit findings and read-only source inspection in one place.',
   },
 ];
 
