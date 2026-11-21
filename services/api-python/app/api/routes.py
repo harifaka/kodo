@@ -17,6 +17,8 @@ from app.config import (
     MAX_INSPECT_BYTES,
     csharp_analyzer_url,
 )
+from app.generators import GeneratorError
+from app.models.blueprint import Blueprint, load_blueprint
 from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
 from app.patching.csharp_patcher import patch_csharp
 from app.patching.java_patcher import patch_java
@@ -40,6 +42,7 @@ from app.services.apply_service import (
 )
 from app.services.csharp_client import check_health
 from app.services.git_safety import GitStatus, inspect_git_status
+from app.services.scaffold_service import build_scaffold_plan
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
 
 router = APIRouter()
@@ -67,6 +70,23 @@ class FileContent(BaseModel):
     content: str
     language: str
     size: int
+
+
+class BlueprintResponse(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    exists: bool
+    blueprint: Blueprint | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ScaffoldRequest(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    root_path: str = Field(..., min_length=1)
+    blueprint: Blueprint
+    include_project_skeleton: bool = False
+    save_blueprint: bool = False
 
 
 class CSharpHealth(BaseModel):
@@ -178,6 +198,45 @@ async def dry_run(request: DryRunRequest) -> DryRunResponse:
         )
 
     return DryRunResponse(patches=patches, warnings=[])
+
+
+@router.get("/api/v1/blueprint", response_model=BlueprintResponse, tags=["builder"])
+def get_blueprint(
+    root: str = Query(..., description="Workspace root exactly as returned by /api/v1/scan."),
+) -> BlueprintResponse:
+    """Load ``kodo.blueprint.json`` from the workspace root, if present."""
+    try:
+        root_path = Path(root).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Workspace root does not exist.") from exc
+
+    if not root_path.is_dir():
+        raise HTTPException(status_code=400, detail="Workspace root is not a directory.")
+
+    exists, blueprint, warnings = load_blueprint(root_path)
+    return BlueprintResponse(exists=exists, blueprint=blueprint, warnings=warnings)
+
+
+@router.post("/api/v1/scaffold/dry-run", response_model=DryRunResponse, tags=["builder"])
+def scaffold_dry_run(request: ScaffoldRequest) -> DryRunResponse:
+    """Render a blueprint into a reviewable patch plan. Nothing is written to disk."""
+    try:
+        return build_scaffold_plan(
+            request.root_path,
+            request.blueprint,
+            include_project_skeleton=request.include_project_skeleton,
+            save_blueprint=request.save_blueprint,
+        )
+    except GeneratorError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "GENERATOR_ERROR", "message": str(exc)},
+        ) from exc
+    except PatchRejected as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": "PATH_REJECTED", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/api/v1/git/status", response_model=GitStatus, tags=["safety"])

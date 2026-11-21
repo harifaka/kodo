@@ -12,10 +12,11 @@ from app.config import DEFAULT_API_PORT, cors_origins
 app = FastAPI(
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–3. "
+        "Kodo Architecture Control Center — Phases 1–4. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
-        "audit, computes dry-run AST patches in memory, and applies reviewed patches to disk behind "
-        "path-containment, SHA-256 optimistic concurrency and Git working-tree guards."
+        "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
+        "versioned blueprint, and applies reviewed patches to disk behind path-containment, SHA-256 "
+        "optimistic concurrency and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -40,6 +41,8 @@ async def root() -> dict[str, str]:
         "scan": "POST /api/v1/scan",
         "audit": "POST /api/v1/audit",
         "dryRun": "POST /api/v1/dry-run",
+        "blueprint": "GET /api/v1/blueprint",
+        "scaffoldDryRun": "POST /api/v1/scaffold/dry-run",
         "gitStatus": "GET /api/v1/git/status",
         "apply": "POST /api/v1/apply",
         "rollback": "POST /api/v1/apply/rollback",

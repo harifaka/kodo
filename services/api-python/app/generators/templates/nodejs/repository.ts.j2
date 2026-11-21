@@ -1,0 +1,22 @@
+import { randomUUID } from 'node:crypto';
+
+import { {{ name }}Entity } from './{{ context.kebab }}.entity';
+
+export class {{ name }}Repository {
+  private readonly store = new Map<string, {{ name }}Entity>();
+
+  findAll(): {{ name }}Entity[] {
+    return Array.from(this.store.values());
+  }
+
+  findById(id: string): {{ name }}Entity | undefined {
+    return this.store.get(id);
+  }
+
+  save(entity: {{ name }}Entity): {{ name }}Entity {
+    const id = entity.id ?? randomUUID();
+    const saved: {{ name }}Entity = { ...entity, id };
+    this.store.set(id, saved);
+    return saved;
+  }
+}

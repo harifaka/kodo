@@ -1,0 +1,22 @@
+{% if context.validator_imports %}
+import { {{ context.validator_imports|join(', ') }} } from 'class-validator';
+
+{% endif %}
+export class {{ context.dto }} {
+{% for field in fields %}
+{% for decorator in field.decorators %}
+  {{ decorator }}
+{% endfor %}
+  {{ field.name }}{{ '?' if not field.required else '' }}: {{ field.ts_type }};
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
+}
+
+export class {{ name }}ResponseDto {
+  id!: string;
+{% for field in fields %}
+  {{ field.name }}{{ '?' if not field.required else '' }}: {{ field.ts_type }};
+{% endfor %}
+}

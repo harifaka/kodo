@@ -1,0 +1,21 @@
+using Xunit;
+
+using {{ namespace }}.Models;
+using {{ namespace }}.Services;
+
+namespace {{ namespace }}.Tests;
+
+public class {{ name }}ServiceTests
+{
+    [Fact]
+    public void CreateKeepsTheModel()
+    {
+        var service = new {{ name }}Service({% for dependency in dependencies %}({{ dependency.interface }})null!{% if not loop.last %}, {% endif %}{% endfor %});
+        var model = new {{ context.model }}();
+
+        var created = service.Create(model);
+
+        Assert.Same(model, created);
+        Assert.Contains(model, service.GetAll());
+    }
+}

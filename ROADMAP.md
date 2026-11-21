@@ -65,13 +65,26 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 
 ---
 
-## Phase 4: Multi-Stack Builder & Pattern Blueprints
+## Phase 4: Multi-Stack Builder & Pattern Blueprints ✅
 **Goal:** Scaffold new projects and standardized vertical slices across all three target stacks.
 
-- [ ] Implement stack generator plugins for **Spring Boot**, **C# WPF (MVVM)**, and **Node.js (Express/NestJS)**.
-- [ ] Add one-click **Vertical Slice** templates (e.g., Entity + DTO + Mapper + Repository + Service + Controller + Test skeleton).
-- [ ] Support saving and loading versionable `kodo.blueprint.json` files inside the target repository for PR reviews.
-- **Definition of Done:** Design a 3-service architecture visually from scratch and generate a compiling, pattern-compliant multi-stack skeleton.
+**Status:** Delivered — plugin generators, versioned blueprints and create-only scaffolding through the
+existing guarded apply pipeline. Every generated project is verified to score **100/100** with 0 errors,
+0 warnings and 0 info findings on Kodo's own Phase 2 audit engine.
+
+- [x] Implement stack generator plugins for **Spring Boot 3 / Java 21**, **C# WPF (.NET 8, MVVM)** and **Node.js (TypeScript, layered Express)**.
+  - [x] Jinja2 template plugins behind a `StackGeneratorPlugin` protocol + registry (`app/generators/`).
+  - [x] Vertical slices: Entity/Model, DTO with validation, Mapper, Repository, Service (constructor DI incl. `dependsOnSlices`), Controller exposing DTOs only, and a unit-test skeleton (`includeTests`).
+  - [x] Minimal project skeleton per stack (`includeProjectSkeleton`): `pom.xml` + `Application.java` + `application.yml`, `<Name>.csproj` + `App.xaml(.cs)`, `package.json` + `tsconfig.json` + `src/index.ts`.
+- [x] Add one-click **Vertical Slice** templates (e.g., Entity + DTO + Mapper + Repository + Service + Controller + Test skeleton).
+  - [x] `POST /api/v1/scaffold/dry-run` renders the whole blueprint into in-memory patches (`isNewFile`, `conflict`, warnings) — nothing is written.
+- [x] Support saving and loading versionable `kodo.blueprint.json` files inside the target repository for PR reviews.
+  - [x] Versioned schema (`schemaVersion: "1.0"`) in `packages/core-ir/blueprint.schema.json`, Pydantic models and TypeScript types.
+  - [x] `GET /api/v1/blueprint?root=…` returns `{ exists, blueprint }` and degrades malformed files to warnings.
+  - [x] Saving the blueprint is just another patch in the same guarded apply, so an existing file is updated through the SHA-256 overwrite path.
+- [x] Frontend **Builder** tab with stack selector, project/base metadata, slice designer (dependencies, fields, stack-aware types + validation presets), the 3-service demo preset, and a Monaco Diff preview with **NEW** badges.
+- [x] Extend guarded apply for create-only patches: `409 FILE_EXISTS` aborts the whole batch, nested folders are created inside the root, rollback deletes created files and prunes the empty folders.
+- **Definition of Done:** Design a 3-service architecture visually from scratch and generate a compiling, pattern-compliant multi-stack skeleton. ✅ verified live in the UI: Builder → 25 new files in the Monaco diff → Apply → auto re-scan shows the 3 controller/service/repository/entity graph at 100/100 → Rollback removes all files and folders.
 
 ---
 

@@ -4,13 +4,17 @@ import { ApiError, api } from '../lib/api';
 import { countLineChanges } from '../lib/diff';
 import { buildPatchOperations, isDraftEmpty, type Draft } from '../lib/draft';
 import type { WorkspaceIR } from '../types/core-ir';
+import type { ScaffoldPreview } from '../types/blueprint';
 import type { DryRunResponse, GitStatus } from '../types/patching';
-import { AlertIcon, CheckIcon, DiffIcon, ShieldIcon, Spinner } from './icons';
+import { AlertIcon, BuilderIcon, CheckIcon, DiffIcon, ShieldIcon, Spinner } from './icons';
 
 interface DiffPreviewProps {
   workspace: WorkspaceIR;
   draft: Draft;
   requestId: number;
+  /** Generated-file plan from the Builder; replaces the draft-derived dry-run while present. */
+  scaffold?: ScaffoldPreview | null;
+  onScaffoldDismiss?: () => void;
   onApplied: (applyId: string, appliedFiles: string[]) => void;
 }
 
@@ -59,7 +63,14 @@ const DIFF_OPTIONS_BASE = {
 
 const DEBOUNCE_MS = 220;
 
-export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPreviewProps) {
+export function DiffPreview({
+  workspace,
+  draft,
+  requestId,
+  scaffold = null,
+  onScaffoldDismiss,
+  onApplied,
+}: DiffPreviewProps) {
   const [state, setState] = useState<DryRunState>({
     response: null,
     planWarnings: [],
@@ -115,10 +126,12 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
   }, [workspace, gitNonce, state.response]);
 
   useEffect(() => {
-    if (!dirty) {
-      setState({ response: null, planWarnings: [], pending: false, error: null });
-      setApplyFailure(null);
-      setConfirm(null);
+    if (!dirty || scaffold) {
+      if (!scaffold) {
+        setState({ response: null, planWarnings: [], pending: false, error: null });
+        setApplyFailure(null);
+        setConfirm(null);
+      }
       return;
     }
 
@@ -164,22 +177,36 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [workspace, draft, dirty, plan, requestId, rerun]);
+  }, [workspace, draft, dirty, plan, requestId, rerun, scaffold]);
 
-  const patches = state.response?.patches ?? [];
+  const external = scaffold?.response ?? null;
+  const patches = external ? external.patches : state.response?.patches ?? [];
   const patchPaths = useMemo(() => patches.map((patch) => patch.filePath), [patches]);
   const selectedPatches = useMemo(
     () => patches.filter((patch) => !excluded.includes(patch.filePath)),
     [patches, excluded],
   );
   const selected = patches.find((patch) => patch.filePath === selectedPath) ?? patches[0] ?? null;
-  const globalWarnings = [...state.planWarnings, ...(state.response?.warnings ?? [])];
-  const waiting = state.pending || (dirty && state.response === null && state.error === null);
+  const globalWarnings = external
+    ? external.warnings
+    : [...state.planWarnings, ...(state.response?.warnings ?? [])];
+  const waiting = external ? false : state.pending || (dirty && state.response === null && state.error === null);
+  const diffError = external ? null : state.error;
+  const hasDiff = external !== null || dirty;
   const allSelected = patchPaths.length > 0 && selectedPatches.length === patchPaths.length;
+  const newFileCount = patches.filter((patch) => patch.isNewFile).length;
+  const conflictCount = patches.filter((patch) => patch.conflict).length;
 
   useEffect(() => {
     setExcluded([]);
-  }, [state.response]);
+  }, [state.response, external]);
+
+  useEffect(() => {
+    if (!external || external.patches.length === 0) {
+      return;
+    }
+    setSelectedPath(external.patches[0].filePath);
+  }, [external]);
 
   const runApply = useCallback(
     async (override: boolean) => {
@@ -195,8 +222,9 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
           rootPath: workspace.rootPath,
           patches: selectedPatches.map((patch) => ({
             filePath: patch.filePath,
-            expectedSha256: patch.originalSha256,
+            expectedSha256: patch.originalSha256 ?? null,
             proposedContent: patch.proposedContent,
+            isNewFile: patch.isNewFile ?? false,
           })),
           allowDirty: override,
           allowNonGit: override,
@@ -262,6 +290,32 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
         onApply={requestApply}
       />
 
+      {scaffold && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-sky-500/25 bg-sky-500/[0.06] px-3 py-1.5">
+          <BuilderIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+          <p className="text-[11px] leading-relaxed text-sky-100">
+            Generated plan · {scaffold.label} · {patches.length} file
+            {patches.length === 1 ? '' : 's'}
+            {newFileCount > 0 ? ` · ${newFileCount} new` : ''}
+          </p>
+          {conflictCount > 0 && (
+            <span className="text-[10px] leading-relaxed text-rose-300">
+              {conflictCount} path{conflictCount === 1 ? '' : 's'} already exist — applying is rejected
+              with FILE_EXISTS (Kodo never overwrites while scaffolding).
+            </span>
+          )}
+          {onScaffoldDismiss && (
+            <button
+              type="button"
+              onClick={onScaffoldDismiss}
+              className="ml-auto shrink-0 rounded px-1.5 text-[10px] text-sky-300/70 transition hover:bg-sky-500/10 hover:text-sky-100"
+            >
+              dismiss
+            </button>
+          )}
+        </div>
+      )}
+
       {applyFailure && (
         <div className="flex items-start gap-2 border-b border-rose-500/25 bg-rose-500/[0.07] px-4 py-2">
           <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" />
@@ -300,10 +354,10 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
         </div>
       )}
 
-      {!dirty ? (
+      {!hasDiff ? (
         <EmptyDiff
           title="No pending edits"
-          body="Add a field, change an annotation, or connect a relation, then review the surgical AST diff and apply it to disk."
+          body="Add a field, change an annotation, or connect a relation, then review the surgical AST diff and apply it to disk — or generate a whole project in the Builder tab."
         />
       ) : waiting ? (
         <div className="flex flex-1 items-center justify-center">
@@ -311,8 +365,8 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
             <Spinner /> computing in-memory patches…
           </span>
         </div>
-      ) : state.error ? (
-        <EmptyDiff title="Dry-run failed" body={state.error} tone="rose" />
+      ) : diffError ? (
+        <EmptyDiff title="Dry-run failed" body={diffError} tone="rose" />
       ) : patches.length === 0 ? (
         <EmptyDiff
           title="No file-level patches proposed"
@@ -370,7 +424,20 @@ export function DiffPreview({ workspace, draft, requestId, onApplied }: DiffPrev
                           <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-300">
                             {patch.filePath}
                           </span>
-                          {patch.warnings.length > 0 && (
+                          {patch.isNewFile && (
+                            <span
+                              title="Create-only patch: the apply fails with FILE_EXISTS if this path exists"
+                              className="shrink-0 rounded bg-emerald-500/15 px-1 py-px text-[8.5px] font-semibold tracking-wide text-emerald-300"
+                            >
+                              NEW
+                            </span>
+                          )}
+                          {patch.conflict && (
+                            <span className="shrink-0 rounded bg-rose-500/15 px-1 py-px text-[8.5px] font-semibold tracking-wide text-rose-300">
+                              EXISTS
+                            </span>
+                          )}
+                          {patch.warnings.length > 0 && !patch.conflict && (
                             <AlertIcon className="h-3 w-3 shrink-0 text-amber-300" />
                           )}
                         </div>
@@ -748,6 +815,15 @@ function monacoLanguage(language: string): string {
     case 'typescript':
     case 'javascript':
     case 'csharp':
+    case 'json':
+    case 'xml':
+    case 'yaml':
+    case 'html':
+    case 'css':
+    case 'markdown':
+    case 'python':
+    case 'shell':
+    case 'sql':
       return language;
     default:
       return 'plaintext';

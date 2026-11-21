@@ -1,0 +1,49 @@
+package {{ base }}.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import {{ base }}.dto.{{ name }}Dto;
+import {{ base }}.entity.{{ name }}Entity;
+import {{ base }}.mapper.{{ name }}Mapper;
+import {{ base }}.repository.{{ name }}Repository;
+{% for dependency in dependencies %}
+import {{ base }}.service.{{ dependency.name }}Service;
+{% endfor %}
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class {{ name }}ServiceTest {
+
+    @Mock
+    private {{ name }}Repository repository;
+
+    @Mock
+    private {{ name }}Mapper mapper;
+{% for dependency in dependencies %}
+
+    @Mock
+    private {{ dependency.name }}Service {{ dependency.variable }};
+{% endfor %}
+
+    @InjectMocks
+    private {{ name }}Service service;
+
+    @Test
+    void createPersistsTheMappedEntity() {
+        {{ name }}Dto dto = mock({{ name }}Dto.class);
+        {{ name }}Entity entity = new {{ name }}Entity();
+
+        when(mapper.toEntity(dto)).thenReturn(entity);
+        when(repository.save(entity)).thenReturn(entity);
+        when(mapper.toDto(entity)).thenReturn(dto);
+
+        assertThat(service.create(dto)).isSameAs(dto);
+    }
+}

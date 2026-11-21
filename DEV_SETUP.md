@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–3: X-Ray, Audit, Draft Editing, Dry-Run Diff, Guarded Apply)
+# Kodo — Developer Setup (Phases 1–4: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -15,14 +15,20 @@ Phase 3c adds the only write path in Kodo: a **guarded apply** that writes revie
 behind strict path containment, a Git working-tree check, SHA-256 optimistic concurrency, atomic
 writes and an in-memory rollback. Every write is explicitly confirmed by a human.
 
+Phase 4 adds the **Multi-Stack Builder**: Jinja2 stack generators turn a versioned
+`kodo.blueprint.json` into vertical slices for Spring Boot, C# WPF (MVVM) and Node.js, and expose them
+as a scaffold dry-run that reuses the Phase 3c guarded apply. New files are **create-only** — an
+existing path aborts the batch with `409 FILE_EXISTS` instead of being overwritten.
+
 ```
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
-services/api-python (FastAPI :8088)      ← Core IR, audit, /api/v1/dry-run orchestrator
-        │  HTTP/JSON                         (Tree-sitter patchers for Java/TS/JS)
+services/api-python (FastAPI :8088)      ← Core IR, audit, dry-run + scaffold orchestrator,
+        │  HTTP/JSON                         blueprint store, guarded apply (the only writer)
         ▼
 services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + trivia-preserving /patch
+                                            (also re-audits generated WPF slices)
 ```
 
 ---
@@ -287,8 +293,79 @@ Error responses always carry a structured `detail` object, which the UI maps to 
 | 409 | `GIT_DIRTY` | Uncommitted changes; retry with `allowDirty: true` after explicit confirmation. |
 | 409 | `NOT_A_GIT_REPO` | Not a Git repo (or no `git`); retry with `allowNonGit: true`. |
 | 409 | `STALE_FILE` | A file changed since the dry-run; re-run the dry-run and review again. |
+| 409 | `FILE_EXISTS` | A create-only scaffold patch targets a path that already exists (never overwritten). |
 | 413 | `FILE_TOO_LARGE` | Current or proposed content exceeds the 2 MB apply limit. |
 | 500 | `WRITE_FAILED` | Disk error; the batch was restored, nothing is half-written. |
+
+### Blueprint & scaffolding (Phase 4)
+
+A blueprint describes a project the same way Kodo thinks about it: a stack, a base package/namespace
+and a list of vertical slices. The canonical format lives in
+`packages/core-ir/blueprint.schema.json` (`schemaVersion: "1.0"`); Pydantic mirrors it in
+`app/models/blueprint.py` and the UI in `apps/web/src/types/blueprint.ts`.
+
+```json
+{
+  "schemaVersion": "1.0",
+  "projectName": "Acme Billing",
+  "stack": "spring-boot",
+  "basePackageOrNamespace": "com.acme.billing",
+  "slices": [
+    {
+      "name": "Order",
+      "fields": [
+        { "name": "number", "type": "string", "required": true, "annotations": [] },
+        { "name": "total", "type": "decimal", "required": true, "annotations": [] }
+      ],
+      "dependsOnSlices": ["Customer"],
+      "includeTests": true
+    }
+  ]
+}
+```
+
+`GET /api/v1/blueprint?root=…` returns `{ "exists": true, "blueprint": { … }, "warnings": [] }` or
+`{ "exists": false, "blueprint": null }`. A malformed file degrades to `blueprint: null` plus a
+warning — never a 500.
+
+`POST /api/v1/scaffold/dry-run` runs the stack plugin and returns the **standard `DryRunResponse`**
+with `isNewFile: true`, `originalContent: ""`, `originalSha256: null` and a `conflict` flag when the
+path already exists:
+
+```json
+{
+  "rootPath": "C:/work/new-shop",
+  "blueprint": { "schemaVersion": "1.0", "…": "…" },
+  "includeProjectSkeleton": true,
+  "saveBlueprint": true
+}
+```
+
+Apply it exactly like a Phase 3c patch batch, adding `isNewFile` (and `expectedSha256: null`):
+
+```json
+{
+  "rootPath": "C:/work/new-shop",
+  "patches": [
+    { "filePath": "src/main/java/com/acme/billing/entity/OrderEntity.java",
+      "expectedSha256": null, "proposedContent": "<from the dry-run>", "isNewFile": true }
+  ],
+  "allowDirty": false,
+  "allowNonGit": false
+}
+```
+
+Create-only pre-flight: the path must stay inside `rootPath` (no `..`, no absolute paths, no symlink
+folders), **must not exist** (otherwise the whole batch is rejected with `409 FILE_EXISTS` + `paths`),
+and missing parent folders are created one level at a time inside the root. Rollback deletes the files
+this batch created (verifying `writtenSha256` unless `force: true`) and prunes folders the batch
+created when they are empty — never `rootPath` itself. `kodo.blueprint.json` is the one exception: when
+it already exists it is an ordinary SHA-256-verified overwrite.
+
+Generator plugins live in `app/generators/` (`base.py` protocol + registry, `spring_boot.py`,
+`csharp_wpf.py`, `nodejs.py`, Jinja2 templates under `templates/<stack>/`). Each plugin is pure: text
+in, text out. The test suite writes the 3-service demo for every stack into a temp folder, re-scans it
+with the full pipeline and asserts **0 findings and 100/100**.
 
 Notes:
 
@@ -304,7 +381,7 @@ Notes:
 ## 4. Desktop app (Tauri v2)
 
 The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
-processes through Phase 3.
+processes through Phase 4.
 
 ```powershell
 cd apps/web
@@ -338,8 +415,9 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 
 ```powershell
 # Python: parsers, relation resolver, Mermaid generator, audit rules, security,
-# Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up)
-# and the guarded apply/rollback suite (needs `git` on PATH)
+# Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up),
+# the guarded apply/rollback suite (needs `git` on PATH) and the Phase 4 generator suite
+# (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -418,22 +496,28 @@ attempt a source build and require a C compiler.
 ## 8. Repository layout
 
 ```
-.cursorrules                      Architecture rules (Core IR, layers, guarded-write Phase 3c)
+.cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators)
 docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
 packages/core-ir/schema.json      Canonical JSON Schema contract
+packages/core-ir/blueprint.schema.json  Versioned kodo.blueprint.json contract (Phase 4)
 services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
   Analysis/                       Roslyn Core IR extraction
   Patching/                       trivia-preserving /patch rewriter (dry-run only)
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088)
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
+  app/generators/                 base.py (protocol + registry), spring_boot.py, csharp_wpf.py,
+                                  nodejs.py, templates/<stack>/*.j2
+  app/models/                     ir.py (Core IR), blueprint.py (versioned kodo.blueprint.json)
   app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
-                                  git_safety.py (read-only git), apply_service.py (the only writer)
+                                  git_safety.py (read-only git), apply_service.py (the only writer),
+                                  scaffold_service.py (blueprint → create-only dry-run)
   tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
-                                  guarded apply/rollback
+                                  guarded apply/rollback, stack generators + 100/100 self-audit
 apps/web/                         React + TypeScript + Vite + Tailwind UI
-  src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore
+  src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
+                                  NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)
 ```
 

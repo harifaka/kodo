@@ -1,0 +1,29 @@
+{% for dependency in dependencies %}
+import { {{ dependency.name }}Service } from '../{{ dependency.kebab }}/{{ dependency.kebab }}.service';
+{% endfor %}
+import { describe, expect, it, vi } from 'vitest';
+
+import { {{ context.dto }} } from './{{ context.kebab }}.dto';
+import { {{ name }}Repository } from './{{ context.kebab }}.repository';
+import { {{ name }}Service } from './{{ context.kebab }}.service';
+
+describe('{{ name }}Service', () => {
+  it('creates a {{ name }} through the repository', () => {
+    const repository = new {{ name }}Repository();
+{% for dependency in dependencies %}
+    const {{ dependency.variable }} = { findById: vi.fn() } as unknown as {{ dependency.name }}Service;
+{% endfor %}
+    const service = new {{ name }}Service(repository{% for dependency in dependencies %}, {{ dependency.variable }}{% endfor %});
+
+    const dto: {{ context.dto }} = {
+{% for field in fields %}
+      {{ field.name }}: {{ field.sample }},
+{% endfor %}
+    };
+
+    const created = service.create(dto);
+
+    expect(created.id).toBeTruthy();
+    expect(service.findAll()).toHaveLength(1);
+  });
+});

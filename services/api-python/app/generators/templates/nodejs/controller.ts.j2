@@ -1,0 +1,18 @@
+import { {{ context.dto }}, {{ name }}ResponseDto } from './{{ context.kebab }}.dto';
+import { {{ name }}Service } from './{{ context.kebab }}.service';
+
+export class {{ name }}Controller {
+  constructor(private readonly service: {{ name }}Service) {}
+
+  findAll(): {{ name }}ResponseDto[] {
+    return this.service.findAll();
+  }
+
+  findById(id: string): {{ name }}ResponseDto | undefined {
+    return this.service.findById(id);
+  }
+
+  create(dto: {{ context.dto }}): {{ name }}ResponseDto {
+    return this.service.create(dto);
+  }
+}

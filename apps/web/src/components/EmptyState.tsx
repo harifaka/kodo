@@ -43,7 +43,7 @@ export function EmptyState({ healthStatus, scanning }: EmptyStateProps) {
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300">
             <ShieldIcon className="h-3 w-3" />
-            Phases 1–3 · guarded disk writes
+            Phases 1–4 · guarded disk writes
           </span>
         </div>
 

@@ -1,0 +1,18 @@
+{% if context.uses_data_annotations %}
+using System.ComponentModel.DataAnnotations;
+
+{% endif %}
+namespace {{ namespace }}.Models;
+
+public class {{ context.model }}
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+{% for field in fields %}
+
+{% for annotation in field.annotations %}
+    {{ annotation }}
+{% endfor %}
+    public {{ field.cs_type }}{{ '?' if (not field.required and field.is_string) else '' }} {{ field.name }} { get; set; }{{ ' = string.Empty;' if field.is_string else '' }}
+{% endfor %}
+}

@@ -96,6 +96,55 @@ def resolve_root(raw_root: str) -> Path:
 
 
 def resolve_member(root: Path, raw_path: str) -> Path:
+    normalized = _validate_relative(raw_path)
+
+    try:
+        target = (root / normalized).resolve(strict=True)
+    except OSError as exc:
+        raise PatchRejected(404, f"File not found: {raw_path}") from exc
+
+    if not target.is_relative_to(root):
+        raise PatchRejected(400, "Path traversal outside the workspace root is not allowed.")
+    if not target.is_file():
+        raise PatchRejected(400, f"Not a file: {raw_path}")
+    return target
+
+
+def resolve_new_member(root: Path, raw_path: str) -> Path:
+    """Resolve a path Kodo intends to create.
+
+    The file itself must not exist yet, but its parents may. Every surviving ancestor is resolved
+    and must stay inside ``root``, so ``..``, absolute paths and symlinked folders are rejected
+    before a single byte is written.
+    """
+    normalized = _validate_relative(raw_path)
+    parts = normalized.parts
+
+    ancestor = root
+    index = 0
+    while index < len(parts) - 1:
+        candidate = ancestor / parts[index]
+        if not candidate.exists():
+            break
+        if candidate.is_symlink():
+            raise PatchRejected(400, f"Refusing to create files through a symlink: {parts[index]}")
+        ancestor = candidate
+        index += 1
+
+    try:
+        resolved = ancestor.resolve(strict=True)
+    except OSError as exc:
+        raise PatchRejected(400, f"Cannot create {raw_path}: parent folder is not accessible.") from exc
+
+    if not resolved.is_relative_to(root):
+        raise PatchRejected(400, "Path traversal outside the workspace root is not allowed.")
+    if not resolved.is_dir():
+        raise PatchRejected(400, f"Not a directory: {normalized.parent}")
+
+    return resolved.joinpath(*parts[index:])
+
+
+def _validate_relative(raw_path: str) -> PurePosixPath:
     if not raw_path or "\x00" in raw_path:
         raise PatchRejected(400, "filePath is required for every operation.")
 
@@ -108,16 +157,9 @@ def resolve_member(root: Path, raw_path: str) -> Path:
     ):
         raise PatchRejected(400, f"Absolute paths are not allowed: {raw_path}")
 
-    if any(part == ".." for part in PurePosixPath(normalized).parts):
+    path = PurePosixPath(normalized)
+    if any(part == ".." for part in path.parts):
         raise PatchRejected(400, "Path traversal outside the workspace root is not allowed.")
-
-    try:
-        target = (root / normalized).resolve(strict=True)
-    except OSError as exc:
-        raise PatchRejected(404, f"File not found: {raw_path}") from exc
-
-    if not target.is_relative_to(root):
-        raise PatchRejected(400, "Path traversal outside the workspace root is not allowed.")
-    if not target.is_file():
-        raise PatchRejected(400, f"Not a file: {raw_path}")
-    return target
+    if not path.parts:
+        raise PatchRejected(400, "filePath is required for every operation.")
+    return path

@@ -1,0 +1,60 @@
+using System.Collections.ObjectModel;
+
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+
+using {{ namespace }}.Models;
+using {{ namespace }}.Services;
+
+namespace {{ namespace }}.ViewModels;
+
+[ObservableObject]
+public partial class {{ name }}ViewModel
+{
+    private readonly {{ context.interface }} {{ camel_name }}Service;
+{% for dependency in dependencies %}
+    private readonly {{ dependency.interface }} {{ dependency.variable }};
+{% endfor %}
+
+    public {{ name }}ViewModel({{ context.interface }} {{ camel_name }}Service{% for dependency in dependencies %}, {{ dependency.interface }} {{ dependency.variable }}{% endfor %})
+    {
+        this.{{ camel_name }}Service = {{ camel_name }}Service;
+{% for dependency in dependencies %}
+        this.{{ dependency.variable }} = {{ dependency.variable }};
+{% endfor %}
+        Load();
+    }
+
+    [ObservableProperty]
+    private ObservableCollection<{{ context.model }}> models = [];
+
+    [ObservableProperty]
+    private {{ context.model }}? selectedModel;
+
+    [RelayCommand]
+    private void Load()
+    {
+        Models = new ObservableCollection<{{ context.model }}>({{ camel_name }}Service.GetAll());
+    }
+
+    [RelayCommand]
+    private void Create()
+    {
+        {{ camel_name }}Service.Create(new {{ context.model }}());
+        Load();
+    }
+{% for dependency in dependencies %}
+
+    [RelayCommand]
+    private void Load{{ dependency.name }}()
+    {
+        var selected = SelectedModel;
+        if (selected is null)
+        {
+            return;
+        }
+
+        {{ dependency.variable }}.FindById(selected.Id);
+    }
+{% endfor %}
+}

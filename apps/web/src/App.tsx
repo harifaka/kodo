@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { BuilderPanel } from './components/BuilderPanel';
 import { CodeInspector } from './components/CodeInspector';
 import { DiffPreview } from './components/DiffPreview';
 import { EmptyState } from './components/EmptyState';
@@ -7,7 +8,16 @@ import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { TopBar } from './components/TopBar';
 import { UmlDiagram } from './components/UmlDiagram';
 import { WarningsBar } from './components/WarningsBar';
-import { AlertIcon, CheckIcon, CodeIcon, DiffIcon, GraphIcon, Spinner, UmlIcon } from './components/icons';
+import {
+  AlertIcon,
+  BuilderIcon,
+  CheckIcon,
+  CodeIcon,
+  DiffIcon,
+  GraphIcon,
+  Spinner,
+  UmlIcon,
+} from './components/icons';
 import { useDraftAudit } from './hooks/useDraftAudit';
 import { useHealth } from './hooks/useHealth';
 import { ApiError, api } from './lib/api';
@@ -26,6 +36,7 @@ import {
   type Draft,
 } from './lib/draft';
 import { buildGraph } from './lib/layout';
+import type { ScaffoldPreview } from './types/blueprint';
 import type {
   AuditFinding,
   ComponentField,
@@ -35,7 +46,7 @@ import type {
   WorkspaceIR,
 } from './types/core-ir';
 
-type TabId = 'graph' | 'uml' | 'code' | 'diff';
+type TabId = 'graph' | 'uml' | 'code' | 'builder' | 'diff';
 
 const LAST_PATH_KEY = 'kodo:lastPath';
 // Stable empty arrays: useDraftAudit keys its effect on these inputs.
@@ -60,6 +71,8 @@ export default function App() {
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackConflict, setRollbackConflict] = useState<string[] | null>(null);
   const [previewRequest, setPreviewRequest] = useState(0);
+  const [scaffold, setScaffold] = useState<ScaffoldPreview | null>(null);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const health = useHealth();
 
   const draftView = useMemo(() => (workspace ? applyDraft(workspace, draft) : null), [workspace, draft]);
@@ -164,6 +177,8 @@ export default function App() {
       const result = await api.scan(target);
       setWorkspace(result);
       setDraft(emptyDraft());
+      setScaffold(null);
+      setWorkspaceRevision((value) => value + 1);
       if (options.resetView) {
         setSelectedId(null);
         setTab('graph');
@@ -205,15 +220,20 @@ export default function App() {
   const handleApplied = useCallback(
     async (applyId: string, appliedFiles: string[]) => {
       const target = workspace?.rootPath ?? path.trim();
+      const fromScaffold = scaffold !== null;
       setLastApply({ applyId, appliedFiles, rootPath: target });
       setRollbackConflict(null);
       setNotice(null);
       setError(null);
+      setScaffold(null);
       if (!target) {
         return;
       }
       try {
         await scanWorkspace(target, { resetView: false });
+        if (fromScaffold) {
+          setTab('graph');
+        }
       } catch (reason) {
         setError(
           `Applied ${appliedFiles.length} file(s) to disk, but the automatic re-scan failed: ${
@@ -222,7 +242,7 @@ export default function App() {
         );
       }
     },
-    [path, scanWorkspace, workspace],
+    [path, scaffold, scanWorkspace, workspace],
   );
 
   const handleRollback = useCallback(
@@ -238,8 +258,12 @@ export default function App() {
       try {
         const result = await api.rollback(lastApply.applyId, force);
         setLastApply(null);
+        const deleted = result.deletedFiles?.length ?? 0;
+        const restored = result.restoredFiles.length;
         setNotice(
-          `Rolled back ${result.restoredFiles.length} file(s); the original bytes are back on disk and the workspace was re-scanned.`,
+          deleted > 0
+            ? `Rolled back ${deleted + restored} file(s): ${deleted} generated file(s) deleted, ${restored} restored, and the workspace was re-scanned.`
+            : `Rolled back ${restored} file(s); the original bytes are back on disk and the workspace was re-scanned.`,
         );
         if (target) {
           await scanWorkspace(target, { resetView: false });
@@ -366,6 +390,7 @@ export default function App() {
                 workspace={view}
                 hasSelection={selected !== null}
                 draft={draftDirty ? draftCounts : null}
+                scaffoldCount={scaffold ? scaffold.response.patches.length : null}
               />
               <WarningsBar warnings={view.warnings} />
               <div className="min-h-0 flex-1">
@@ -400,11 +425,24 @@ export default function App() {
                   />
                 )}
                 {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}
+                {tab === 'builder' && (
+                  <BuilderPanel
+                    key={`${view.rootPath}-builder`}
+                    rootPath={view.rootPath}
+                    revision={workspaceRevision}
+                    onPreviewReady={(preview) => {
+                      setScaffold(preview);
+                      setTab('diff');
+                    }}
+                  />
+                )}
                 {tab === 'diff' && workspace && (
                   <DiffPreview
                     workspace={workspace}
                     draft={draft}
                     requestId={previewRequest}
+                    scaffold={scaffold}
+                    onScaffoldDismiss={() => setScaffold(null)}
                     onApplied={handleAppliedChange}
                   />
                 )}
@@ -444,22 +482,35 @@ function TabBar({
   workspace,
   hasSelection,
   draft,
+  scaffoldCount,
 }: {
   tab: TabId;
   onChange: (tab: TabId) => void;
   workspace: WorkspaceIR;
   hasSelection: boolean;
   draft: ReturnType<typeof draftEditCount> | null;
+  scaffoldCount: number | null;
 }) {
   const tabs: Array<{ id: TabId; label: string; icon: typeof GraphIcon; badge?: string }> = [
     { id: 'graph', label: 'Macro Graph', icon: GraphIcon, badge: String(workspace.nodes.length) },
     { id: 'uml', label: 'UML Diagram', icon: UmlIcon },
     { id: 'code', label: 'Code Inspector', icon: CodeIcon, badge: hasSelection ? '●' : undefined },
     {
+      id: 'builder',
+      label: 'Builder',
+      icon: BuilderIcon,
+      badge: scaffoldCount ? String(scaffoldCount) : undefined,
+    },
+    {
       id: 'diff',
       label: 'Diff Preview',
       icon: DiffIcon,
-      badge: draft && draft.total > 0 ? String(draft.total) : undefined,
+      badge:
+        draft && draft.total > 0
+          ? String(draft.total)
+          : scaffoldCount
+            ? String(scaffoldCount)
+            : undefined,
     },
   ];
 

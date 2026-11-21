@@ -1,0 +1,23 @@
+package {{ base }}.mapper;
+
+import {{ base }}.dto.{{ name }}Dto;
+import {{ base }}.entity.{{ name }}Entity;
+import org.springframework.stereotype.Component;
+
+@Component
+public class {{ name }}Mapper {
+
+    public {{ name }}Dto toDto({{ name }}Entity entity) {
+        return new {{ name }}Dto(
+                entity.getId(){% for field in fields %},
+                entity.get{{ field.accessor }}(){% endfor %});
+    }
+
+    public {{ name }}Entity toEntity({{ name }}Dto dto) {
+        {{ name }}Entity entity = new {{ name }}Entity();
+{% for field in fields %}
+        entity.set{{ field.accessor }}(dto.{{ field.name }}());
+{% endfor %}
+        return entity;
+    }
+}

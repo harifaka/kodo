@@ -4,6 +4,10 @@ Every write goes through this module. It refuses to touch anything outside ``roo
 to overwrite files that changed since the dry-run (SHA-256 optimistic concurrency), inspects the
 Git working tree before writing, writes atomically through a sibling temp file + ``os.replace``,
 and keeps a bounded in-memory rollback snapshot of the last few applies.
+
+Phase 4 adds create-only patches (``isNewFile: true``): a new file may never overwrite an existing
+one (409 ``FILE_EXISTS`` aborts the whole batch), missing parent folders are created inside the
+root, and rollback deletes the created files plus the empty folders the batch introduced.
 """
 
 from __future__ import annotations
@@ -18,12 +22,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from app.config import MAX_APPLY_FILES, MAX_PATCH_BYTES
 from app.patching.models import sha256_hex
-from app.patching.paths import PatchRejected, resolve_member, resolve_root
+from app.patching.paths import (
+    PatchRejected,
+    resolve_member,
+    resolve_new_member,
+    resolve_root,
+)
 from app.services.git_safety import GitStatus, inspect_git_status
 
 MAX_ROLLBACK_BATCHES = 10
@@ -35,8 +44,16 @@ class ApplyModel(BaseModel):
 
 class ApplyPatch(ApplyModel):
     file_path: str = Field(..., min_length=1)
-    expected_sha256: str = Field(..., pattern="^[0-9a-fA-F]{64}$")
+    expected_sha256: str | None = Field(default=None, pattern="^[0-9a-fA-F]{64}$")
     proposed_content: str
+    # Create-only: the target must not exist and the batch is rejected with FILE_EXISTS otherwise.
+    is_new_file: bool = False
+
+    @model_validator(mode="after")
+    def _sha_contract(self) -> ApplyPatch:
+        if not self.is_new_file and not self.expected_sha256:
+            raise ValueError("expectedSha256 is required unless isNewFile is true.")
+        return self
 
 
 class ApplyRequest(ApplyModel):
@@ -49,6 +66,7 @@ class ApplyRequest(ApplyModel):
 class ApplyResponse(ApplyModel):
     apply_id: str
     applied_files: list[str] = Field(default_factory=list)
+    created_files: list[str] = Field(default_factory=list)
     git_status: GitStatus
     warnings: list[str] = Field(default_factory=list)
 
@@ -60,6 +78,7 @@ class RollbackRequest(ApplyModel):
 
 class RollbackResponse(ApplyModel):
     restored_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
 
 
 class ApplyRejected(Exception):
@@ -83,17 +102,19 @@ class ApplyRejected(Exception):
 class _Prepared:
     display: str
     path: Path
-    previous_content: str
-    current_bytes: bytes
+    previous_content: str | None
+    current_bytes: bytes | None
     proposed_bytes: bytes
-    expected_sha256: str
+    expected_sha256: str | None
+    is_new_file: bool
 
 
 @dataclass(frozen=True)
 class _SnapshotFile:
     file_path: str
-    previous_content: str
+    previous_content: str | None
     written_sha256: str
+    is_new_file: bool
 
 
 @dataclass(frozen=True)
@@ -102,6 +123,15 @@ class _RollbackBatch:
     root_path: str
     created_at: datetime
     files: tuple[_SnapshotFile, ...]
+    created_dirs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RollbackAction:
+    path: Path
+    display: str
+    payload: bytes | None
+    is_new_file: bool
 
 
 _batches: deque[_RollbackBatch] = deque(maxlen=MAX_ROLLBACK_BATCHES)
@@ -116,23 +146,40 @@ def apply_patches(request: ApplyRequest) -> ApplyResponse:
 
         apply_id = uuid.uuid4().hex
         written: list[_SnapshotFile] = []
-        restore_plan: list[tuple[Path, bytes]] = []
+        restore_plan: list[tuple[Path, bytes | None]] = []
+        created_dirs: list[str] = []
         applied: list[str] = []
+        created: list[str] = []
 
         try:
             for item in prepared:
+                if item.is_new_file:
+                    for directory in _ensure_parent(item.path, root):
+                        relative = directory.relative_to(root).as_posix()
+                        if relative not in created_dirs:
+                            created_dirs.append(relative)
                 _atomic_write(item.path, item.proposed_bytes)
                 written.append(
                     _SnapshotFile(
                         file_path=item.display,
                         previous_content=item.previous_content,
                         written_sha256=sha256_hex(item.proposed_bytes),
+                        is_new_file=item.is_new_file,
                     )
                 )
-                restore_plan.append((item.path, item.previous_content.encode("utf-8")))
+                restore_plan.append(
+                    (
+                        item.path,
+                        None
+                        if item.previous_content is None
+                        else item.previous_content.encode("utf-8"),
+                    )
+                )
                 applied.append(item.display)
+                if item.is_new_file:
+                    created.append(item.display)
         except OSError as exc:
-            _restore_all(restore_plan)
+            _restore_all(restore_plan, created_dirs, root)
             raise ApplyRejected(
                 500,
                 "WRITE_FAILED",
@@ -145,19 +192,21 @@ def apply_patches(request: ApplyRequest) -> ApplyResponse:
                 root_path=str(root),
                 created_at=datetime.now(UTC),
                 files=tuple(written),
+                created_dirs=tuple(created_dirs),
             )
         )
 
         return ApplyResponse(
             apply_id=apply_id,
             applied_files=applied,
+            created_files=created,
             git_status=inspect_git_status(str(root)),
             warnings=warnings,
         )
 
 
 def rollback(request: RollbackRequest) -> RollbackResponse:
-    """Restore the previous bytes of a batch unless a file changed again (``force`` overrides)."""
+    """Undo a batch: restore overwritten bytes and delete created files (``force`` overrides drift)."""
     with _lock:
         batch = next((item for item in reversed(_batches) if item.apply_id == request.apply_id), None)
         if batch is None:
@@ -169,31 +218,38 @@ def rollback(request: RollbackRequest) -> RollbackResponse:
             )
 
         root = _root(batch.root_path)
-        plans: list[tuple[Path, str, bytes]] = []
+        plans: list[_RollbackAction] = []
         conflicts: list[str] = []
 
         for item in batch.files:
-            payload = item.previous_content.encode("utf-8")
             path = _existing_path(root, item.file_path)
 
+            if item.is_new_file:
+                if path is None:
+                    if not request.force:
+                        conflicts.append(item.file_path)
+                    continue
+                if not _matches(path, item.written_sha256, request.force):
+                    conflicts.append(item.file_path)
+                    continue
+                plans.append(_RollbackAction(path, item.file_path, None, True))
+                continue
+
+            payload = (item.previous_content or "").encode("utf-8")
             if path is None:
                 if not request.force:
                     conflicts.append(item.file_path)
                     continue
-                plans.append((_recreate_path(root, item.file_path), item.file_path, payload))
+                plans.append(
+                    _RollbackAction(_recreate_path(root, item.file_path), item.file_path, payload, False)
+                )
                 continue
 
-            try:
-                current = path.read_bytes()
-            except OSError:
+            if not _matches(path, item.written_sha256, request.force):
                 conflicts.append(item.file_path)
                 continue
 
-            if not request.force and sha256_hex(current) != item.written_sha256:
-                conflicts.append(item.file_path)
-                continue
-
-            plans.append((path, item.file_path, payload))
+            plans.append(_RollbackAction(path, item.file_path, payload, False))
 
         if conflicts:
             raise ApplyRejected(
@@ -205,23 +261,71 @@ def rollback(request: RollbackRequest) -> RollbackResponse:
             )
 
         restored: list[str] = []
+        deleted: list[str] = []
         try:
-            for path, display, payload in plans:
-                _atomic_write(path, payload)
-                restored.append(display)
+            for action in plans:
+                if action.is_new_file:
+                    action.path.unlink()
+                    deleted.append(action.display)
+                else:
+                    _atomic_write(action.path, action.payload or b"")
+                    restored.append(action.display)
         except OSError as exc:
             raise ApplyRejected(500, "WRITE_FAILED", f"Rollback failed while writing: {exc}") from exc
 
+        _prune_directories(root, batch.created_dirs)
         _batches.remove(batch)
-        return RollbackResponse(restored_files=restored)
+        return RollbackResponse(restored_files=restored, deleted_files=deleted)
+
+
+def _matches(path: Path, written_sha256: str, force: bool) -> bool:
+    if force:
+        return True
+    try:
+        return sha256_hex(path.read_bytes()) == written_sha256
+    except OSError:
+        return False
 
 
 def _preflight(root: Path, request: ApplyRequest) -> tuple[list[_Prepared], list[str]]:
     prepared: list[_Prepared] = []
     seen: set[str] = set()
+    existing: list[str] = []
     limit_mb = MAX_PATCH_BYTES // 1_000_000
 
     for patch in request.patches:
+        if patch.is_new_file:
+            try:
+                path = resolve_new_member(root, patch.file_path)
+            except PatchRejected as exc:
+                raise ApplyRejected(exc.status_code, "PATH_REJECTED", str(exc)) from exc
+            display = path.relative_to(root).as_posix()
+            if display in seen:
+                raise ApplyRejected(400, "DUPLICATE_TARGET", f"{display} appears more than once in the batch.")
+            seen.add(display)
+            if path.exists() or path.is_symlink():
+                existing.append(display)
+
+            proposed_bytes = patch.proposed_content.encode("utf-8")
+            if len(proposed_bytes) > MAX_PATCH_BYTES:
+                raise ApplyRejected(
+                    413,
+                    "FILE_TOO_LARGE",
+                    f"Proposed content for {display} is larger than the {limit_mb} MB apply limit.",
+                )
+            prepared.append(
+                _Prepared(
+                    display=display,
+                    path=path,
+                    previous_content=None,
+                    current_bytes=None,
+                    proposed_bytes=proposed_bytes,
+                    expected_sha256=None,
+                    is_new_file=True,
+                )
+            )
+            continue
+
         try:
             path = resolve_member(root, patch.file_path)
         except PatchRejected as exc:
@@ -266,8 +370,19 @@ def _preflight(root: Path, request: ApplyRequest) -> tuple[list[_Prepared], list
                 previous_content=previous_content,
                 current_bytes=current_bytes,
                 proposed_bytes=proposed_bytes,
-                expected_sha256=patch.expected_sha256.lower(),
+                expected_sha256=(patch.expected_sha256 or "").lower(),
+                is_new_file=False,
             )
+        )
+
+    # Create-only scaffolding must fail the whole batch rather than silently overwrite a file.
+    if existing:
+        raise ApplyRejected(
+            409,
+            "FILE_EXISTS",
+            "Kodo never overwrites files while scaffolding. Remove or rename the existing file(s), "
+            "or delete them first, then re-run the dry-run.",
+            paths=sorted(existing),
         )
 
     git_status = inspect_git_status(str(root))
@@ -292,7 +407,11 @@ def _preflight(root: Path, request: ApplyRequest) -> tuple[list[_Prepared], list
             warning=git_status.warning,
         )
 
-    stale = [item.display for item in prepared if sha256_hex(item.current_bytes) != item.expected_sha256]
+    stale = [
+        item.display
+        for item in prepared
+        if item.current_bytes is not None and sha256_hex(item.current_bytes) != item.expected_sha256
+    ]
     if stale:
         raise ApplyRejected(
             409,
@@ -343,6 +462,43 @@ def _recreate_path(root: Path, rel_path: str) -> Path:
     return parent / normalized.name
 
 
+def _ensure_parent(target: Path, root: Path) -> list[Path]:
+    """Create missing parent folders one level at a time, returning the ones created (shallow first)."""
+    missing: list[Path] = []
+    current = target.parent
+    while not current.exists():
+        missing.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+
+    created: list[Path] = []
+    for directory in reversed(missing):
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            continue
+        created.append(directory)
+
+    resolved = target.parent.resolve(strict=True)
+    if not resolved.is_relative_to(root):
+        raise OSError(f"Refusing to create {target.name} outside the workspace root")
+    return created
+
+
+def _prune_directories(root: Path, relative_dirs: tuple[str, ...]) -> None:
+    """Remove folders this batch created, deepest first, only when they are empty. Never the root."""
+    for relative in sorted(relative_dirs, key=lambda value: len(Path(value).parts), reverse=True):
+        directory = root / relative
+        if directory == root or not directory.is_dir():
+            continue
+        try:
+            if not any(directory.iterdir()):
+                directory.rmdir()
+        except OSError:
+            continue
+
+
 def _atomic_write(target: Path, payload: bytes) -> None:
     """Write via a sibling temp file + ``os.replace`` so readers never see a partial file."""
     try:
@@ -374,9 +530,17 @@ def _atomic_write(target: Path, payload: bytes) -> None:
         raise
 
 
-def _restore_all(plan: list[tuple[Path, bytes]]) -> None:
+def _restore_all(
+    plan: list[tuple[Path, bytes | None]],
+    created_dirs: list[str],
+    root: Path,
+) -> None:
     for path, payload in reversed(plan):
         try:
-            _atomic_write(path, payload)
+            if payload is None:
+                path.unlink(missing_ok=True)
+            else:
+                _atomic_write(path, payload)
         except OSError:
             continue
+    _prune_directories(root, tuple(created_dirs))

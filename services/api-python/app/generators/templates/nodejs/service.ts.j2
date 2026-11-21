@@ -1,0 +1,46 @@
+{% for dependency in dependencies %}
+import { {{ dependency.name }}Service } from '../{{ dependency.kebab }}/{{ dependency.kebab }}.service';
+{% endfor %}
+import { {{ context.dto }}, {{ name }}ResponseDto } from './{{ context.kebab }}.dto';
+import { {{ name }}Entity } from './{{ context.kebab }}.entity';
+import { {{ name }}Repository } from './{{ context.kebab }}.repository';
+
+export class {{ name }}Service {
+  constructor(
+    private readonly repository: {{ name }}Repository{% for dependency in dependencies %},
+    private readonly {{ dependency.variable }}: {{ dependency.name }}Service{% endfor %},
+  ) {}
+
+  findAll(): {{ name }}ResponseDto[] {
+    return this.repository.findAll().map((entity) => this.toResponse(entity));
+  }
+
+  findById(id: string): {{ name }}ResponseDto | undefined {
+    const entity = this.repository.findById(id);
+    return entity ? this.toResponse(entity) : undefined;
+  }
+
+  create(dto: {{ context.dto }}): {{ name }}ResponseDto {
+    const entity = this.repository.save({
+{% for field in fields %}
+      {{ field.name }}: dto.{{ field.name }},
+{% endfor %}
+    });
+    return this.toResponse(entity);
+  }
+{% for dependency in dependencies %}
+
+  find{{ dependency.name }}(id: string): {{ dependency.dto }} | undefined {
+    return this.{{ dependency.variable }}.findById(id);
+  }
+{% endfor %}
+
+  private toResponse(entity: {{ name }}Entity): {{ name }}ResponseDto {
+    return {
+      id: entity.id ?? '',
+{% for field in fields %}
+      {{ field.name }}: entity.{{ field.name }},
+{% endfor %}
+    };
+  }
+}

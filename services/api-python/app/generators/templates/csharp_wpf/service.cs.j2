@@ -1,0 +1,43 @@
+using {{ namespace }}.Models;
+
+namespace {{ namespace }}.Services;
+
+public class {{ name }}Service : {{ context.interface }}
+{
+    private readonly List<{{ context.model }}> models = [];
+{% for dependency in dependencies %}
+    private readonly {{ dependency.interface }} {{ dependency.variable }};
+{% endfor %}
+{% if dependencies %}
+
+    public {{ name }}Service({% for dependency in dependencies %}{{ dependency.interface }} {{ dependency.variable }}{% if not loop.last %}, {% endif %}{% endfor %})
+    {
+{% for dependency in dependencies %}
+        this.{{ dependency.variable }} = {{ dependency.variable }};
+{% endfor %}
+    }
+{% endif %}
+
+    public IReadOnlyList<{{ context.model }}> GetAll()
+    {
+        return models;
+    }
+
+    public {{ context.model }}? FindById(Guid id)
+    {
+        return models.FirstOrDefault(model => model.Id == id);
+    }
+
+    public {{ context.model }} Create({{ context.model }} model)
+    {
+        models.Add(model);
+        return model;
+    }
+{% for dependency in dependencies %}
+
+    public {{ dependency.model }}? Find{{ dependency.name }}(Guid id)
+    {
+        return {{ dependency.variable }}.FindById(id);
+    }
+{% endfor %}
+}

@@ -1,0 +1,14 @@
+using System.Windows;
+
+using {{ namespace }}.ViewModels;
+
+namespace {{ namespace }}.Views;
+
+public partial class {{ name }}View : Window
+{
+    public {{ name }}View({{ name }}ViewModel viewModel)
+    {
+        InitializeComponent();
+        DataContext = viewModel;
+    }
+}

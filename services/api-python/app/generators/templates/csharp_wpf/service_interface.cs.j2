@@ -1,0 +1,12 @@
+using {{ namespace }}.Models;
+
+namespace {{ namespace }}.Services;
+
+public interface {{ context.interface }}
+{
+    IReadOnlyList<{{ context.model }}> GetAll();
+
+    {{ context.model }}? FindById(Guid id);
+
+    {{ context.model }} Create({{ context.model }} model);
+}

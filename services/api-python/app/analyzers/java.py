@@ -134,8 +134,19 @@ def _collect_type(node: Node, scope: str, rel_path: str, src: _Source, result: P
                 _collect_type(member, node_id, rel_path, src, result)
 
     # Java records declare their components as constructor parameters.
-    for type_text, param_name in _parameters(node, src):
-        fields.append(ComponentField(name=param_name, type=normalize_type(type_text), visibility="private"))
+    for param in _parameter_nodes(node):
+        type_text = _declared_type(param, src)
+        param_name = src.text(param.child_by_field_name("name")).strip()
+        if not type_text or not param_name:
+            continue
+        fields.append(
+            ComponentField(
+                name=param_name,
+                type=normalize_type(type_text),
+                visibility="private",
+                annotations=_parameter_annotations(param, src),
+            )
+        )
         result.references.extend(
             ReferenceCandidate(node_id, ref, RelationType.DEPENDS_ON) for ref in type_identifiers(type_text)
         )
@@ -197,19 +208,20 @@ def _collect_method(node: Node, src: _Source) -> tuple[ComponentMethod, list[str
 
 
 def _parameters(node: Node, src: _Source) -> list[tuple[str, str]]:
-    params = node.child_by_field_name("parameters")
-    if params is None:
-        return []
-
     entries: list[tuple[str, str]] = []
-    for param in params.children:
-        if param.type not in {"formal_parameter", "spread_parameter"}:
-            continue
+    for param in _parameter_nodes(node):
         type_text = _declared_type(param, src)
         name = src.text(param.child_by_field_name("name")).strip()
         if type_text:
             entries.append((type_text, name))
     return entries
+
+
+def _parameter_nodes(node: Node) -> list[Node]:
+    params = node.child_by_field_name("parameters")
+    if params is None:
+        return []
+    return [param for param in params.children if param.type in {"formal_parameter", "spread_parameter"}]
 
 
 def _parameter_types(node: Node, src: _Source) -> list[str]:
@@ -256,7 +268,18 @@ def _annotations(node: Node, src: _Source) -> list[str]:
     modifiers = _first(node, {"modifiers"})
     if modifiers is None:
         return []
+    return _annotations_in(modifiers, src)
 
+
+def _parameter_annotations(node: Node, src: _Source) -> list[str]:
+    """Annotations on a formal parameter — record components carry the DTO validation constraints."""
+    modifiers = _first(node, {"modifiers"})
+    if modifiers is None:
+        return []
+    return _annotations_in(modifiers, src)
+
+
+def _annotations_in(modifiers: Node, src: _Source) -> list[str]:
     annotations: list[str] = []
     for child in modifiers.children:
         if child.type not in {"annotation", "marker_annotation"}:

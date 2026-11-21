@@ -51,11 +51,14 @@ class PatchResult(PatchModel):
     file_path: str
     language: str
     original_content: str
-    # Optimistic-concurrency token: the client must echo this back on apply.
-    original_sha256: str
+    # Optimistic-concurrency token: the client must echo this back on apply (None for new files).
+    original_sha256: str | None = None
     proposed_content: str
     summary: str
     warnings: list[str] = Field(default_factory=list)
+    # Phase 4 scaffolding: create-only patches plus a conflict flag when the path already exists.
+    is_new_file: bool = False
+    conflict: bool = False
 
 
 class DryRunResponse(PatchModel):

@@ -67,6 +67,33 @@ export function DiffIcon({ className = 'h-4 w-4' }: IconProps) {
   );
 }
 
+export function BuilderIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+      <rect x="3" y="4.5" width="7" height="7" rx="1.5" />
+      <rect x="14" y="4.5" width="7" height="7" rx="1.5" />
+      <rect x="8.5" y="14.5" width="7" height="5.5" rx="1.5" />
+      <path d="M10 8h4M6.5 11.5v2.6a1 1 0 0 0 1 1h1M17.5 11.5v2.6a1 1 0 0 1-1 1h-1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ className = 'h-3.5 w-3.5' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TrashIcon({ className = 'h-3.5 w-3.5' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+      <path d="M4.5 7h15M9.5 7V4.8h5V7M6.8 7l.8 12.2a1.5 1.5 0 0 0 1.5 1.4h5.8a1.5 1.5 0 0 0 1.5-1.4L17.2 7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function AlertIcon({ className = 'h-4 w-4' }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>

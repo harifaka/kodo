@@ -14,6 +14,7 @@ import type {
   PatchOperation,
   RollbackResponse,
 } from '../types/patching';
+import type { BlueprintResponse, ScaffoldRequest } from '../types/blueprint';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
@@ -116,6 +117,19 @@ export const api = {
     return request<ApplyResponse>('/api/v1/apply', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+
+  blueprint(root: string, signal?: AbortSignal): Promise<BlueprintResponse> {
+    const params = new URLSearchParams({ root });
+    return request<BlueprintResponse>(`/api/v1/blueprint?${params.toString()}`, { signal });
+  },
+
+  scaffoldDryRun(payload: ScaffoldRequest, signal?: AbortSignal): Promise<DryRunResponse> {
+    return request<DryRunResponse>('/api/v1/scaffold/dry-run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
     });
   },
 

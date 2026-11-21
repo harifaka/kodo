@@ -34,13 +34,16 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 
 ## 3. Write policy (hard rule)
 
-Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing) and 3b (dry-run AST patching) are
-**100% zero-write** with respect to user source code. Phase 3c adds exactly one, tightly guarded
-write path (see §3c). Anything else stays read-only.
+Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing), 3b (dry-run AST patching) and the
+generator half of Phase 4 (blueprint rendering) are **100% zero-write** with respect to user source
+code. Phase 3c adds exactly one, tightly guarded write path (see §3c), and Phase 4 reuses it for
+create-only scaffolding (§3d). Anything else stays read-only.
 
 Forbidden:
 - Writing, patching, moving, or deleting user source files outside the guarded apply service.
 - Automatic apply / "fix it for me" disk mutations without an explicit user confirmation.
+- Overwriting an existing file while scaffolding — a create-only patch that targets an existing path
+  must fail with HTTP 409 `FILE_EXISTS`.
 - Mutating Git state on the user's repository (add, commit, checkout, reset, stash, tag, clean).
 - LLM/DeepSeek clients of any kind.
 - Dockerfile / compose generation for the scanned workspace.
@@ -52,9 +55,12 @@ Allowed:
 - Applying AST rewrite operations to **in-memory** syntax trees/text (Tree-sitter byte offsets for
   Java/TS/JS, Roslyn syntax rewriting for C#) and returning `originalContent` / `proposedContent`
   through `POST /api/v1/dry-run`. The returned text is never written by the dry-run itself.
+- Rendering stack-plugin templates into **in-memory** file text (`app/generators/`) and returning it
+  through `POST /api/v1/scaffold/dry-run` as create-only patches. Nothing is written there either.
+- Reading `kodo.blueprint.json` from the workspace root (`GET /api/v1/blueprint`).
 - Inspecting Git status read-only through `app/services/git_safety.py` (`GIT_OPTIONAL_LOCKS=0`, no
   mutating subcommands).
-- Writing reviewed patches through `app/services/apply_service.py` only (§3c).
+- Writing reviewed patches through `app/services/apply_service.py` only (§3c, §3d).
 - Serving cached in-memory analysis results and rollback snapshots to the UI.
 
 ## 3a. Audit engine rules
@@ -115,6 +121,28 @@ Allowed:
 - Never add "apply on save", auto-apply or watch-mode writes. A human must press the Apply button and
   acknowledge any dirty/non-Git override explicitly.
 
+## 3d. Blueprint & scaffolding rules
+
+- The blueprint contract is versioned (`schemaVersion: "1.0"`). A change to it must update
+  `packages/core-ir/blueprint.schema.json`, `app/models/blueprint.py` and
+  `apps/web/src/types/blueprint.ts` in the same change. Unknown versions are rejected, not guessed.
+- Generator plugins (`app/generators/`) are pure: `blueprint -> list[GeneratedFile]`. No filesystem,
+  no network, no clock, no randomness. Templates live in `app/generators/templates/<stack>/`.
+- Generated code must be architecturally sound by construction: controllers touch DTOs and services
+  only (never entities or repositories), services use constructor injection, entities stay inside the
+  persistence boundary. The self-audit bar is **100/100 (0 errors, 0 warnings, 0 info)** on Kodo's own
+  audit engine; `tests/test_generators.py` enforces it for every stack.
+- `POST /api/v1/scaffold/dry-run` returns the normal `DryRunResponse`; generated files are
+  `isNewFile: true` with `originalContent: ""` and `originalSha256: null`. The dry-run detects
+  conflicts and flags them, but never writes.
+- Apply pre-flight for `isNewFile`: strict containment via `resolve_new_member` (no absolute paths, no
+  `..`, no symlink folders), and the target must not exist — a single conflict aborts the **whole**
+  batch with HTTP 409 `FILE_EXISTS` (`paths`). Parent folders are created one level at a time inside
+  the root; rollback deletes the created files (verifying `writtenSha256` unless `force: true`) and
+  prunes empty folders the batch created, never `rootPath`.
+- `kodo.blueprint.json` is the only path that may be updated by a scaffold batch, and only through the
+  ordinary SHA-256 overwrite path (`isNewFile: false`, `expectedSha256` echoed from the dry-run).
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -125,6 +153,9 @@ Allowed:
 - Enforce file count / file size limits and report them as `WorkspaceIR.warnings`, not exceptions.
 - Dry-run patching and apply repeat the containment check per file, reject absolute paths and `..`,
   and enforce the 2 MB cap. Apply additionally re-checks containment on every rollback target.
+- Scaffolding resolves **non-existent** targets with `resolve_new_member`: the deepest existing
+  ancestor is resolved and must stay inside the root, symlinked folders are rejected, and the final
+  component must not exist. Reverse-verify containment after creating parent folders.
 
 ## 5. Degradation, never crashing
 
@@ -146,7 +177,8 @@ Allowed:
 ## 7. Definition of done for any change
 
 - `dotnet build services/analyzer-csharp` succeeds.
-- `python -m pytest services/api-python/tests` succeeds.
+- `python -m pytest services/api-python/tests` succeeds (including the Phase 4 generator suite, which
+  re-scans generated projects and asserts a 100/100 self-audit).
 - `python -m ruff check` on changed Python files succeeds.
 - `npm run build` in `apps/web` succeeds (type-check + bundle).
 - The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens
@@ -159,3 +191,7 @@ Allowed:
   new health score, a dirty tree or a non-Git folder is rejected with 409 until overridden, an
   externally modified file yields 409 `STALE_FILE` with **no** file written, and rollback restores the
   original bytes exactly (`git status` clean again).
+- For builder changes: generate the 3-service demo in a git-initialised temp folder from the UI,
+  review the NEW files in Monaco, apply, confirm the re-scan shows the full
+  controller/service/repository/entity graph at 100/100, roll back, and confirm the folder is empty
+  again with a clean `git status` (and that an existing path yields 409 `FILE_EXISTS`).

@@ -1,0 +1,12 @@
+package {{ base }}.dto;
+
+{% if context.dto_imports %}
+{% for import in context.dto_imports %}
+import {{ import }};
+{% endfor %}
+
+{% endif %}
+public record {{ name }}Dto(
+        {{ context.dto_components|join(',\n        ') }}
+) {
+}

@@ -1,0 +1,57 @@
+package {{ base }}.service;
+
+{% for dependency in dependencies %}
+import {{ base }}.service.{{ dependency.name }}Service;
+{% endfor %}
+import {{ base }}.dto.{{ name }}Dto;
+import {{ base }}.entity.{{ name }}Entity;
+import {{ base }}.mapper.{{ name }}Mapper;
+import {{ base }}.repository.{{ name }}Repository;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class {{ name }}Service {
+
+    private final {{ name }}Repository repository;
+    private final {{ name }}Mapper mapper;
+{% for dependency in dependencies %}
+    private final {{ dependency.name }}Service {{ dependency.variable }};
+{% endfor %}
+
+    public {{ name }}Service(
+            {{ name }}Repository repository,
+            {{ name }}Mapper mapper{% for dependency in dependencies %},
+            {{ dependency.name }}Service {{ dependency.variable }}{% endfor %}) {
+        this.repository = repository;
+        this.mapper = mapper;
+{% for dependency in dependencies %}
+        this.{{ dependency.variable }} = {{ dependency.variable }};
+{% endfor %}
+    }
+
+    @Transactional(readOnly = true)
+    public List<{{ name }}Dto> findAll() {
+        return repository.findAll().stream().map(mapper::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public {{ name }}Dto findById(Long id) {
+        return repository.findById(id).map(mapper::toDto).orElseThrow();
+    }
+
+    @Transactional
+    public {{ name }}Dto create({{ name }}Dto dto) {
+        {{ name }}Entity saved = repository.save(mapper.toEntity(dto));
+        return mapper.toDto(saved);
+    }
+{% for dependency in dependencies %}
+
+    @Transactional(readOnly = true)
+    public {{ dependency.dto }} find{{ dependency.name }}(Long id) {
+        return {{ dependency.variable }}.findById(id);
+    }
+{% endfor %}
+}

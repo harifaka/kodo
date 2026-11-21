@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodo.dev/schemas/core-ir/kodo-blueprint.schema.json",
+  "title": "Kodo Blueprint — kodo.blueprint.json",
+  "description": "Versioned Phase 4 blueprint describing a multi-stack project: target stack, base package/namespace and the vertical slices (domain model + service dependencies) that the stack generator plugins render. The same contract is implemented in services/api-python/app/models/blueprint.py (Pydantic v2) and apps/web/src/types/blueprint.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectName", "stack", "basePackageOrNamespace", "slices"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Blueprint format version. Kodo rejects unknown versions instead of guessing."
+    },
+    "projectName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "Human readable project name; also drives the generated build/assembly name."
+    },
+    "stack": {
+      "type": "string",
+      "enum": ["spring-boot", "csharp-wpf", "nodejs"],
+      "description": "Target stack whose generator plugin renders the slices."
+    },
+    "basePackageOrNamespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "description": "Java base package (com.acme.billing), C# root namespace (Acme.Desktop) or the TypeScript source root (src)."
+    },
+    "slices": {
+      "type": "array",
+      "maxItems": 40,
+      "description": "Vertical slices rendered as Entity/Model + DTO + Repository + Service + Controller (+ test).",
+      "items": { "$ref": "#/$defs/slice" }
+    }
+  },
+  "$defs": {
+    "slice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "fields"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "pattern": "^[A-Z][A-Za-z0-9]*$",
+          "description": "PascalCase domain name, e.g. Invoice or Customer."
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 60,
+          "items": { "$ref": "#/$defs/field" }
+        },
+        "dependsOnSlices": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "description": "Other slice names this service depends on (must be defined in the same blueprint). Generates constructor-injected service-to-service dependencies.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "includeTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit the unit-test skeleton for this slice."
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "Business field name (camelCase recommended)."
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 80,
+          "default": "string",
+          "description": "Canonical stack-aware type (string, text, email, int, long, decimal, boolean, date, datetime, uuid). Unknown values are emitted verbatim for power users."
+        },
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Drives @NotBlank/@NotNull, @IsNotEmpty/@IsDefined, [Required] and non-nullable columns."
+        },
+        "annotations": {
+          "type": "array",
+          "maxItems": 12,
+          "uniqueItems": true,
+          "description": "Stack-specific validation presets, e.g. @Size(max = 120), @IsEmail(), [StringLength(120)]. Non-matching annotations are filtered per stack.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

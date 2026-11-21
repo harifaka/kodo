@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 3](https://img.shields.io/badge/Status-Phase%203%20delivered-brightgreen.svg)
+![Status: Phase 4](https://img.shields.io/badge/Status-Phase%204%20delivered-brightgreen.svg)
 
 ---
 
@@ -16,6 +16,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Local-First & SaaS-Ready:** One shared React + TypeScript UI packaged as a native desktop app with **Tauri** (built via GitHub Actions) and deployable as a **Dockerized web app**.
 - **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
 - **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
+- **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
 
 ---
 
@@ -36,7 +37,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
-## Quick Start (Phases 1–3)
+## Quick Start (Phases 1–4)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -60,6 +61,13 @@ and applies them atomically after a SHA-256 freshness check — with a one-click
 an automatic re-scan. Dirty or non-Git workspaces require an explicit risk confirmation. Desktop mode:
 `npm run tauri dev` (requires Rust).
 
+The **Builder** tab scaffolds whole projects: pick a stack, describe slices and business fields (or load
+the *Order + Customer + Payment* demo), then **Preview Generated Files (Dry-Run)**. Every generated file
+appears in the Monaco diff with a green **NEW** badge and flows through the same guarded apply —
+existing paths are never overwritten (`409 FILE_EXISTS`) and rollback deletes the created files and
+folders. Toggle **Save kodo.blueprint.json** to commit the versioned plan next to the code; the Builder
+reloads it on demand for review.
+
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
@@ -82,10 +90,11 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - **Dry-Run Monaco Side-by-Side Diff** for every draft edit, computed in memory with **Tree-sitter byte-offset patching** (Java/TS/JS) and **trivia-preserving Roslyn rewriting** (C#). Hand-written methods and comments stay verbatim.
 - **Guarded apply to disk**: read-only Git status inspection, a dirty-tree / non-Git confirmation gate, SHA-256 optimistic concurrency (stale files abort the whole batch), atomic writes that preserve CRLF/LF, and an in-memory rollback snapshot with one-click undo. Applying re-scans the workspace so the graph, UML and health score immediately reflect the saved code.
 
-### Phase 4: Multi-Stack Builder & Pattern Blueprints
-- Full stack plugin generators for **Spring Boot**, **C# WPF (MVVM)**, and **Node.js (Express/NestJS)**.
-- One-click vertical slice scaffolding (Entity + DTO + Repo + Service + Controller + Tests).
-- Versionable `kodo.blueprint.json` committed alongside the repo for team PR reviews.
+### Phase 4: Multi-Stack Builder & Pattern Blueprints - Delivered
+- Full stack plugin generators for **Spring Boot 3 / Java 21**, **C# WPF (.NET 8, MVVM)** and **Node.js (TypeScript, layered Express)**.
+- One-click vertical slice scaffolding: Entity/Model + DTO + Mapper + Repository + Service + Controller (+ unit-test skeleton), with constructor-injected service-to-service dependencies.
+- Versionable `kodo.blueprint.json` (schema `1.0`) committed alongside the repo for team PR reviews, loaded back into the Builder.
+- Generated files are **self-audited to 100/100** and land on disk only through the guarded apply pipeline: dry-run → Monaco diff → create-only apply (`409 FILE_EXISTS` instead of silent overwrite) → rollback that also prunes the folders it created.
 
 ### Phase 5: DeepSeek Architecture Copilot
 - OpenAI-compatible **DeepSeek** client (supports cloud API and air-gapped on-prem Ollama/vLLM).

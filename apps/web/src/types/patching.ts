@@ -32,11 +32,15 @@ export interface PatchResult {
   filePath: string;
   language: string;
   originalContent: string;
-  /** SHA-256 of the original file bytes; echoed back as `expectedSha256` on apply. */
-  originalSha256: string;
+  /** SHA-256 of the original file bytes; echoed back as `expectedSha256` on apply. Null for new files. */
+  originalSha256: string | null;
   proposedContent: string;
   summary: string;
   warnings: string[];
+  /** Phase 4 scaffolding: create-only patch that is rejected with FILE_EXISTS if the path exists. */
+  isNewFile?: boolean;
+  /** The dry-run detected an existing file at this path; the apply will fail with FILE_EXISTS. */
+  conflict?: boolean;
 }
 
 export interface DryRunResponse {
@@ -57,8 +61,10 @@ export interface GitStatus {
 
 export interface ApplyPatch {
   filePath: string;
-  expectedSha256: string;
+  /** Null for create-only patches; the server never overwrites a file while scaffolding. */
+  expectedSha256: string | null;
   proposedContent: string;
+  isNewFile?: boolean;
 }
 
 export interface ApplyRequest {
@@ -71,12 +77,15 @@ export interface ApplyRequest {
 export interface ApplyResponse {
   applyId: string;
   appliedFiles: string[];
+  /** Subset of `appliedFiles` that did not exist before the apply (create-only scaffolding). */
+  createdFiles: string[];
   gitStatus: GitStatus;
   warnings: string[];
 }
 
 export interface RollbackResponse {
   restoredFiles: string[];
+  deletedFiles?: string[];
 }
 
 /** Structured 409/404 error codes returned by /api/v1/apply and /api/v1/apply/rollback. */
@@ -87,6 +96,7 @@ export type ApplyErrorCode =
   | 'UNKNOWN_APPLY'
   | 'PATH_REJECTED'
   | 'DUPLICATE_TARGET'
+  | 'FILE_EXISTS'
   | 'FILE_TOO_LARGE'
   | 'NOT_UTF8'
   | 'NOT_READABLE'
