@@ -19,6 +19,7 @@ import type {
 import { CodeIcon, CopyIcon, ExternalIcon } from './icons';
 import { AuditPanel, FindingRow } from './AuditPanel';
 import { HealthScoreCard } from './HealthScore';
+import { MethodsSection } from './MethodsSection';
 
 interface NodeDetailsPanelProps {
   workspace: WorkspaceIR;
@@ -35,6 +36,12 @@ interface NodeDetailsPanelProps {
   onRemoveField: (nodeId: string, fieldName: string) => void;
   onAddAnnotation: (nodeId: string, annotation: string) => void;
   onRemoveAnnotation: (nodeId: string, annotation: string) => void;
+  aiConfigured: boolean;
+  /** Finding id currently being fixed by the AI Copilot, if any. */
+  aiFixingId: string | null;
+  onFixWithAi: (finding: AuditFinding) => void;
+  onImplementMethod: (node: ComponentNode, methodName: string, instruction: string) => Promise<void>;
+  onOpenAiSettings: () => void;
 }
 
 interface MicroEditHandlers {
@@ -99,6 +106,11 @@ export function NodeDetailsPanel({
   onRemoveField,
   onAddAnnotation,
   onRemoveAnnotation,
+  aiConfigured,
+  aiFixingId,
+  onFixWithAi,
+  onImplementMethod,
+  onOpenAiSettings,
 }: NodeDetailsPanelProps) {
   const micro: MicroEditHandlers = {
     onAddField,
@@ -138,12 +150,20 @@ export function NodeDetailsPanel({
             onSelectNodeId={onSelectNodeId}
             onOpenFinding={onOpenFinding}
             onDisconnectRelation={onDisconnectRelation}
+            aiConfigured={aiConfigured}
+            aiFixingId={aiFixingId}
+            onFixWithAi={onFixWithAi}
+            onImplementMethod={onImplementMethod}
+            onOpenAiSettings={onOpenAiSettings}
           />
         ) : (
           <WorkspaceOverview
             workspace={workspace}
             onSelectNodeId={onSelectNodeId}
             onOpenFinding={onOpenFinding}
+            aiConfigured={aiConfigured}
+            aiFixingId={aiFixingId}
+            onFixWithAi={onFixWithAi}
           />
         )}
       </div>
@@ -162,6 +182,11 @@ function SelectedDetails({
   onSelectNodeId,
   onOpenFinding,
   onDisconnectRelation,
+  aiConfigured,
+  aiFixingId,
+  onFixWithAi,
+  onImplementMethod,
+  onOpenAiSettings,
 }: {
   workspace: WorkspaceIR;
   node: ComponentNode;
@@ -173,6 +198,11 @@ function SelectedDetails({
   onSelectNodeId: (nodeId: string) => void;
   onOpenFinding: (finding: AuditFinding) => void;
   onDisconnectRelation: (relation: ComponentRelation) => void;
+  aiConfigured: boolean;
+  aiFixingId: string | null;
+  onFixWithAi: (finding: AuditFinding) => void;
+  onImplementMethod: (node: ComponentNode, methodName: string, instruction: string) => Promise<void>;
+  onOpenAiSettings: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const meta = LAYER_META[node.layer];
@@ -254,6 +284,9 @@ function SelectedDetails({
                 nodesById={byId}
                 onSelectNode={onSelectNodeId}
                 onOpenFile={onOpenFinding}
+                aiConfigured={aiConfigured}
+                aiFixing={aiFixingId === finding.id}
+                onFixWithAi={onFixWithAi}
               />
             ))}
           </ul>
@@ -279,26 +312,13 @@ function SelectedDetails({
         onRemove={(fieldName) => micro.onRemoveField(node.id, fieldName)}
       />
 
-      <Section title={`Methods · ${node.methods.length}`}>
-        {node.methods.length === 0 ? (
-          <Empty text="No methods discovered." />
-        ) : (
-          <ul className="space-y-1">
-            {node.methods.map((method) => (
-              <li
-                key={`${method.name}(${method.parameters.join(',')})`}
-                className="rounded-md border border-ink-700/50 bg-ink-950/50 px-2.5 py-1.5"
-              >
-                <div className="break-all font-mono text-[10.5px] leading-relaxed">
-                  <span className="text-emerald-300">{method.name}</span>
-                  <span className="text-slate-500">({method.parameters.join(', ')})</span>
-                  {method.returnType && <span className="text-slate-400"> : {method.returnType}</span>}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      <MethodsSection
+        key={`methods-${node.id}`}
+        node={node}
+        aiConfigured={aiConfigured}
+        onConfigureAi={onOpenAiSettings}
+        onImplement={(methodName, instruction) => onImplementMethod(node, methodName, instruction)}
+      />
 
       {outgoing.length > 0 && (
         <Section title={`Depends on · ${outgoing.length}`}>
@@ -770,10 +790,16 @@ function WorkspaceOverview({
   workspace,
   onSelectNodeId,
   onOpenFinding,
+  aiConfigured,
+  aiFixingId,
+  onFixWithAi,
 }: {
   workspace: WorkspaceIR;
   onSelectNodeId: (nodeId: string) => void;
   onOpenFinding: (finding: AuditFinding) => void;
+  aiConfigured: boolean;
+  aiFixingId: string | null;
+  onFixWithAi: (finding: AuditFinding) => void;
 }) {
   const counts = LAYER_ORDER.map((layer) => ({
     layer,
@@ -820,6 +846,9 @@ function WorkspaceOverview({
         nodesById={nodesById}
         onSelectNode={onSelectNodeId}
         onOpenFile={onOpenFinding}
+        aiConfigured={aiConfigured}
+        aiFixingId={aiFixingId}
+        onFixWithAi={onFixWithAi}
       />
 
       <div className="mt-5 rounded-lg border border-ink-700/60 bg-ink-950/40 px-3 py-2.5">

@@ -4,17 +4,17 @@ import { ApiError, api } from '../lib/api';
 import { countLineChanges } from '../lib/diff';
 import { buildPatchOperations, isDraftEmpty, type Draft } from '../lib/draft';
 import type { WorkspaceIR } from '../types/core-ir';
-import type { ScaffoldPreview } from '../types/blueprint';
+import type { PlanPreview } from '../types/ai';
 import type { DryRunResponse, GitStatus } from '../types/patching';
-import { AlertIcon, BuilderIcon, CheckIcon, DiffIcon, ShieldIcon, Spinner } from './icons';
+import { AlertIcon, BuilderIcon, CheckIcon, DiffIcon, ShieldIcon, SparkIcon, Spinner } from './icons';
 
 interface DiffPreviewProps {
   workspace: WorkspaceIR;
   draft: Draft;
   requestId: number;
-  /** Generated-file plan from the Builder; replaces the draft-derived dry-run while present. */
-  scaffold?: ScaffoldPreview | null;
-  onScaffoldDismiss?: () => void;
+  /** Generated or AI-proposed plan; replaces the draft-derived dry-run while present. */
+  plan?: PlanPreview | null;
+  onPlanDismiss?: () => void;
   onApplied: (applyId: string, appliedFiles: string[]) => void;
 }
 
@@ -67,8 +67,8 @@ export function DiffPreview({
   workspace,
   draft,
   requestId,
-  scaffold = null,
-  onScaffoldDismiss,
+  plan: externalPlan = null,
+  onPlanDismiss,
   onApplied,
 }: DiffPreviewProps) {
   const [state, setState] = useState<DryRunState>({
@@ -126,8 +126,8 @@ export function DiffPreview({
   }, [workspace, gitNonce, state.response]);
 
   useEffect(() => {
-    if (!dirty || scaffold) {
-      if (!scaffold) {
+    if (!dirty || externalPlan) {
+      if (!externalPlan) {
         setState({ response: null, planWarnings: [], pending: false, error: null });
         setApplyFailure(null);
         setConfirm(null);
@@ -177,9 +177,9 @@ export function DiffPreview({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [workspace, draft, dirty, plan, requestId, rerun, scaffold]);
+  }, [workspace, draft, dirty, plan, requestId, rerun, externalPlan]);
 
-  const external = scaffold?.response ?? null;
+  const external = externalPlan?.response ?? null;
   const patches = external ? external.patches : state.response?.patches ?? [];
   const patchPaths = useMemo(() => patches.map((patch) => patch.filePath), [patches]);
   const selectedPatches = useMemo(
@@ -290,28 +290,56 @@ export function DiffPreview({
         onApply={requestApply}
       />
 
-      {scaffold && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-sky-500/25 bg-sky-500/[0.06] px-3 py-1.5">
-          <BuilderIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-          <p className="text-[11px] leading-relaxed text-sky-100">
-            Generated plan · {scaffold.label} · {patches.length} file
-            {patches.length === 1 ? '' : 's'}
-            {newFileCount > 0 ? ` · ${newFileCount} new` : ''}
-          </p>
-          {conflictCount > 0 && (
-            <span className="text-[10px] leading-relaxed text-rose-300">
-              {conflictCount} path{conflictCount === 1 ? '' : 's'} already exist — applying is rejected
-              with FILE_EXISTS (Kodo never overwrites while scaffolding).
-            </span>
-          )}
-          {onScaffoldDismiss && (
-            <button
-              type="button"
-              onClick={onScaffoldDismiss}
-              className="ml-auto shrink-0 rounded px-1.5 text-[10px] text-sky-300/70 transition hover:bg-sky-500/10 hover:text-sky-100"
+      {externalPlan && (
+        <div
+          className={`border-b px-3 py-1.5 ${
+            externalPlan.kind === 'ai'
+              ? 'border-violet-400/25 bg-violet-400/[0.06]'
+              : 'border-sky-500/25 bg-sky-500/[0.06]'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {externalPlan.kind === 'ai' ? (
+              <SparkIcon className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+            ) : (
+              <BuilderIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+            )}
+            <p
+              className={`text-[11px] leading-relaxed ${
+                externalPlan.kind === 'ai' ? 'text-violet-100' : 'text-sky-100'
+              }`}
             >
-              dismiss
-            </button>
+              {externalPlan.kind === 'ai' ? 'AI proposal' : 'Generated plan'} · {externalPlan.label} ·{' '}
+              {patches.length} file
+              {patches.length === 1 ? '' : 's'}
+              {newFileCount > 0 ? ` · ${newFileCount} new` : ''}
+              {externalPlan.modelUsed ? ` · ${externalPlan.modelUsed}` : ''}
+            </p>
+            {externalPlan.kind === 'scaffold' && conflictCount > 0 && (
+              <span className="text-[10px] leading-relaxed text-rose-300">
+                {conflictCount} path{conflictCount === 1 ? '' : 's'} already exist — applying is rejected
+                with FILE_EXISTS (Kodo never overwrites while scaffolding).
+              </span>
+            )}
+            {onPlanDismiss && (
+              <button
+                type="button"
+                onClick={onPlanDismiss}
+                className={`ml-auto shrink-0 rounded px-1.5 text-[10px] transition ${
+                  externalPlan.kind === 'ai'
+                    ? 'text-violet-300/70 hover:bg-violet-500/10 hover:text-violet-100'
+                    : 'text-sky-300/70 hover:bg-sky-500/10 hover:text-sky-100'
+                }`}
+              >
+                dismiss
+              </button>
+            )}
+          </div>
+          {externalPlan.kind === 'ai' && (
+            <p className="mt-1 max-h-[68px] overflow-y-auto whitespace-pre-wrap text-[10px] leading-relaxed text-violet-100/70">
+              {externalPlan.explanation || 'The model returned no explanation.'} — review the diff, then Apply.
+              The Git dirty-tree gate, SHA-256 freshness check and rollback still apply.
+            </p>
           )}
         </div>
       )}

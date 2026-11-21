@@ -22,7 +22,8 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 ```
 
 - `apps/web` MUST NOT parse source code, infer architecture, or know about Roslyn/Tree-sitter internals.
-  It renders the Core IR and reads file text through `GET /api/v1/file`.
+  It renders the Core IR and reads file text through `GET /api/v1/file`. AI features call only
+  `/api/v1/ai/*`; the browser never talks to DeepSeek/Ollama directly.
 - `services/api-python` is the only orchestrator. It owns scanning, IR assembly, relation resolution,
   Mermaid generation, warning aggregation, the `/api/v1/dry-run` patch plan, and — for Phase 3c — the
   guarded `/api/v1/apply` + `/api/v1/apply/rollback` write path. It calls the C# analyzer's `/patch`
@@ -37,7 +38,8 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing), 3b (dry-run AST patching) and the
 generator half of Phase 4 (blueprint rendering) are **100% zero-write** with respect to user source
 code. Phase 3c adds exactly one, tightly guarded write path (see §3c), and Phase 4 reuses it for
-create-only scaffolding (§3d). Anything else stays read-only.
+create-only scaffolding (§3d). Phase 5 adds AI **proposals** that must come back through that same
+reviewed write path (§3e). Anything else stays read-only.
 
 Forbidden:
 - Writing, patching, moving, or deleting user source files outside the guarded apply service.
@@ -45,7 +47,7 @@ Forbidden:
 - Overwriting an existing file while scaffolding — a create-only patch that targets an existing path
   must fail with HTTP 409 `FILE_EXISTS`.
 - Mutating Git state on the user's repository (add, commit, checkout, reset, stash, tag, clean).
-- LLM/DeepSeek clients of any kind.
+- Any LLM call that writes to disk, applies its own patch, or bypasses the Monaco diff/apply review.
 - Dockerfile / compose generation for the scanned workspace.
 
 Allowed:
@@ -58,6 +60,9 @@ Allowed:
 - Rendering stack-plugin templates into **in-memory** file text (`app/generators/`) and returning it
   through `POST /api/v1/scaffold/dry-run` as create-only patches. Nothing is written there either.
 - Reading `kodo.blueprint.json` from the workspace root (`GET /api/v1/blueprint`).
+- Calling an OpenAI-compatible LLM (`app/llm/`) with compact Core IR context and a bounded set of
+  source files, returning proposals as dry-run patches or a validated blueprint (§3e). The proposal
+  text is never written by the AI module.
 - Inspecting Git status read-only through `app/services/git_safety.py` (`GIT_OPTIONAL_LOCKS=0`, no
   mutating subcommands).
 - Writing reviewed patches through `app/services/apply_service.py` only (§3c, §3d).
@@ -143,6 +148,34 @@ Allowed:
 - `kodo.blueprint.json` is the only path that may be updated by a scaffold batch, and only through the
   ordinary SHA-256 overwrite path (`isNewFile: false`, `expectedSha256` echoed from the dry-run).
 
+## 3e. AI Copilot rules (DeepSeek Cloud / local Ollama / vLLM)
+
+- **Zero silent AI writes.** The LLM never touches the workspace. `app/llm/` may read at most three
+  files per workflow, and every result is a standard `DryRunResponse` (or a validated `Blueprint` for
+  the Builder) that a human reviews in the Monaco diff and applies via `POST /api/v1/apply`. Never add
+  an auto-fix, "apply on generate", watch mode or background AI write.
+- **IR context packing, never source dumps.** Prompts are built from `app/llm/context_packer.py`:
+  stacks, health, audit findings, field/method signatures and relations projected into a deterministic
+  document bounded by `KODO_LLM_MAX_CONTEXT_CHARS` (default 24 000, truncation flagged). Never paste a
+  directory tree, `node_modules`, or unrelated files into a prompt.
+- **Bounded, contained reads.** `audit-fix` and `implement-method` read through
+  `app/patching/paths.resolve_member` (no absolute paths, no `..`, no symlink escapes) under the 2 MB
+  cap and at most three files. Path traversal must keep returning HTTP 400.
+- **Strict output validation.** Blueprint JSON must validate against the Phase 4 Pydantic `Blueprint`
+  (exactly one automatic repair retry, then 422 with field-level details). Patch edits may only target
+  the files Kodo provided; anything else is 422 `INVALID_PATCH`. Model-supplied paths are untrusted and
+  are never resolved directly.
+- **No secrets anywhere.** API keys come from `KODO_LLM_API_KEY` or the per-request `llmConfig` only.
+  Never log them, never echo them in errors, never persist them server-side, never write them into the
+  target repository, never commit them. The UI keeps them in `sessionStorage`/memory only.
+- **Deterministic tests.** `tests/test_ai_copilot.py` injects an `httpx.MockTransport` through
+  `app.llm.client.set_transport_override`; CI must never require network access or an API key.
+- **Air-gapped parity.** Every workflow must work against a local OpenAI-compatible server with an
+  empty API key; requiring a key for loopback/private hosts is a bug.
+- **Structured errors.** Return `{ code, message }` payloads: `MISSING_API_KEY` / `UNAUTHORIZED` (401),
+  `RATE_LIMITED` (429), `TIMEOUT` (504), `UNREACHABLE` (502), `INVALID_JSON` / `INVALID_BLUEPRINT` /
+  `INVALID_PATCH` (422). Messages must be safe to display and free of prompt content and secrets.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -162,6 +195,8 @@ Allowed:
 - The C# analyzer is optional at runtime. If it is offline, the orchestrator MUST still return
   Java/TS/JS results and append a human-readable entry to `WorkspaceIR.warnings`.
 - Unparsable files, unknown extensions, and oversized files produce warnings, never 500s.
+- AI Copilot failures (missing key, 401/403, 429, timeout, unreachable local server) return the
+  structured error codes from §3e; they never block scanning, auditing or the guarded apply path.
 - The UI must render a usable empty state when `nodes` is empty.
 
 ## 6. Code style
@@ -195,3 +230,8 @@ Allowed:
   review the NEW files in Monaco, apply, confirm the re-scan shows the full
   controller/service/repository/entity graph at 100/100, roll back, and confirm the folder is empty
   again with a clean `git status` (and that an existing path yields 409 `FILE_EXISTS`).
+- For AI changes: run `pytest services/api-python/tests/test_ai_copilot.py` with no network, then in
+  the UI press **Test Connection** for both DeepSeek Cloud (401 without a key) and a local
+  Ollama/vLLM server. Generate a blueprint, run **Fix with AI** on a real finding and **AI Implement**
+  on a method, and confirm each result only reaches disk through the Diff Preview Apply button —
+  rollback restores the original bytes.

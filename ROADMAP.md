@@ -88,16 +88,51 @@ existing guarded apply pipeline. Every generated project is verified to score **
 
 ---
 
-## Phase 5: DeepSeek Architecture Copilot
+## Phase 5: DeepSeek Architecture Copilot ✅
 **Goal:** Integrate AI assistance constrained by the Core IR and Audit rules so generated code stays structurally clean.
 
-- [ ] Build OpenAI-compatible **DeepSeek** client (`DeepSeek-V3` for code, `DeepSeek-R1` for architecture/audit) with configurable Base URL for air-gapped on-prem **Ollama / vLLM**.
-- [ ] Implement **IR-based context packing** (send compact Core IR JSON + Audit findings instead of raw file dumps).
-- [ ] Ship 3 core AI workflows:
-  - [ ] *Business Spec -> Blueprint* (natural language to structured Core IR for human review).
-  - [ ] *Audit Error -> Refactor Patch* (one-click fix previewed in Monaco Diff).
-  - [ ] *Targeted Method Implementation* inside the on-code editor.
-- **Definition of Done:** Generate a blueprint from a short business spec and resolve a Phase 2 audit violation via DeepSeek + Monaco Diff approval.
+**Status:** Delivered — OpenAI-compatible client (DeepSeek Cloud + air-gapped Ollama/vLLM), IR context
+packing with a hard character budget, and three read-only workflows that all land in the Monaco diff /
+Builder for human approval. Zero AI writes: the only writer remains the Phase 3c guarded apply.
+
+- [x] Build an OpenAI-compatible **DeepSeek** client (`deepseek-chat` for code, `deepseek-reasoner` for
+      architecture/blueprint) with a configurable Base URL for air-gapped on-prem **Ollama / vLLM**.
+  - [x] `app/llm/config.py`: `KODO_LLM_BASE_URL`, `KODO_LLM_API_KEY` (optional for local servers),
+        `KODO_LLM_CODE_MODEL`, `KODO_LLM_REASONING_MODEL`, `KODO_LLM_TIMEOUT_SECONDS`, plus per-request
+        `llmConfig` overrides from the UI drawer (never persisted or logged).
+  - [x] `app/llm/client.py`: async `httpx` `/chat/completions`, JSON-mode with a keyless retry for servers
+        that reject `response_format`, strict JSON extraction that strips `<think>…</think>` blocks and
+        markdown fences, and structured errors for missing key, 401, 429, timeout and unreachable servers.
+  - [x] `POST /api/v1/ai/test-connection` (`GET /models`) drives the settings drawer "Test Connection".
+- [x] Implement **IR-based context packing** (compact Core IR + audit findings instead of raw file dumps).
+  - [x] `app/llm/context_packer.py`: stacks, health, findings, field/method signatures and relations in a
+        deterministic document that never exceeds the character budget (default 24 000, truncated with a
+        warning flag), plus a 1-hop focus packer for method implementation.
+- [x] Ship 3 core AI workflows:
+  - [x] *Business Spec -> Blueprint*: `POST /api/v1/ai/spec-to-blueprint` validates the model output against
+        the Phase 4 Pydantic `Blueprint` (slice/field/dependency rules), performs exactly one automatic
+        repair retry with the validation error, then returns `422 INVALID_BLUEPRINT` with details.
+  - [x] *Audit Error -> Refactor Patch*: `POST /api/v1/ai/audit-fix` reads at most three affected files
+        behind the dry-run path containment + 2 MB cap and returns a standard `DryRunResponse` with
+        `originalSha256` and an `explanation`.
+  - [x] *Targeted Method Implementation*: `POST /api/v1/ai/implement-method` packs the component + direct
+        neighbours and returns a single-file `DryRunResponse` for the diff preview.
+- [x] Frontend Copilot UX:
+  - [x] AI Copilot status pill in the top bar (DeepSeek Cloud / Local On-Prem / Custom / Not Configured)
+        and a settings drawer with presets, password-masked API key (sessionStorage only) and Test Connection.
+  - [x] Builder "AI Generate from Spec" card that loads the blueprint (plus rationale) for review before any dry-run.
+  - [x] "Fix with AI" on every audit finding, and per-method "AI Implement" with an inline instruction box.
+  - [x] Every AI proposal opens in the existing Diff Preview (Monaco side-by-side, Git dirty-tree gate,
+        SHA-256 optimism, Apply + Rollback) — AI never writes to disk.
+- [x] `tests/test_ai_copilot.py` runs the whole surface on `httpx.MockTransport` (no network): packing
+      budget/compaction, `<think>`/fence parsing, blueprint validation + repair, audit-fix and
+      implement-method dry-runs with exact SHA-256 and untouched disk, path-traversal rejection and
+      structured 401/429/timeout/unreachable errors.
+- **Definition of Done:** Generate a blueprint from a short business spec and resolve a Phase 2 audit
+  violation via DeepSeek + Monaco Diff approval. ✅ verified live against a local OpenAI-compatible
+  (Ollama) server: Test Connection listed models, a three-slice blueprint was generated and previewed
+  as a 25-file create-only diff, and a "Fix with AI" proposal applied through the guarded pipeline took
+  the workspace from 90/100 to 100/100 — rollback restored the original bytes.
 
 ---
 

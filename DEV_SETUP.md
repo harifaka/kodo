@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–4: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder)
+# Kodo — Developer Setup (Phases 1–5: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -20,12 +20,19 @@ Phase 4 adds the **Multi-Stack Builder**: Jinja2 stack generators turn a version
 as a scaffold dry-run that reuses the Phase 3c guarded apply. New files are **create-only** — an
 existing path aborts the batch with `409 FILE_EXISTS` instead of being overwritten.
 
+Phase 5 adds the **DeepSeek Architecture Copilot**: an OpenAI-compatible client for DeepSeek Cloud or
+air-gapped Ollama/vLLM, IR context packing with a hard character budget, and three read-only AI
+workflows (spec → blueprint, audit finding → patch, method → implementation). AI output is always a
+dry-run plan reviewed in the Monaco diff; the model has no write access.
+
 ```
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
 services/api-python (FastAPI :8088)      ← Core IR, audit, dry-run + scaffold orchestrator,
-        │  HTTP/JSON                         blueprint store, guarded apply (the only writer)
+        │  HTTP/JSON                         blueprint store, AI Copilot, guarded apply (only writer)
+        │  HTTPS/JSON (OpenAI-compatible)
+        ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
         ▼
 services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + trivia-preserving /patch
                                             (also re-audits generated WPF slices)
@@ -367,6 +374,71 @@ Generator plugins live in `app/generators/` (`base.py` protocol + registry, `spr
 in, text out. The test suite writes the 3-service demo for every stack into a temp folder, re-scans it
 with the full pipeline and asserts **0 findings and 100/100**.
 
+### AI Copilot (Phase 5)
+
+Configure the provider from the **AI Copilot** pill in the top bar (or with environment variables):
+
+| Mode | Base URL | Suggested models | API key |
+| --- | --- | --- | --- |
+| DeepSeek Cloud | `https://api.deepseek.com/v1` | `deepseek-chat` / `deepseek-reasoner` | required |
+| Local Ollama | `http://localhost:11434/v1` | `deepseek-coder-v2` / `deepseek-r1:8b` | not required |
+| Local vLLM / other | `http://localhost:8000/v1` | your served model id | not required |
+
+The API key is stored in the browser tab's `sessionStorage` only. Kodo never writes it to disk, never
+logs it and never sends it to the scanned repository. Server operators can instead export
+`KODO_LLM_API_KEY` (the UI then shows the provider as *Server env*).
+
+Ollama quick start:
+
+```powershell
+ollama pull deepseek-coder-v2
+ollama pull deepseek-r1:8b
+ollama serve
+```
+
+Press **Test Connection** in the drawer — it calls `GET {baseUrl}/models` and lists the reachable
+models. Use the exact model id Ollama reports (e.g. `qwen2.5:3b`); a mismatched id returns HTTP 404 from
+the provider as a structured `PROVIDER_ERROR`.
+
+The three workflows are read-only and always land in the existing review surfaces:
+
+| Endpoint | UI entry point | Result |
+| --- | --- | --- |
+| `POST /api/v1/ai/spec-to-blueprint` | Builder → **AI Generate from Spec** | validated `Blueprint` + rationale, loaded into the Builder for editing |
+| `POST /api/v1/ai/audit-fix` | **Fix with AI** on an audit finding | `DryRunResponse` patches + `explanation` → Diff Preview |
+| `POST /api/v1/ai/implement-method` | **AI Implement** next to a method | one-file `DryRunResponse` → Diff Preview |
+| `POST /api/v1/ai/test-connection` | **Test Connection** in the drawer | `{ ok, provider, baseUrl, models }` |
+
+Request shape (`llmConfig` is optional and overrides the environment for that request only):
+
+```json
+{
+  "rootPath": "C:/work/my-shop",
+  "finding": { "id": "LAYER_VIOLATION:…", "ruleId": "LAYER_VIOLATION", "…": "…" },
+  "workspaceIr": { "nodes": [], "relations": [], "…": "…" },
+  "llmConfig": {
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "sk-…",
+    "codeModel": "deepseek-chat",
+    "reasoningModel": "deepseek-reasoner",
+    "timeoutSeconds": 90
+  }
+}
+```
+
+Guardrails:
+
+- The model only sees compact Core IR context (stacks, health, findings, signatures, relations — capped
+  at `KODO_LLM_MAX_CONTEXT_CHARS`, default 24 000) plus at most three affected files (2 MB cap, path
+  containment enforced). It never receives the whole workspace.
+- Blueprint output is validated against the Phase 4 Pydantic model with exactly one automatic repair
+  retry; a second failure returns `422 INVALID_BLUEPRINT` with field-level details. Patches may only
+  touch files Kodo provided, otherwise `422 INVALID_PATCH` — no new files, no traversal.
+- `originalContent` / `originalSha256` are computed from disk, so the Git dirty-tree gate, SHA-256
+  optimism and rollback behave exactly like the deterministic dry-run. **The AI endpoints never write.**
+- Structured errors: `MISSING_API_KEY` / `UNAUTHORIZED` (401), `RATE_LIMITED` (429), `TIMEOUT` (504),
+  `UNREACHABLE` (502), `INVALID_JSON` / `INVALID_BLUEPRINT` / `INVALID_PATCH` (422).
+
 Notes:
 
 - Start with a single service/module folder. Limits are 6000 files and 2 MB per file; anything
@@ -406,6 +478,12 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 | `VITE_API_BASE_URL` | `apps/web/.env.local` | `http://localhost:8088` | Orchestrator base URL |
 | `KODO_CSHARP_URL` | FastAPI process | `http://localhost:5050` | Roslyn analyzer base URL |
 | `KODO_CORS_ORIGINS` | FastAPI process | Vite + Tauri origins | Comma-separated allow-list |
+| `KODO_LLM_BASE_URL` | FastAPI process | `https://api.deepseek.com/v1` | OpenAI-compatible endpoint (Ollama/vLLM) |
+| `KODO_LLM_API_KEY` | FastAPI process | *(empty)* | DeepSeek key; optional for local servers, never logged |
+| `KODO_LLM_CODE_MODEL` | FastAPI process | `deepseek-chat` | Code model for audit fixes / method implementation |
+| `KODO_LLM_REASONING_MODEL` | FastAPI process | `deepseek-reasoner` | Reasoning model for spec → blueprint |
+| `KODO_LLM_TIMEOUT_SECONDS` | FastAPI process | `90` | Per-request LLM timeout (raise for slow local models) |
+| `KODO_LLM_MAX_CONTEXT_CHARS` | FastAPI process | `24000` | Hard IR prompt budget (clamped 2 000–200 000) |
 | `KODO_CSHARP_URL` | Roslyn process | `http://localhost:5050` | Kestrel bind address (overrides `ASPNETCORE_URLS`) |
 | `ASPNETCORE_URLS` | Roslyn container | `http://+:5050` | Container bind address |
 
@@ -416,8 +494,9 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 ```powershell
 # Python: parsers, relation resolver, Mermaid generator, audit rules, security,
 # Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up),
-# the guarded apply/rollback suite (needs `git` on PATH) and the Phase 4 generator suite
+# the guarded apply/rollback suite (needs `git` on PATH), the Phase 4 generator suite
 # (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up)
+# and the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -485,6 +564,27 @@ restart. Anything not covered by a snapshot must be reverted with Git.
 Compare `workspace.audit.findings[].nodeIds` / `edgeKeys` with the graph, and adjust the rule
 thresholds in `services/api-python/app/audit/rules/` if the guideline is too strict for your project.
 
+**The AI Copilot pill says "Not Configured".** Click it and pick a preset, or set `KODO_LLM_BASE_URL`
+(+ `KODO_LLM_API_KEY` for the cloud) on the FastAPI process. The pill reads *Local On-Prem*,
+*DeepSeek Cloud* or *Custom OpenAI* once a Base URL is saved.
+
+**Test Connection returns 401 `MISSING_API_KEY` / `UNAUTHORIZED`.** DeepSeek Cloud needs a key; paste it
+in the drawer. Local Ollama/vLLM must use a loopback or private-IP Base URL to be treated as keyless.
+
+**Test Connection returns 502 `UNREACHABLE`.** The server is not running or the Base URL is wrong. For
+Ollama: `ollama serve`, and confirm `http://localhost:11434/v1/models` answers in a browser. Inside
+Docker use `http://host.docker.internal:11434/v1`.
+
+**`Fix with AI` returns 504 `TIMEOUT`.** Large files + a slow CPU-only model can exceed the default 90 s.
+Raise `KODO_LLM_TIMEOUT_SECONDS` (e.g. `300`) and restart the API, or pick a faster/smaller model.
+
+**The provider returns 404 from Ollama.** The configured model id does not exist locally. Copy an id
+from Test Connection (for example `qwen2.5:3b`, not the preset's `deepseek-coder-v2`).
+
+**`422 INVALID_BLUEPRINT` even after the repair retry.** Small local models struggle with the strict
+schema. Use `deepseek-reasoner` (or another instruction-following model) as the reasoning model, and
+check `detail.details` for the exact field that failed validation.
+
 **Tauri build fails immediately.** Rust/toolchain prerequisites are missing; the browser workflow
 (`npm run dev`) does not require Rust.
 
@@ -509,15 +609,21 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
   app/generators/                 base.py (protocol + registry), spring_boot.py, csharp_wpf.py,
                                   nodejs.py, templates/<stack>/*.j2
   app/models/                     ir.py (Core IR), blueprint.py (versioned kodo.blueprint.json)
+  app/llm/                        config.py (env + per-request overrides), client.py (OpenAI-compatible
+                                  httpx client), context_packer.py (budgeted IR projection),
+                                  prompts.py (system prompts), sources.py (bounded file reads),
+                                  workflows.py (spec→blueprint, audit-fix, implement-method), routes.py
   app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
                                   git_safety.py (read-only git), apply_service.py (the only writer),
                                   scaffold_service.py (blueprint → create-only dry-run)
   tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
-                                  guarded apply/rollback, stack generators + 100/100 self-audit
+                                  guarded apply/rollback, stack generators + 100/100 self-audit,
+                                  AI Copilot (mocked httpx transport)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
-                                  NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore
+                                  NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
+                                  AiSettingsModal, MethodsSection
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)
 ```
 

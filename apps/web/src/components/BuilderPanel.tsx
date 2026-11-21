@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useAiSettings } from '../hooks/useAiSettings';
 import { api } from '../lib/api';
+import { providerLabel, toLlmOverride } from '../lib/aiSettings';
 import {
   STACK_OPTIONS,
   blankSlice,
@@ -9,8 +11,19 @@ import {
   uniqueSliceName,
   validateBlueprint,
 } from '../lib/blueprint';
-import type { Blueprint, BlueprintSlice, BlueprintStack, ScaffoldPreview } from '../types/blueprint';
-import { AlertIcon, BuilderIcon, DiffIcon, FolderIcon, PlusIcon, Spinner, TrashIcon } from './icons';
+import type { Blueprint, BlueprintSlice, BlueprintStack } from '../types/blueprint';
+import type { PlanPreview } from '../types/ai';
+import {
+  AlertIcon,
+  BuilderIcon,
+  ChevronIcon,
+  DiffIcon,
+  FolderIcon,
+  PlusIcon,
+  SparkIcon,
+  Spinner,
+  TrashIcon,
+} from './icons';
 import { SliceEditor } from './SliceEditor';
 
 const INPUT_CLASS =
@@ -20,7 +33,10 @@ interface BuilderPanelProps {
   rootPath: string;
   /** Bumped on every re-scan so a regenerate/rollback refreshes kodo.blueprint.json state. */
   revision?: number;
-  onPreviewReady: (preview: ScaffoldPreview) => void;
+  onPreviewReady: (preview: PlanPreview) => void;
+  /** AI Copilot availability (browser settings or server-side environment). */
+  aiConfigured: boolean;
+  onOpenAiSettings: () => void;
 }
 
 interface FileState {
@@ -29,7 +45,14 @@ interface FileState {
   message: string | null;
 }
 
-export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: BuilderPanelProps) {
+export function BuilderPanel({
+  rootPath,
+  revision = 0,
+  onPreviewReady,
+  aiConfigured,
+  onOpenAiSettings,
+}: BuilderPanelProps) {
+  const aiSettings = useAiSettings();
   const [blueprint, setBlueprint] = useState<Blueprint>(() => defaultBlueprint());
   const [activeIndex, setActiveIndex] = useState(0);
   const [includeSkeleton, setIncludeSkeleton] = useState(true);
@@ -37,6 +60,13 @@ export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: Builder
   const [file, setFile] = useState<FileState>({ exists: false, status: 'idle', message: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [spec, setSpec] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiRationale, setAiRationale] = useState<{ text: string; model: string; warnings: string[] } | null>(
+    null,
+  );
 
   const loadBlueprint = useCallback(async () => {
     setFile((current) => ({ ...current, status: 'loading', message: null }));
@@ -70,6 +100,8 @@ export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: Builder
     setBlueprint(defaultBlueprint());
     setActiveIndex(0);
     setError(null);
+    setAiRationale(null);
+    setAiError(null);
     void loadBlueprint();
   }, [loadBlueprint, revision, rootPath]);
 
@@ -148,6 +180,36 @@ export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: Builder
     setActiveIndex(0);
   };
 
+  const generateFromSpec = async () => {
+    const prompt = spec.trim();
+    if (!prompt) {
+      setAiError('Describe the business domain first.');
+      return;
+    }
+    if (!aiConfigured) {
+      setAiError('Configure the AI Copilot (DeepSeek Cloud or a local Ollama/vLLM server) first.');
+      return;
+    }
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await api.aiSpecToBlueprint({
+        spec: prompt,
+        stack: blueprint.stack,
+        projectName: blueprint.projectName.trim() || undefined,
+        basePackageOrNamespace: blueprint.basePackageOrNamespace.trim() || undefined,
+        llmConfig: toLlmOverride(aiSettings),
+      });
+      setBlueprint(result.blueprint);
+      setActiveIndex(0);
+      setAiRationale({ text: result.rationale, model: result.modelUsed, warnings: result.warnings });
+    } catch (reason) {
+      setAiError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const preview = async () => {
     const problems = validateBlueprint(blueprint);
     if (problems.length > 0) {
@@ -167,6 +229,7 @@ export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: Builder
       onPreviewReady({
         response,
         label: `${option.label} · ${blueprint.slices.length} slice${blueprint.slices.length === 1 ? '' : 's'} · ${blueprint.projectName.trim()}`,
+        kind: 'scaffold',
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -299,6 +362,95 @@ export function BuilderPanel({ rootPath, revision = 0, onPreviewReady }: Builder
             <AlertIcon className="mt-0.5 h-3 w-3 shrink-0" />
             {error}
           </p>
+        )}
+      </div>
+
+      <div className="border-b border-ink-700/70 bg-violet-400/[0.04] px-4 py-2">
+        <button
+          type="button"
+          onClick={() => setAiOpen((value) => !value)}
+          aria-expanded={aiOpen}
+          className="flex w-full items-center gap-2 text-left"
+        >
+          <SparkIcon className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+          <span className="text-[11.5px] font-semibold text-slate-100">AI Generate from Spec</span>
+          <span
+            className={`rounded border px-1.5 py-0.5 text-[8.5px] uppercase tracking-wide ${
+              aiConfigured
+                ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                : 'border-ink-600 bg-ink-850 text-slate-500'
+            }`}
+          >
+            {aiConfigured ? providerLabel(aiSettings) : 'not configured'}
+          </span>
+          <span className="hidden text-[9px] text-slate-600 sm:block">
+            natural language → reviewable blueprint (nothing is written)
+          </span>
+          <ChevronIcon className={`ml-auto h-3.5 w-3.5 shrink-0 text-slate-500 transition ${aiOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {aiOpen && (
+          <div className="mt-2">
+            <textarea
+              value={spec}
+              onChange={(event) => setSpec(event.target.value)}
+              rows={4}
+              spellCheck={false}
+              placeholder="An invoice and payment system with customers, invoices and payments. Invoices belong to a customer, payments settle an invoice."
+              className="w-full resize-y rounded-md border border-ink-700 bg-ink-950/70 px-2.5 py-2 text-[11px] leading-relaxed text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-violet-400/60"
+            />
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void generateFromSpec()}
+                disabled={aiBusy || !spec.trim()}
+                className="flex items-center gap-1.5 rounded-md border border-violet-400/50 bg-violet-400/10 px-2.5 py-1 text-[10.5px] font-medium text-violet-100 transition enabled:hover:bg-violet-400/20 disabled:opacity-50"
+              >
+                {aiBusy ? <Spinner className="h-3 w-3" /> : <SparkIcon className="h-3 w-3" />}
+                {aiBusy ? 'Generating…' : 'Generate Blueprint'}
+              </button>
+              {!aiConfigured && (
+                <button
+                  type="button"
+                  onClick={onOpenAiSettings}
+                  className="text-[10px] text-violet-200 underline decoration-violet-400/40 underline-offset-2 transition hover:text-violet-100"
+                >
+                  Configure AI Copilot
+                </button>
+              )}
+              <span className="text-[9px] leading-relaxed text-slate-500">
+                Target stack: {option.label} · the blueprint loads below for review before any dry-run.
+              </span>
+            </div>
+
+            {aiError && (
+              <p className="mt-1.5 flex items-start gap-1.5 text-[9.5px] leading-relaxed text-rose-300">
+                <AlertIcon className="mt-0.5 h-3 w-3 shrink-0" />
+                {aiError}
+              </p>
+            )}
+
+            {aiRationale && (
+              <div className="mt-2 rounded-md border border-violet-400/25 bg-violet-400/[0.06] px-2.5 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-300/80">
+                  AI rationale · {aiRationale.model}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-[10.5px] leading-relaxed text-slate-300">
+                  {aiRationale.text || 'No rationale returned.'}
+                </p>
+                {aiRationale.warnings.map((warning) => (
+                  <p key={warning} className="mt-1 flex items-start gap-1.5 text-[9.5px] leading-relaxed text-amber-200/90">
+                    <AlertIcon className="mt-0.5 h-3 w-3 shrink-0" />
+                    {warning}
+                  </p>
+                ))}
+                <p className="mt-1.5 text-[9px] leading-relaxed text-slate-500">
+                  Review and edit the slices, then generate the files in the Monaco diff — the AI never
+                  writes to disk.
+                </p>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

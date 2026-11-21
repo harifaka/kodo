@@ -1,4 +1,4 @@
-"""Kodo FastAPI orchestrator — scan, deterministic audit, dry-run patching and guarded apply."""
+"""Kodo FastAPI orchestrator — scan, deterministic audit, dry-run patching, guarded apply and AI."""
 
 from __future__ import annotations
 
@@ -8,15 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api.routes import router
 from app.config import DEFAULT_API_PORT, cors_origins
+from app.llm.routes import router as ai_router
 
 app = FastAPI(
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–4. "
+        "Kodo Architecture Control Center — Phases 1–5. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
-        "versioned blueprint, and applies reviewed patches to disk behind path-containment, SHA-256 "
-        "optimistic concurrency and Git working-tree guards."
+        "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
+        "and applies reviewed patches to disk behind path-containment, SHA-256 optimistic concurrency "
+        "and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -30,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(ai_router)
 
 
 @app.get("/", tags=["system"])
@@ -46,6 +49,10 @@ async def root() -> dict[str, str]:
         "gitStatus": "GET /api/v1/git/status",
         "apply": "POST /api/v1/apply",
         "rollback": "POST /api/v1/apply/rollback",
+        "aiTestConnection": "POST /api/v1/ai/test-connection",
+        "aiSpecToBlueprint": "POST /api/v1/ai/spec-to-blueprint",
+        "aiAuditFix": "POST /api/v1/ai/audit-fix",
+        "aiImplementMethod": "POST /api/v1/ai/implement-method",
     }
 
 

@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 4](https://img.shields.io/badge/Status-Phase%204%20delivered-brightgreen.svg)
+![Status: Phase 5](https://img.shields.io/badge/Status-Phase%205%20delivered-brightgreen.svg)
 
 ---
 
@@ -17,6 +17,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
 - **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
 - **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
+- **DeepSeek Architecture Copilot:** OpenAI-compatible client for **DeepSeek Cloud** or air-gapped **Ollama / vLLM** that turns a business spec into a blueprint, proposes fixes for audit findings and implements single methods — always as IR-aware proposals reviewed in the Monaco diff. The LLM never writes to disk.
 
 ---
 
@@ -28,7 +29,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
             | Desktop (Tauri v2)              | Web / SaaS (Docker)
             v                                 v
     Orchestrator API (Python FastAPI)
-    Core IR | Tree-sitter (Java/TS/JS) | DeepSeek | Docker
+    Core IR | Tree-sitter (Java/TS/JS) | DeepSeek / Ollama (OpenAI-compatible) | Docker
             |
             | Internal HTTP (JSON)
             v
@@ -37,7 +38,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
-## Quick Start (Phases 1–4)
+## Quick Start (Phases 1–5)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -68,6 +69,15 @@ existing paths are never overwritten (`409 FILE_EXISTS`) and rollback deletes th
 folders. Toggle **Save kodo.blueprint.json** to commit the versioned plan next to the code; the Builder
 reloads it on demand for review.
 
+The **AI Copilot** pill in the top bar configures the provider: **DeepSeek Cloud**
+(`https://api.deepseek.com/v1`) or a local OpenAI-compatible server such as **Ollama**
+(`http://localhost:11434/v1`) or **vLLM**. The API key lives only in the browser tab's
+`sessionStorage` (or server-side `KODO_LLM_*` env vars) and is never written to the repository.
+From there: **AI Generate from Spec** in the Builder turns a business description into a blueprint
+(validated against the Phase 4 schema, one automatic repair retry), **Fix with AI** on an audit finding
+proposes a patch, and **AI Implement** on a method fills in a single method. Every AI result is a normal
+dry-run plan — reviewed in the Monaco side-by-side diff and applied (or rolled back) only by you.
+
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
@@ -96,10 +106,10 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - Versionable `kodo.blueprint.json` (schema `1.0`) committed alongside the repo for team PR reviews, loaded back into the Builder.
 - Generated files are **self-audited to 100/100** and land on disk only through the guarded apply pipeline: dry-run → Monaco diff → create-only apply (`409 FILE_EXISTS` instead of silent overwrite) → rollback that also prunes the folders it created.
 
-### Phase 5: DeepSeek Architecture Copilot
-- OpenAI-compatible **DeepSeek** client (supports cloud API and air-gapped on-prem Ollama/vLLM).
-- Context-efficient prompting powered by the **Core IR** + Audit findings (no raw codebase dumps).
-- Workflows: *Business Spec -> Blueprint*, *Audit Error -> Diff Fix*, and *Targeted Method Implementation*.
+### Phase 5: DeepSeek Architecture Copilot - Delivered
+- OpenAI-compatible **DeepSeek** client (cloud API or air-gapped on-prem **Ollama / vLLM**) with a configurable Base URL and optional API key.
+- Context-efficient prompting powered by **Core IR** + Audit findings, packed into a hard character budget (no raw codebase dumps, no `node_modules` scraping).
+- Workflows: *Business Spec -> Blueprint* (schema-validated with one repair retry), *Audit Error -> Diff Fix*, and *Targeted Method Implementation* — each one returns a normal dry-run plan for the Monaco diff; the LLM has no write access.
 
 ### Phase 6: Ready-to-Deploy Docker Studio
 - Auto-generated multi-stage `Dockerfile`s, `docker-compose.yml` (wiring databases, queues, networks, healthchecks), and `.env.example`.

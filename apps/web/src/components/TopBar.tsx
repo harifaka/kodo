@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import { STACK_META } from '../lib/layers';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
-import { FolderIcon, LogoMark, ScanIcon, Spinner } from './icons';
+import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner } from './icons';
 import { HealthChip } from './HealthScore';
 
 interface TopBarProps {
@@ -13,9 +13,23 @@ interface TopBarProps {
   scanning: boolean;
   health: HealthState;
   workspace: WorkspaceIR | null;
+  /** Provider label shown on the AI Copilot pill (DeepSeek Cloud / Local On-Prem / Not Configured). */
+  aiLabel: string;
+  aiConfigured: boolean;
+  onOpenAiSettings: () => void;
 }
 
-export function TopBar({ path, onPathChange, onScan, scanning, health, workspace }: TopBarProps) {
+export function TopBar({
+  path,
+  onPathChange,
+  onScan,
+  scanning,
+  health,
+  workspace,
+  aiLabel,
+  aiConfigured,
+  onOpenAiSettings,
+}: TopBarProps) {
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (!scanning && path.trim()) {
@@ -78,6 +92,25 @@ export function TopBar({ path, onPathChange, onScan, scanning, health, workspace
         )}
 
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onOpenAiSettings}
+            title={
+              aiConfigured
+                ? `AI Copilot · ${aiLabel} — click to change provider, models or API key`
+                : 'AI Copilot is not configured — click to choose DeepSeek Cloud or a local Ollama/vLLM server'
+            }
+            className="flex items-center gap-1.5 rounded-full border border-violet-400/30 bg-violet-400/[0.07] px-2.5 py-1 transition hover:border-violet-400/60 hover:bg-violet-400/[0.14]"
+          >
+            <SparkIcon className="h-3 w-3 text-violet-300" />
+            <span className="text-[10.5px] font-medium text-slate-300">AI Copilot</span>
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                aiConfigured ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]' : 'bg-slate-500'
+              }`}
+            />
+            <span className="text-[10px] text-violet-200/80">{aiLabel}</span>
+          </button>
           <StatusPill
             label="FastAPI"
             state={health.status}

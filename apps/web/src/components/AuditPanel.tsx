@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { SEVERITY_META, SEVERITY_ORDER, findingNames, type NodeAudit } from '../lib/audit';
 import type { AuditFinding, AuditReport, ComponentNode, Severity } from '../types/core-ir';
-import { AlertIcon, CodeIcon } from './icons';
+import { AlertIcon, CodeIcon, SparkIcon, Spinner } from './icons';
 
 type Filter = 'all' | Severity;
 
@@ -10,9 +10,21 @@ interface AuditPanelProps {
   nodesById: Map<string, ComponentNode>;
   onSelectNode: (nodeId: string) => void;
   onOpenFile: (finding: AuditFinding) => void;
+  /** AI Copilot state: when unset, no "Fix with AI" button is rendered. */
+  aiConfigured?: boolean;
+  aiFixingId?: string | null;
+  onFixWithAi?: (finding: AuditFinding) => void;
 }
 
-export function AuditPanel({ report, nodesById, onSelectNode, onOpenFile }: AuditPanelProps) {
+export function AuditPanel({
+  report,
+  nodesById,
+  onSelectNode,
+  onOpenFile,
+  aiConfigured = false,
+  aiFixingId = null,
+  onFixWithAi,
+}: AuditPanelProps) {
   const [filter, setFilter] = useState<Filter>('all');
 
   const counts = useMemo(
@@ -66,6 +78,9 @@ export function AuditPanel({ report, nodesById, onSelectNode, onOpenFile }: Audi
               nodesById={nodesById}
               onSelectNode={onSelectNode}
               onOpenFile={onOpenFile}
+              aiConfigured={aiConfigured}
+              aiFixing={aiFixingId === finding.id}
+              onFixWithAi={onFixWithAi}
             />
           ))}
         </ul>
@@ -79,11 +94,17 @@ export function FindingRow({
   nodesById,
   onSelectNode,
   onOpenFile,
+  aiConfigured = false,
+  aiFixing = false,
+  onFixWithAi,
 }: {
   finding: AuditFinding;
   nodesById: Map<string, ComponentNode>;
   onSelectNode: (nodeId: string) => void;
   onOpenFile: (finding: AuditFinding) => void;
+  aiConfigured?: boolean;
+  aiFixing?: boolean;
+  onFixWithAi?: (finding: AuditFinding) => void;
 }) {
   const meta = SEVERITY_META[finding.severity];
   const primary = finding.nodeIds[0];
@@ -117,6 +138,26 @@ export function FindingRow({
             </span>
             {names.length > 0 && (
               <span className="truncate font-mono text-[8.5px] text-slate-600">{names.join(' · ')}</span>
+            )}
+            {onFixWithAi && (
+              <span
+                className="ml-auto shrink-0"
+                title={
+                  aiConfigured
+                    ? 'Ask the AI Copilot for a fix — it opens in the Monaco diff for your approval'
+                    : 'Configure the AI Copilot (top-right pill) to enable AI fixes'
+                }
+              >
+                <button
+                  type="button"
+                  disabled={!aiConfigured || aiFixing}
+                  onClick={() => onFixWithAi(finding)}
+                  className="flex items-center gap-1 rounded border border-violet-400/30 bg-violet-400/10 px-1.5 py-0.5 text-[9px] text-violet-200 transition enabled:hover:bg-violet-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {aiFixing ? <Spinner className="h-2.5 w-2.5" /> : <SparkIcon className="h-2.5 w-2.5" />}
+                  {aiFixing ? 'Fixing…' : 'Fix with AI'}
+                </button>
+              </span>
             )}
           </div>
         </div>

@@ -15,6 +15,15 @@ import type {
   RollbackResponse,
 } from '../types/patching';
 import type { BlueprintResponse, ScaffoldRequest } from '../types/blueprint';
+import type {
+  AiPatchResponse,
+  AuditFixRequest,
+  ImplementMethodRequest,
+  LlmOverride,
+  SpecToBlueprintRequest,
+  SpecToBlueprintResponse,
+  TestConnectionResponse,
+} from '../types/ai';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
@@ -137,6 +146,38 @@ export const api = {
     return request<RollbackResponse>('/api/v1/apply/rollback', {
       method: 'POST',
       body: JSON.stringify({ applyId, force }),
+    });
+  },
+
+  aiTestConnection(llmConfig?: LlmOverride, signal?: AbortSignal): Promise<TestConnectionResponse> {
+    return request<TestConnectionResponse>('/api/v1/ai/test-connection', {
+      method: 'POST',
+      body: JSON.stringify({ llmConfig }),
+      signal,
+    });
+  },
+
+  aiSpecToBlueprint(payload: SpecToBlueprintRequest, signal?: AbortSignal): Promise<SpecToBlueprintResponse> {
+    return request<SpecToBlueprintResponse>('/api/v1/ai/spec-to-blueprint', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  aiAuditFix(payload: AuditFixRequest, signal?: AbortSignal): Promise<AiPatchResponse> {
+    return request<AiPatchResponse>('/api/v1/ai/audit-fix', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  aiImplementMethod(payload: ImplementMethodRequest, signal?: AbortSignal): Promise<AiPatchResponse> {
+    return request<AiPatchResponse>('/api/v1/ai/implement-method', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
     });
   },
 };

@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AiSettingsModal } from './components/AiSettingsModal';
 import { BuilderPanel } from './components/BuilderPanel';
 import { CodeInspector } from './components/CodeInspector';
 import { DiffPreview } from './components/DiffPreview';
@@ -19,8 +20,10 @@ import {
   UmlIcon,
 } from './components/icons';
 import { useDraftAudit } from './hooks/useDraftAudit';
+import { useAiSettings } from './hooks/useAiSettings';
 import { useHealth } from './hooks/useHealth';
 import { ApiError, api } from './lib/api';
+import { isAiConfigured, providerLabel, toLlmOverride } from './lib/aiSettings';
 import {
   addField,
   addNodeAnnotation,
@@ -36,7 +39,7 @@ import {
   type Draft,
 } from './lib/draft';
 import { buildGraph } from './lib/layout';
-import type { ScaffoldPreview } from './types/blueprint';
+import type { PlanPreview } from './types/ai';
 import type {
   AuditFinding,
   ComponentField,
@@ -71,9 +74,34 @@ export default function App() {
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackConflict, setRollbackConflict] = useState<string[] | null>(null);
   const [previewRequest, setPreviewRequest] = useState(0);
-  const [scaffold, setScaffold] = useState<ScaffoldPreview | null>(null);
+  const [plan, setPlan] = useState<PlanPreview | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiServerConfigured, setAiServerConfigured] = useState(false);
+  const [aiFixingId, setAiFixingId] = useState<string | null>(null);
   const health = useHealth();
+  const aiSettings = useAiSettings();
+
+  const aiConfigured = isAiConfigured(aiSettings) || aiServerConfigured;
+  const aiLabel = isAiConfigured(aiSettings)
+    ? providerLabel(aiSettings)
+    : aiServerConfigured
+      ? 'Server env'
+      : 'Not Configured';
+
+  useEffect(() => {
+    if (isAiConfigured(aiSettings)) {
+      setAiServerConfigured(false);
+      return;
+    }
+    // No browser settings: probe once to discover a server-side KODO_LLM_* configuration.
+    const controller = new AbortController();
+    api
+      .aiTestConnection(undefined, controller.signal)
+      .then(() => setAiServerConfigured(true))
+      .catch(() => setAiServerConfigured(false));
+    return () => controller.abort();
+  }, [aiSettings]);
 
   const draftView = useMemo(() => (workspace ? applyDraft(workspace, draft) : null), [workspace, draft]);
   const nodes = draftView?.nodes ?? NO_NODES;
@@ -177,7 +205,7 @@ export default function App() {
       const result = await api.scan(target);
       setWorkspace(result);
       setDraft(emptyDraft());
-      setScaffold(null);
+      setPlan(null);
       setWorkspaceRevision((value) => value + 1);
       if (options.resetView) {
         setSelectedId(null);
@@ -220,18 +248,18 @@ export default function App() {
   const handleApplied = useCallback(
     async (applyId: string, appliedFiles: string[]) => {
       const target = workspace?.rootPath ?? path.trim();
-      const fromScaffold = scaffold !== null;
+      const fromPlan = plan !== null;
       setLastApply({ applyId, appliedFiles, rootPath: target });
       setRollbackConflict(null);
       setNotice(null);
       setError(null);
-      setScaffold(null);
+      setPlan(null);
       if (!target) {
         return;
       }
       try {
         await scanWorkspace(target, { resetView: false });
-        if (fromScaffold) {
+        if (fromPlan) {
           setTab('graph');
         }
       } catch (reason) {
@@ -242,7 +270,7 @@ export default function App() {
         );
       }
     },
-    [path, scaffold, scanWorkspace, workspace],
+    [path, plan, scanWorkspace, workspace],
   );
 
   const handleRollback = useCallback(
@@ -291,6 +319,63 @@ export default function App() {
     [handleApplied],
   );
 
+  const handleAiAuditFix = useCallback(
+    async (finding: AuditFinding) => {
+      if (!workspace || aiFixingId) {
+        return;
+      }
+      setAiFixingId(finding.id);
+      setError(null);
+      try {
+        const result = await api.aiAuditFix({
+          rootPath: workspace.rootPath,
+          finding,
+          workspaceIr: workspace,
+          llmConfig: toLlmOverride(aiSettings),
+        });
+        setPlan({
+          response: { patches: result.patches, warnings: result.warnings },
+          label: finding.title,
+          kind: 'ai',
+          explanation: result.explanation,
+          modelUsed: result.modelUsed,
+        });
+        setTab('diff');
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setAiFixingId(null);
+      }
+    },
+    [aiFixingId, aiSettings, workspace],
+  );
+
+  const handleImplementMethod = useCallback(
+    async (node: ComponentNode, methodName: string, instruction: string) => {
+      if (!workspace) {
+        throw new Error('Scan a workspace before using the AI Copilot.');
+      }
+      const result = await api.aiImplementMethod({
+        rootPath: workspace.rootPath,
+        filePath: node.filePath,
+        nodeId: node.id,
+        methodName,
+        instruction,
+        workspaceIr: workspace,
+        llmConfig: toLlmOverride(aiSettings),
+      });
+      setPlan({
+        response: { patches: result.patches, warnings: result.warnings },
+        label: `${node.name}.${methodName}`,
+        kind: 'ai',
+        explanation: result.explanation,
+        modelUsed: result.modelUsed,
+      });
+      setTab('diff');
+    },
+    [aiSettings, workspace],
+  );
+
   const openInspector = useCallback(() => setTab('code'), []);
 
   return (
@@ -302,6 +387,9 @@ export default function App() {
         scanning={scanning}
         health={health}
         workspace={view}
+        aiLabel={aiLabel}
+        aiConfigured={aiConfigured}
+        onOpenAiSettings={() => setAiModalOpen(true)}
       />
 
       {error && (
@@ -390,7 +478,7 @@ export default function App() {
                 workspace={view}
                 hasSelection={selected !== null}
                 draft={draftDirty ? draftCounts : null}
-                scaffoldCount={scaffold ? scaffold.response.patches.length : null}
+                planCount={plan ? plan.response.patches.length : null}
               />
               <WarningsBar warnings={view.warnings} />
               <div className="min-h-0 flex-1">
@@ -430,8 +518,10 @@ export default function App() {
                     key={`${view.rootPath}-builder`}
                     rootPath={view.rootPath}
                     revision={workspaceRevision}
+                    aiConfigured={aiConfigured}
+                    onOpenAiSettings={() => setAiModalOpen(true)}
                     onPreviewReady={(preview) => {
-                      setScaffold(preview);
+                      setPlan(preview);
                       setTab('diff');
                     }}
                   />
@@ -441,8 +531,8 @@ export default function App() {
                     workspace={workspace}
                     draft={draft}
                     requestId={previewRequest}
-                    scaffold={scaffold}
-                    onScaffoldDismiss={() => setScaffold(null)}
+                    plan={plan}
+                    onPlanDismiss={() => setPlan(null)}
                     onApplied={handleAppliedChange}
                   />
                 )}
@@ -469,9 +559,16 @@ export default function App() {
             onRemoveField={handleRemoveField}
             onAddAnnotation={handleAddAnnotation}
             onRemoveAnnotation={handleRemoveAnnotation}
+            aiConfigured={aiConfigured}
+            aiFixingId={aiFixingId}
+            onFixWithAi={(finding) => void handleAiAuditFix(finding)}
+            onImplementMethod={handleImplementMethod}
+            onOpenAiSettings={() => setAiModalOpen(true)}
           />
         )}
       </div>
+
+      <AiSettingsModal open={aiModalOpen} onClose={() => setAiModalOpen(false)} />
     </div>
   );
 }
@@ -482,14 +579,14 @@ function TabBar({
   workspace,
   hasSelection,
   draft,
-  scaffoldCount,
+  planCount,
 }: {
   tab: TabId;
   onChange: (tab: TabId) => void;
   workspace: WorkspaceIR;
   hasSelection: boolean;
   draft: ReturnType<typeof draftEditCount> | null;
-  scaffoldCount: number | null;
+  planCount: number | null;
 }) {
   const tabs: Array<{ id: TabId; label: string; icon: typeof GraphIcon; badge?: string }> = [
     { id: 'graph', label: 'Macro Graph', icon: GraphIcon, badge: String(workspace.nodes.length) },
@@ -499,7 +596,7 @@ function TabBar({
       id: 'builder',
       label: 'Builder',
       icon: BuilderIcon,
-      badge: scaffoldCount ? String(scaffoldCount) : undefined,
+      badge: planCount ? String(planCount) : undefined,
     },
     {
       id: 'diff',
@@ -508,8 +605,8 @@ function TabBar({
       badge:
         draft && draft.total > 0
           ? String(draft.total)
-          : scaffoldCount
-            ? String(scaffoldCount)
+          : planCount
+            ? String(planCount)
             : undefined,
     },
   ];
