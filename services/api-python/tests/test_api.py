@@ -121,6 +121,102 @@ def test_scan_returns_deterministic_audit_findings(client: TestClient, tmp_path:
     assert finding["filePath"] == "src/main/java/com/acme/shop/controller/OrderController.java"
 
 
+def test_audit_preview_rescores_draft_relations(client: TestClient) -> None:
+    nodes = [
+        {
+            "id": "com.acme.shop.controller.OrderController",
+            "name": "OrderController",
+            "stack": "spring-boot",
+            "layer": "controller",
+            "kind": "class",
+            "filePath": "src/main/java/com/acme/shop/controller/OrderController.java",
+        },
+        {
+            "id": "com.acme.shop.repository.OrderRepository",
+            "name": "OrderRepository",
+            "stack": "spring-boot",
+            "layer": "repository",
+            "kind": "class",
+            "filePath": "src/main/java/com/acme/shop/repository/OrderRepository.java",
+        },
+    ]
+    violation = {
+        "sourceId": "com.acme.shop.controller.OrderController",
+        "targetId": "com.acme.shop.repository.OrderRepository",
+        "type": "depends_on",
+    }
+
+    with_violation = client.post("/api/v1/audit", json={"nodes": nodes, "relations": [violation]})
+    without_violation = client.post("/api/v1/audit", json={"nodes": nodes, "relations": []})
+
+    assert with_violation.status_code == 200
+    assert without_violation.status_code == 200
+    assert any(item["ruleId"] == "LAYER_VIOLATION" for item in with_violation.json()["findings"])
+    assert not any(item["ruleId"] == "LAYER_VIOLATION" for item in without_violation.json()["findings"])
+    assert without_violation.json()["score"] > with_violation.json()["score"]
+
+
+def test_audit_preview_deduplicates_repeated_relations(client: TestClient) -> None:
+    nodes = [
+        {
+            "id": "OrderController",
+            "name": "OrderController",
+            "stack": "spring-boot",
+            "layer": "controller",
+            "kind": "class",
+            "filePath": "OrderController.java",
+        },
+        {
+            "id": "OrderRepository",
+            "name": "OrderRepository",
+            "stack": "spring-boot",
+            "layer": "repository",
+            "kind": "class",
+            "filePath": "OrderRepository.java",
+        },
+    ]
+    violation = {"sourceId": "OrderController", "targetId": "OrderRepository", "type": "depends_on"}
+
+    response = client.post(
+        "/api/v1/audit",
+        json={"nodes": nodes, "relations": [violation, violation]},
+    )
+
+    assert response.status_code == 200
+    findings = [item for item in response.json()["findings"] if item["ruleId"] == "LAYER_VIOLATION"]
+    assert len(findings) == 1
+
+
+def test_audit_preview_ignores_relations_to_unknown_nodes(client: TestClient) -> None:
+    nodes = [
+        {
+            "id": "OrderService",
+            "name": "OrderService",
+            "stack": "spring-boot",
+            "layer": "service",
+            "kind": "class",
+            "filePath": "OrderService.java",
+        }
+    ]
+    dangling = {"sourceId": "OrderService", "targetId": "Ghost", "type": "depends_on"}
+
+    response = client.post("/api/v1/audit", json={"nodes": nodes, "relations": [dangling]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert all(item["edgeKeys"] == [] for item in body["findings"])
+    assert all("Ghost" not in item["nodeIds"] for item in body["findings"])
+
+
+def test_audit_preview_rejects_unknown_relation_types(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/audit",
+        json={"nodes": [], "relations": [{"sourceId": "a", "targetId": "b", "type": "teleports_to"}]},
+    )
+
+    assert response.status_code == 422
+
+
 def test_file_inspector_returns_source(client: TestClient, tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()

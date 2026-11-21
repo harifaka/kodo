@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -11,18 +11,29 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  type Connection,
   type Edge,
   type Node,
   type NodeProps,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { edgeTouchesNode, type ComponentNodeData, type LayerHeaderData } from '../lib/layout';
+import {
+  edgeTouchesNode,
+  type ComponentNodeData,
+  type LayerHeaderData,
+  type RelationEdgeData,
+} from '../lib/layout';
 import { KIND_LABEL, LAYER_META, RELATION_META } from '../lib/layers';
 import { SEVERITY_META, auditedEdgeKeys, edgeKey, nodeAuditIndex } from '../lib/audit';
-import type { AuditReport, ComponentNode, ComponentRelation } from '../types/core-ir';
+import { keyOf, relationKey, type RelationDraft } from '../lib/draft';
+import type { AuditReport, ComponentNode, ComponentRelation, RelationType } from '../types/core-ir';
 import { GraphIcon } from './icons';
 import { AlertBadge } from './AuditPanel';
+import { DraftToolbar } from './DraftToolbar';
+import { edgeTypes } from './RelationEdge';
+
+const DRAFT_EDGE_COLOR = '#34d399';
 
 interface MacroGraphProps {
   nodes: ComponentNode[];
@@ -32,6 +43,14 @@ interface MacroGraphProps {
   audit: AuditReport;
   selectedId: string | null;
   onSelect: (node: ComponentNode | null) => void;
+  draft: RelationDraft;
+  auditPending: boolean;
+  auditError: string | null;
+  newRelationType: RelationType;
+  onNewRelationTypeChange: (type: RelationType) => void;
+  onConnect: (sourceId: string, targetId: string, type: RelationType) => void;
+  onDisconnect: (relation: ComponentRelation) => void;
+  onResetDraft: () => void;
 }
 
 export function MacroGraph({
@@ -42,6 +61,14 @@ export function MacroGraph({
   audit,
   selectedId,
   onSelect,
+  draft,
+  auditPending,
+  auditError,
+  newRelationType,
+  onNewRelationTypeChange,
+  onConnect,
+  onDisconnect,
+  onResetDraft,
 }: MacroGraphProps) {
   return (
     <ReactFlowProvider>
@@ -53,6 +80,14 @@ export function MacroGraph({
         audit={audit}
         selectedId={selectedId}
         onSelect={onSelect}
+        draft={draft}
+        auditPending={auditPending}
+        auditError={auditError}
+        newRelationType={newRelationType}
+        onNewRelationTypeChange={onNewRelationTypeChange}
+        onConnect={onConnect}
+        onDisconnect={onDisconnect}
+        onResetDraft={onResetDraft}
       />
     </ReactFlowProvider>
   );
@@ -66,6 +101,14 @@ function MacroGraphCanvas({
   audit,
   selectedId,
   onSelect,
+  draft,
+  auditPending,
+  auditError,
+  newRelationType,
+  onNewRelationTypeChange,
+  onConnect,
+  onDisconnect,
+  onResetDraft,
 }: MacroGraphProps) {
   const { fitView } = useReactFlow();
   const initialized = useNodesInitialized();
@@ -83,6 +126,7 @@ function MacroGraphCanvas({
 
   const auditByNode = useMemo(() => nodeAuditIndex(audit), [audit]);
   const flaggedEdges = useMemo(() => auditedEdgeKeys(audit), [audit]);
+  const draftEdgeKeys = useMemo(() => new Set(draft.added.map(keyOf)), [draft.added]);
 
   const decoratedNodes = useMemo(
     () =>
@@ -97,37 +141,99 @@ function MacroGraphCanvas({
   const decoratedEdges = useMemo(
     () =>
       flowEdges.map((edge) => {
+        const relationType = relationTypeOf(edge);
+        const isDraft = draftEdgeKeys.has(relationKey(edge.source, edge.target, relationType));
         const flagged = flaggedEdges.has(edgeKey(edge.source, edge.target));
-        const base = flagged
-          ? {
-              ...edge,
-              style: { ...edge.style, stroke: SEVERITY_META.error.color, strokeWidth: 2.2 },
-              markerEnd: {
-                type: MarkerType.ArrowClosed,
-                color: SEVERITY_META.error.color,
-                width: 18,
-                height: 18,
-              },
-            }
-          : edge;
+
+        let base = edge;
+        if (isDraft) {
+          base = {
+            ...edge,
+            style: {
+              ...edge.style,
+              stroke: DRAFT_EDGE_COLOR,
+              strokeWidth: 2,
+              strokeDasharray: '6 4',
+            },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: DRAFT_EDGE_COLOR,
+              width: 18,
+              height: 18,
+            },
+          };
+        } else if (flagged) {
+          base = {
+            ...edge,
+            style: { ...edge.style, stroke: SEVERITY_META.error.color, strokeWidth: 2.2 },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: SEVERITY_META.error.color,
+              width: 18,
+              height: 18,
+            },
+          };
+        }
 
         if (selectedId === null) {
           return base;
         }
 
         return edgeTouchesNode(base, selectedId)
-          ? { ...base, style: { ...base.style, opacity: 1, strokeWidth: flagged ? 2.6 : 2 }, zIndex: 5 }
+          ? {
+              ...base,
+              style: { ...base.style, opacity: 1, strokeWidth: flagged || isDraft ? 2.6 : 2 },
+              zIndex: 5,
+            }
           : { ...base, style: { ...base.style, opacity: 0.16 } };
       }),
-    [flowEdges, selectedId, flaggedEdges],
+    [flowEdges, selectedId, flaggedEdges, draftEdgeKeys],
+  );
+
+  const interactiveEdges = useMemo(
+    () =>
+      decoratedEdges.map((edge) => ({
+        ...edge,
+        data: {
+          ...edge.data,
+          onCut: () =>
+            onDisconnect({
+              sourceId: edge.source,
+              targetId: edge.target,
+              type: relationTypeOf(edge),
+            }),
+        } as RelationEdgeData,
+      })),
+    [decoratedEdges, onDisconnect],
+  );
+
+  const canConnect = useCallback(
+    (connection: Connection | Edge) => {
+      if (!connection.source || !connection.target || connection.source === connection.target) {
+        return false;
+      }
+      const candidate = relationKey(connection.source, connection.target, newRelationType);
+      return !relations.some((relation) => keyOf(relation) === candidate);
+    },
+    [relations, newRelationType],
+  );
+
+  const handleEdgesDelete = useCallback(
+    (removed: Edge[]) => {
+      for (const edge of removed) {
+        onDisconnect({ sourceId: edge.source, targetId: edge.target, type: relationTypeOf(edge) });
+      }
+    },
+    [onDisconnect],
   );
 
   return (
     <div className="relative h-full w-full bg-ink-950">
       <ReactFlow
         nodes={decoratedNodes}
-        edges={decoratedEdges}
+        edges={interactiveEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => {
           if (node.type === 'component') {
             onSelect((node.data as ComponentNodeData).component);
@@ -140,7 +246,14 @@ function MacroGraphCanvas({
           }
         }}
         onPaneClick={() => onSelect(null)}
-        nodesConnectable={false}
+        onConnect={(connection) => {
+          if (connection.source && connection.target) {
+            onConnect(connection.source, connection.target, newRelationType);
+          }
+        }}
+        onEdgesDelete={handleEdgesDelete}
+        isValidConnection={canConnect}
+        nodesConnectable
         edgesFocusable={false}
         minZoom={0.12}
         maxZoom={1.8}
@@ -187,6 +300,15 @@ function MacroGraphCanvas({
         )}
       </div>
 
+      <DraftToolbar
+        draft={draft}
+        relationType={newRelationType}
+        onRelationTypeChange={onNewRelationTypeChange}
+        onReset={onResetDraft}
+        pending={auditPending}
+        error={auditError}
+      />
+
       <div className="pointer-events-none absolute bottom-3 left-4 flex flex-wrap items-center gap-3 rounded-lg border border-ink-700/70 bg-ink-900/75 px-3 py-1.5 backdrop-blur">
         {(Object.keys(RELATION_META) as Array<keyof typeof RELATION_META>).map((type) => (
           <span key={type} className="flex items-center gap-1.5 text-[10px] text-slate-400">
@@ -218,6 +340,11 @@ function MacroGraphCanvas({
       )}
     </div>
   );
+}
+
+function relationTypeOf(edge: Edge): RelationType {
+  const value = edge.data?.relation;
+  return typeof value === 'string' ? (value as RelationType) : 'depends_on';
 }
 
 const nodeTypes = {

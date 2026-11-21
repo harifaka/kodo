@@ -95,11 +95,32 @@ body {
 }
 
 .kodo-handle {
-  width: 6px !important;
-  height: 6px !important;
+  width: 7px !important;
+  height: 7px !important;
   background: #334155 !important;
   border: none !important;
   opacity: 0.7;
+  cursor: crosshair;
+  transition: background 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.react-flow__node:hover .kodo-handle,
+.react-flow__node.selected .kodo-handle {
+  background: #38bdf8 !important;
+  opacity: 1;
+  transform: scale(1.35);
+}
+
+.kodo-flow .react-flow__connection-path {
+  stroke: #34d399;
+  stroke-width: 2;
+}
+
+/* Widen the hover/click band of edges: React Flow's interaction path has no stroke by default. */
+.kodo-flow .react-flow__edge-interaction {
+  stroke: transparent;
+  stroke-width: 18px;
+  fill: none;
 }
 
 /* ---------- Mermaid ---------- */

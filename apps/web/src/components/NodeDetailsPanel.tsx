@@ -13,6 +13,7 @@ interface NodeDetailsPanelProps {
   onSelectNodeId: (nodeId: string) => void;
   onOpenInInspector: () => void;
   onOpenFinding: (finding: AuditFinding) => void;
+  onDisconnectRelation: (relation: ComponentRelation) => void;
 }
 
 export function NodeDetailsPanel({
@@ -22,6 +23,7 @@ export function NodeDetailsPanel({
   onSelectNodeId,
   onOpenInInspector,
   onOpenFinding,
+  onDisconnectRelation,
 }: NodeDetailsPanelProps) {
   return (
     <aside className="flex w-[344px] shrink-0 flex-col border-l border-ink-700/70 bg-ink-900/60">
@@ -49,6 +51,7 @@ export function NodeDetailsPanel({
             onOpenInInspector={onOpenInInspector}
             onSelectNodeId={onSelectNodeId}
             onOpenFinding={onOpenFinding}
+            onDisconnectRelation={onDisconnectRelation}
           />
         ) : (
           <WorkspaceOverview
@@ -69,6 +72,7 @@ function SelectedDetails({
   onOpenInInspector,
   onSelectNodeId,
   onOpenFinding,
+  onDisconnectRelation,
 }: {
   workspace: WorkspaceIR;
   node: ComponentNode;
@@ -76,6 +80,7 @@ function SelectedDetails({
   onOpenInInspector: () => void;
   onSelectNodeId: (nodeId: string) => void;
   onOpenFinding: (finding: AuditFinding) => void;
+  onDisconnectRelation: (relation: ComponentRelation) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const meta = LAYER_META[node.layer];
@@ -221,13 +226,25 @@ function SelectedDetails({
 
       {outgoing.length > 0 && (
         <Section title={`Depends on · ${outgoing.length}`}>
-          <RelationList relations={outgoing} byId={byId} side="target" onSelect={onSelect} />
+          <RelationList
+            relations={outgoing}
+            byId={byId}
+            side="target"
+            onSelect={onSelect}
+            onRemove={onDisconnectRelation}
+          />
         </Section>
       )}
 
       {incoming.length > 0 && (
         <Section title={`Used by · ${incoming.length}`}>
-          <RelationList relations={incoming} byId={byId} side="source" onSelect={onSelect} />
+          <RelationList
+            relations={incoming}
+            byId={byId}
+            side="source"
+            onSelect={onSelect}
+            onRemove={onDisconnectRelation}
+          />
         </Section>
       )}
     </div>
@@ -239,11 +256,13 @@ function RelationList({
   byId,
   side,
   onSelect,
+  onRemove,
 }: {
   relations: ComponentRelation[];
   byId: Map<string, ComponentNode>;
   side: 'source' | 'target';
   onSelect: (node: ComponentNode | null) => void;
+  onRemove: (relation: ComponentRelation) => void;
 }) {
   return (
     <ul className="space-y-1">
@@ -253,11 +272,11 @@ function RelationList({
           return null;
         }
         return (
-          <li key={`${relation.sourceId}-${relation.targetId}-${relation.type}`}>
+          <li key={`${relation.sourceId}-${relation.targetId}-${relation.type}`} className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => onSelect(related)}
-              className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1 text-left transition hover:border-ink-600 hover:bg-ink-850"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-transparent px-2 py-1 text-left transition hover:border-ink-600 hover:bg-ink-850"
             >
               <span
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -267,6 +286,15 @@ function RelationList({
               <span className="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wide text-slate-600">
                 {relation.type.replace('_', ' ')}
               </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(relation)}
+              title="Cut this relation in the draft"
+              aria-label={`Cut relation to ${related.name}`}
+              className="shrink-0 rounded px-1 text-[12px] leading-none text-slate-600 transition hover:bg-rose-500/10 hover:text-rose-300"
+            >
+              ×
             </button>
           </li>
         );

@@ -41,7 +41,11 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 ## Phase 3: Real-Life Business Field Editor & Safe Round-Trip
 **Goal:** Safely edit real business models (fields, types, validations, relations) without overwriting hand-written business logic.
 
-- [ ] Enable interactive Macro editing (connect/disconnect services and dependencies on the React Flow canvas).
+**Status:** In progress — Macro draft editing (connect/disconnect relations with a live audit preview) delivered; nothing is written to disk yet.
+
+- [x] Enable interactive Macro editing (connect/disconnect services and dependencies on the React Flow canvas).
+  - [x] Client-side **relation draft** (add/cut) with per-workspace reset and an unsaved-changes indicator.
+  - [x] **Live audit preview** via stateless `POST /api/v1/audit`, so the health score and findings react to draft edits instantly.
 - [ ] Build Micro Inspector for editing business fields, types, and stack-specific annotations (`@Entity`, `@Column`, `@NotNull`, `[Required]`, etc.).
 - [ ] Implement **Dry-Run Engine** paired with **Monaco Side-by-Side Diff** approval before any disk write.
 - [ ] Implement **AST Patching** (Roslyn / Tree-sitter targeted edits) to preserve custom methods and business logic.

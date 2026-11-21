@@ -1,6 +1,6 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import { LAYER_META, LAYER_ORDER, RELATION_META } from './layers';
-import type { ComponentNode, ComponentRelation, Layer, Severity } from '../types/core-ir';
+import type { ComponentNode, ComponentRelation, Layer, RelationType, Severity } from '../types/core-ir';
 
 export type ComponentNodeData = {
   component: ComponentNode;
@@ -16,6 +16,11 @@ const SUBCOLUMN_GAP = 28;
 const ROW_GAP = 26;
 const TOP_OFFSET = 28;
 const MAX_ROWS_PER_SUBCOLUMN = 8;
+
+export interface RelationEdgeData extends Record<string, unknown> {
+  relation: RelationType;
+  onCut?: () => void;
+}
 
 export function buildGraph(
   nodes: ComponentNode[],
@@ -78,6 +83,8 @@ export function buildGraph(
           relationCount: degree.get(component.id) ?? 0,
         } satisfies ComponentNodeData,
         width: NODE_WIDTH,
+        // Phase 3a edits relations only: components are never added or removed from the draft.
+        deletable: false,
       });
     });
 
@@ -90,8 +97,8 @@ export function buildGraph(
       id: `${relation.sourceId}->${relation.targetId}:${relation.type}`,
       source: relation.sourceId,
       target: relation.targetId,
-      type: 'smoothstep',
-      data: { relation: relation.type },
+      type: 'relation',
+      data: { relation: relation.type } satisfies RelationEdgeData,
       style: {
         stroke: meta.color,
         strokeWidth: 1.4,

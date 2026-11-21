@@ -1,4 +1,11 @@
-import type { FileContent, HealthResponse, WorkspaceIR } from '../types/core-ir';
+import type {
+  AuditReport,
+  ComponentNode,
+  ComponentRelation,
+  FileContent,
+  HealthResponse,
+  WorkspaceIR,
+} from '../types/core-ir';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
@@ -52,5 +59,17 @@ export const api = {
   file(root: string, relPath: string): Promise<FileContent> {
     const params = new URLSearchParams({ root, relPath });
     return request<FileContent>(`/api/v1/file?${params.toString()}`);
+  },
+
+  previewAudit(
+    nodes: ComponentNode[],
+    relations: ComponentRelation[],
+    signal?: AbortSignal,
+  ): Promise<AuditReport> {
+    return request<AuditReport>('/api/v1/audit', {
+      method: 'POST',
+      body: JSON.stringify({ nodes, relations }),
+      signal,
+    });
   },
 };

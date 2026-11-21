@@ -5,6 +5,7 @@ import { CodeIcon, FitIcon, ShieldIcon, ZoomInIcon, ZoomOutIcon } from './icons'
 interface UmlDiagramProps {
   diagram: string;
   componentCount: number;
+  draftPending?: boolean;
 }
 
 interface ViewTransform {
@@ -54,7 +55,7 @@ async function loadMermaid(): Promise<MermaidApi> {
 const MIN_SCALE = 0.15;
 const MAX_SCALE = 4;
 
-export function UmlDiagram({ diagram, componentCount }: UmlDiagramProps) {
+export function UmlDiagram({ diagram, componentCount, draftPending = false }: UmlDiagramProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, x: 24, y: 24 });
@@ -287,6 +288,12 @@ export function UmlDiagram({ diagram, componentCount }: UmlDiagramProps) {
         <span className="text-[11px] text-slate-400">
           <span className="font-semibold text-slate-200">{componentCount}</span> classes · read-only
         </span>
+        {draftPending && (
+          <>
+            <span className="h-3 w-px bg-ink-600" />
+            <span className="text-[10px] text-amber-300/90">draft edges not applied yet</span>
+          </>
+        )}
       </div>
 
       <div className="absolute right-4 top-3 flex items-center gap-2">

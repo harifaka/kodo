@@ -1,9 +1,13 @@
-# Kodo — Developer Setup (Phases 1–2: Vibe-Code X-Ray + Pattern Audit)
+# Kodo — Developer Setup (Phases 1–3a: X-Ray, Pattern Audit, Macro Draft)
 
 Phases 1 and 2 are **read-only**. Kodo scans a folder, maps Java, TypeScript, JavaScript and C#
 sources onto the Core IR, runs a deterministic audit over that IR, and renders a layer graph, a
 Mermaid UML diagram, an architecture health score with findings, and a read-only Monaco source
 inspector. Nothing is ever written to the scanned project.
+
+Phase 3a adds **macro draft editing**: you can connect and cut relations on the Macro Graph, and the
+deterministic audit re-scores the draft through a stateless API call. Draft edits live in the browser
+only — no source file is touched until a later Phase 3 slice introduces the dry-run/patch pipeline.
 
 ```
 apps/web (Vite :5173, or Tauri desktop)
@@ -101,6 +105,11 @@ Open <http://127.0.0.1:5173>.
    - **Macro Graph** — layer-grouped React Flow map. Click a node to inspect it in the right panel;
      double-click to zoom to it. Nodes and edges with audit findings are outlined in red (error) or
      amber (warning) and carry a finding count badge.
+   - **Macro draft** — drag from a card's right handle onto another card to add a relation (choose the
+     relation type in the **Macro draft** panel first), or click the `×` on an edge / in the side
+     panel's relation list to cut one. Each edit re-runs the deterministic audit, so the health score
+     and findings update immediately; **Reset draft** discards the changes. Draft edits stay in the
+     browser and are never written to disk.
    - **UML Diagram** — server-generated Mermaid `classDiagram`. Drag to pan, `Ctrl` + scroll to zoom,
      **Fit** to see everything.
    - **Code Inspector** — read-only Monaco view of the selected component's file.
@@ -124,6 +133,18 @@ The score starts at 100 and subtracts 10 per error, 4 per warning and 1 per info
 0). Rules are pure functions of the Core IR — no filesystem, network, clock or LLM — and findings are
 ordered deterministically so repeated scans are diffable. The report is returned as
 `WorkspaceIR.audit` (`score`, `summary`, `findings`).
+
+### Audit preview for drafts (Phase 3a)
+
+`POST /api/v1/audit` scores an arbitrary draft Core IR without touching the workspace:
+
+```json
+{ "nodes": [...], "relations": [{ "sourceId": "a", "targetId": "b", "type": "depends_on" }] }
+```
+
+It returns the same `AuditReport` shape as `WorkspaceIR.audit`, ignores relations that point at
+unknown node ids, and is pure (no filesystem access). The UI debounces it after every macro draft edit
+so the health score always reflects the graph on screen.
 
 Notes:
 

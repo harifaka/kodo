@@ -7,10 +7,18 @@ import { TopBar } from './components/TopBar';
 import { UmlDiagram } from './components/UmlDiagram';
 import { WarningsBar } from './components/WarningsBar';
 import { AlertIcon, CodeIcon, GraphIcon, UmlIcon } from './components/icons';
+import { useDraftAudit } from './hooks/useDraftAudit';
 import { useHealth } from './hooks/useHealth';
 import { api } from './lib/api';
+import { applyDraft, connectRelation, disconnectRelation, emptyDraft, isDraftEmpty } from './lib/draft';
 import { buildGraph } from './lib/layout';
-import type { AuditFinding, ComponentNode, WorkspaceIR } from './types/core-ir';
+import type {
+  AuditFinding,
+  ComponentNode,
+  ComponentRelation,
+  RelationType,
+  WorkspaceIR,
+} from './types/core-ir';
 
 type TabId = 'graph' | 'uml' | 'code';
 
@@ -19,20 +27,37 @@ const LAST_PATH_KEY = 'kodo:lastPath';
 export default function App() {
   const [path, setPath] = useState(() => window.localStorage.getItem(LAST_PATH_KEY) ?? '');
   const [workspace, setWorkspace] = useState<WorkspaceIR | null>(null);
+  const [draft, setDraft] = useState(emptyDraft);
+  const [newRelationType, setNewRelationType] = useState<RelationType>('depends_on');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>('graph');
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const health = useHealth();
 
+  const relations = useMemo(
+    () => (workspace ? applyDraft(workspace.relations, draft) : []),
+    [workspace, draft],
+  );
+  const draftDirty = !isDraftEmpty(draft);
+  const draftAudit = useDraftAudit(workspace, relations, draftDirty);
+
+  const view = useMemo<WorkspaceIR | null>(
+    () =>
+      workspace
+        ? { ...workspace, relations, audit: draftAudit.report ?? workspace.audit }
+        : null,
+    [workspace, relations, draftAudit.report],
+  );
+
   const selected = useMemo(
-    () => workspace?.nodes.find((node) => node.id === selectedId) ?? null,
-    [workspace, selectedId],
+    () => view?.nodes.find((node) => node.id === selectedId) ?? null,
+    [view, selectedId],
   );
 
   const graph = useMemo(
-    () => (workspace ? buildGraph(workspace.nodes, workspace.relations) : { nodes: [], edges: [] }),
-    [workspace],
+    () => (view ? buildGraph(view.nodes, view.relations) : { nodes: [], edges: [] }),
+    [view],
   );
 
   const handleSelect = useCallback((node: ComponentNode | null) => {
@@ -43,9 +68,27 @@ export default function App() {
     setSelectedId(nodeId);
   }, []);
 
+  const handleConnect = useCallback(
+    (sourceId: string, targetId: string, type: RelationType) => {
+      const base = workspace?.relations ?? [];
+      setDraft((current) => connectRelation(current, base, { sourceId, targetId, type }));
+    },
+    [workspace],
+  );
+
+  const handleDisconnect = useCallback(
+    (relation: ComponentRelation) => {
+      const base = workspace?.relations ?? [];
+      setDraft((current) => disconnectRelation(current, base, relation));
+    },
+    [workspace],
+  );
+
+  const handleResetDraft = useCallback(() => setDraft(emptyDraft()), []);
+
   const handleOpenFinding = useCallback(
     (finding: AuditFinding) => {
-      const nodes = workspace?.nodes ?? [];
+      const nodes = view?.nodes ?? [];
       const target =
         nodes.find((node) => node.filePath === finding.filePath) ??
         nodes.find((node) => node.id === finding.nodeIds[0]);
@@ -54,7 +97,7 @@ export default function App() {
       }
       setTab('code');
     },
-    [workspace],
+    [view],
   );
 
   const handleScan = useCallback(async () => {
@@ -68,6 +111,7 @@ export default function App() {
     try {
       const result = await api.scan(target);
       setWorkspace(result);
+      setDraft(emptyDraft());
       setSelectedId(null);
       setTab('graph');
       window.localStorage.setItem(LAST_PATH_KEY, target);
@@ -89,7 +133,7 @@ export default function App() {
         onScan={() => void handleScan()}
         scanning={scanning}
         health={health}
-        workspace={workspace}
+        workspace={view}
       />
 
       {error && (
@@ -108,38 +152,46 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
-          {workspace ? (
+          {view ? (
             <>
               <TabBar
                 tab={tab}
                 onChange={setTab}
-                workspace={workspace}
+                workspace={view}
                 hasSelection={selected !== null}
+                draft={draftDirty ? { added: draft.added.length, removed: draft.removed.length } : null}
               />
-              <WarningsBar warnings={workspace.warnings} />
+              <WarningsBar warnings={view.warnings} />
               <div className="min-h-0 flex-1">
                 {tab === 'graph' && (
                   <MacroGraph
-                    key={workspace.rootPath}
-                    nodes={workspace.nodes}
-                    relations={workspace.relations}
+                    key={view.rootPath}
+                    nodes={view.nodes}
+                    relations={view.relations}
                     flowNodes={graph.nodes}
                     flowEdges={graph.edges}
-                    audit={workspace.audit}
+                    audit={view.audit}
                     selectedId={selectedId}
                     onSelect={handleSelect}
+                    draft={draft}
+                    auditPending={draftAudit.pending}
+                    auditError={draftAudit.error}
+                    newRelationType={newRelationType}
+                    onNewRelationTypeChange={setNewRelationType}
+                    onConnect={handleConnect}
+                    onDisconnect={handleDisconnect}
+                    onResetDraft={handleResetDraft}
                   />
                 )}
                 {tab === 'uml' && (
                   <UmlDiagram
-                    key={`${workspace.rootPath}-uml`}
-                    diagram={workspace.mermaidClassDiagram}
-                    componentCount={workspace.nodes.length}
+                    key={`${view.rootPath}-uml`}
+                    diagram={view.mermaidClassDiagram}
+                    componentCount={view.nodes.length}
+                    draftPending={draftDirty}
                   />
                 )}
-                {tab === 'code' && (
-                  <CodeInspector rootPath={workspace.rootPath} node={selected} />
-                )}
+                {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}
               </div>
             </>
           ) : (
@@ -147,14 +199,15 @@ export default function App() {
           )}
         </main>
 
-        {workspace && (
+        {view && (
           <NodeDetailsPanel
-            workspace={workspace}
+            workspace={view}
             selected={selected}
             onSelect={handleSelect}
             onSelectNodeId={handleSelectNodeId}
             onOpenInInspector={openInspector}
             onOpenFinding={handleOpenFinding}
+            onDisconnectRelation={handleDisconnect}
           />
         )}
       </div>
@@ -167,11 +220,13 @@ function TabBar({
   onChange,
   workspace,
   hasSelection,
+  draft,
 }: {
   tab: TabId;
   onChange: (tab: TabId) => void;
   workspace: WorkspaceIR;
   hasSelection: boolean;
+  draft: { added: number; removed: number } | null;
 }) {
   const tabs: Array<{ id: TabId; label: string; icon: typeof GraphIcon; badge?: string }> = [
     { id: 'graph', label: 'Macro Graph', icon: GraphIcon, badge: String(workspace.nodes.length) },
@@ -215,7 +270,17 @@ function TabBar({
       </nav>
 
       <div className="ml-auto flex min-w-0 items-center gap-2 px-2">
-        <span className="h-3 w-px bg-ink-700" />
+        {draft && (
+          <>
+            <span
+              title="Uncommitted macro edits — kept in the browser only"
+              className="shrink-0 rounded border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9.5px] text-emerald-300"
+            >
+              draft +{draft.added} / −{draft.removed}
+            </span>
+            <span className="h-3 w-px bg-ink-700" />
+          </>
+        )}
         <span className="truncate font-mono text-[10px] text-slate-600" title={workspace.rootPath}>
           {workspace.rootPath}
         </span>

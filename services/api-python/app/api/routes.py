@@ -10,8 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app import __version__
-from app.config import MAX_INSPECT_BYTES, csharp_analyzer_url
-from app.models.ir import WorkspaceIR
+from app.audit import run_audit
+from app.config import (
+    MAX_AUDIT_NODES,
+    MAX_AUDIT_RELATIONS,
+    MAX_INSPECT_BYTES,
+    csharp_analyzer_url,
+)
+from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
 from app.services.csharp_client import check_health
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
 
@@ -22,6 +28,15 @@ class ScanRequest(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
     path: str = Field(..., min_length=1, description="Absolute (or ~-prefixed) path of the folder to analyze.")
+
+
+class AuditRequest(BaseModel):
+    """A draft Core IR to re-score. Nothing is read from or written to disk."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    nodes: list[ComponentNode] = Field(..., max_length=MAX_AUDIT_NODES)
+    relations: list[ComponentRelation] = Field(..., max_length=MAX_AUDIT_RELATIONS)
 
 
 class FileContent(BaseModel):
@@ -94,6 +109,22 @@ async def scan(request: ScanRequest) -> WorkspaceIR:
         return await build_workspace(request.path)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/v1/audit", response_model=AuditReport, tags=["analysis"])
+async def audit_preview(request: AuditRequest) -> AuditReport:
+    """Re-score an edited (draft) IR so the UI can preview the impact of macro edits."""
+    node_ids = {node.id for node in request.nodes}
+    relations: list[ComponentRelation] = []
+    seen: set[tuple[str, str, str]] = set()
+    for relation in request.relations:
+        key = (relation.source_id, relation.target_id, relation.type)
+        # Mirror the scan pipeline: dangling and duplicate relations never reach the rules.
+        if relation.source_id not in node_ids or relation.target_id not in node_ids or key in seen:
+            continue
+        seen.add(key)
+        relations.append(relation)
+    return run_audit(request.nodes, relations)
 
 
 @router.get("/api/v1/file", response_model=FileContent, tags=["inspection"])
