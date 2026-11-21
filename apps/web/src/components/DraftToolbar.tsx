@@ -1,14 +1,17 @@
 import { RELATION_META } from '../lib/layers';
 import type { RelationType } from '../types/core-ir';
-import type { RelationDraft } from '../lib/draft';
+import { draftEditCount, type Draft } from '../lib/draft';
+import { ShieldIcon } from './icons';
 
 const RELATION_TYPES = Object.keys(RELATION_META) as RelationType[];
 
 interface DraftToolbarProps {
-  draft: RelationDraft;
+  draft: Draft;
   relationType: RelationType;
   onRelationTypeChange: (type: RelationType) => void;
   onReset: () => void;
+  onPreviewDiff: () => void;
+  previewBusy: boolean;
   pending: boolean;
   error: string | null;
 }
@@ -18,31 +21,45 @@ export function DraftToolbar({
   relationType,
   onRelationTypeChange,
   onReset,
+  onPreviewDiff,
+  previewBusy,
   pending,
   error,
 }: DraftToolbarProps) {
-  const dirty = draft.added.length > 0 || draft.removed.length > 0;
+  const counts = draftEditCount(draft);
+  const dirty = counts.total > 0;
 
   return (
-    <div className="absolute right-4 top-3 w-[262px] rounded-lg border border-ink-700/70 bg-ink-900/85 p-2.5 backdrop-blur">
+    <div className="absolute right-4 top-3 w-[280px] rounded-lg border border-ink-700/70 bg-ink-900/90 p-2.5 backdrop-blur">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-          Macro draft
+          Draft edits
         </span>
-        <span className="font-mono text-[9.5px]">
-          <span className={draft.added.length > 0 ? 'text-emerald-300' : 'text-slate-600'}>
-            +{draft.added.length}
+        <span className="font-mono text-[9.5px] text-slate-400">
+          <span className={dirty ? 'text-amber-300' : 'text-slate-600'}>{counts.total}</span> pending
+        </span>
+      </div>
+
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] text-slate-500">
+        <span>
+          relations{' '}
+          <span className={counts.relations > 0 ? 'text-emerald-300' : 'text-slate-600'}>
+            {counts.relations}
           </span>
-          <span className="text-slate-600"> / </span>
-          <span className={draft.removed.length > 0 ? 'text-rose-300' : 'text-slate-600'}>
-            −{draft.removed.length}
+        </span>
+        <span>
+          fields <span className={counts.fields > 0 ? 'text-amber-300' : 'text-slate-600'}>{counts.fields}</span>
+        </span>
+        <span>
+          annotations{' '}
+          <span className={counts.annotations > 0 ? 'text-violet-300' : 'text-slate-600'}>
+            {counts.annotations}
           </span>
         </span>
       </div>
 
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-        Drag from a card&apos;s right handle onto another card to connect. Click the × on an edge to
-        cut it.
+        Drag between cards to connect. Edit fields in the component panel. Nothing is written to disk.
       </p>
 
       <div className="mt-2 flex flex-wrap gap-1">
@@ -67,6 +84,16 @@ export function DraftToolbar({
           );
         })}
       </div>
+
+      <button
+        type="button"
+        onClick={onPreviewDiff}
+        disabled={!dirty || previewBusy}
+        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-1.5 text-[10.5px] font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:border-ink-700/60 disabled:bg-transparent disabled:text-slate-600"
+      >
+        <ShieldIcon className="h-3.5 w-3.5" />
+        {previewBusy ? 'Computing dry-run…' : 'Preview Diff (Dry-Run)'}
+      </button>
 
       <div className="mt-2 flex items-center gap-2">
         <button

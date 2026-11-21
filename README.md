@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 2](https://img.shields.io/badge/Status-Phase%202%20(MVP)-orange.svg)
+![Status: Phase 3](https://img.shields.io/badge/Status-Phase%203%20(in%20progress)-orange.svg)
 
 ---
 
@@ -32,11 +32,11 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
             | Internal HTTP (JSON)
             v
     C# Semantic Analyzer (ASP.NET Core + Roslyn)
-    Deep C# / WPF / .NET AST Extraction
+    Deep C# / .NET AST extraction + stateless dry-run patching
 
 ---
 
-## Quick Start (Phases 1–2)
+## Quick Start (Phases 1–3b)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -53,7 +53,9 @@ cd apps/web ; npm install ; npm run dev
 ```
 
 Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
-read-only Code Inspector. Desktop mode: `npm run tauri dev` (requires Rust).
+read-only Code Inspector. Select a component to draft business-field and annotation edits, then click
+**Preview Diff (Dry-Run)** to review the surgical AST patch in a Monaco side-by-side diff. Nothing is
+written to disk. Desktop mode: `npm run tauri dev` (requires Rust).
 
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
@@ -72,10 +74,10 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - Detects architectural drift and vibe-code anti-patterns: layer violations (e.g., Controller -> Repository), circular dependencies, God Classes, exposed entities, missing validation and orphan components.
 - Visual error highlighting on the graph + **Architecture Health Score** panel with file jump-to-line links.
 
-### Phase 3: Real-Life Business Field Editor & Safe Round-Trip
-- Macro/Micro editing: edit service links on the canvas and real business fields, types, and annotations (`@Entity`, `@Column`, `[Required]`, etc.) in a keyboard-friendly inspector.
-- **Dry-Run Monaco Side-by-Side Diff** before touching any file on disk.
-- **AST Patching** and Git dirty-tree safety checks so hand-written business logic is never overwritten.
+### Phase 3: Real-Life Business Field Editor & Safe Round-Trip (in progress)
+- Macro/Micro editing: connect/disconnect relations on the canvas and edit real business fields, types, and annotations (`@Entity`, `@Column`, `[Required]`, etc.) in a keyboard-friendly inspector with stack-aware presets.
+- **Dry-Run Monaco Side-by-Side Diff** for every draft edit, computed in memory with **Tree-sitter byte-offset patching** (Java/TS/JS) and **trivia-preserving Roslyn rewriting** (C#). Hand-written methods and comments stay verbatim.
+- Git dirty-tree safety checks, disk apply, and rollback warnings are the remaining Phase 3c slice.
 
 ### Phase 4: Multi-Stack Builder & Pattern Blueprints
 - Full stack plugin generators for **Spring Boot**, **C# WPF (MVVM)**, and **Node.js (Express/NestJS)**.

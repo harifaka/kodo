@@ -19,8 +19,8 @@ const STEPS = [
   },
   {
     icon: UmlIcon,
-    title: 'Scan and explore',
-    body: 'Get the layer graph, generated UML, deterministic audit findings and read-only source inspection in one place.',
+    title: 'Scan, edit in draft, preview',
+    body: 'Explore the layer graph, UML and audit findings, draft field/annotation edits, then review the surgical AST diff before any disk write exists.',
   },
 ];
 
@@ -43,7 +43,7 @@ export function EmptyState({ healthStatus, scanning }: EmptyStateProps) {
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300">
             <ShieldIcon className="h-3 w-3" />
-            Phase 1 · read-only
+            Phases 1–3b · zero disk writes
           </span>
         </div>
 
@@ -51,8 +51,9 @@ export function EmptyState({ healthStatus, scanning }: EmptyStateProps) {
           See the architecture your code actually has.
         </h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-slate-400">
-          Kodo parses Java, TypeScript, JavaScript and C# into a single Core IR, then renders the dependency
-          graph, a Mermaid UML diagram and the original source. Nothing is written to disk.
+          Kodo parses Java, TypeScript, JavaScript and C# into a single Core IR, renders the dependency
+          graph, UML and deterministic audit, and drafts surgical field edits as an in-memory Monaco diff.
+          Nothing is written to disk.
         </p>
 
         <div className="mt-7 grid gap-3 sm:grid-cols-3">

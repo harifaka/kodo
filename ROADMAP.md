@@ -41,16 +41,22 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 ## Phase 3: Real-Life Business Field Editor & Safe Round-Trip
 **Goal:** Safely edit real business models (fields, types, validations, relations) without overwriting hand-written business logic.
 
-**Status:** In progress — Macro draft editing (connect/disconnect relations with a live audit preview) delivered; nothing is written to disk yet.
+**Status:** In progress — Macro editing, Micro field/annotation editing, AST dry-run patching and the Monaco diff are delivered. Everything is computed in memory: no file is written to disk yet.
 
 - [x] Enable interactive Macro editing (connect/disconnect services and dependencies on the React Flow canvas).
   - [x] Client-side **relation draft** (add/cut) with per-workspace reset and an unsaved-changes indicator.
   - [x] **Live audit preview** via stateless `POST /api/v1/audit`, so the health score and findings react to draft edits instantly.
-- [ ] Build Micro Inspector for editing business fields, types, and stack-specific annotations (`@Entity`, `@Column`, `@NotNull`, `[Required]`, etc.).
-- [ ] Implement **Dry-Run Engine** paired with **Monaco Side-by-Side Diff** approval before any disk write.
-- [ ] Implement **AST Patching** (Roslyn / Tree-sitter targeted edits) to preserve custom methods and business logic.
-- [ ] Add Git dirty-working-tree safety checks and rollback warnings.
-- **Definition of Done:** Add 3 new business fields and validations via the UI, review and approve the diff in Monaco, and confirm the target project still compiles cleanly.
+- [x] Build Micro Inspector for editing business fields, types, and stack-specific annotations (`@Entity`, `@Column`, `@NotNull`, `[Required]`, etc.).
+  - [x] Per-node field draft (add/update/remove) plus node annotations, with stack-aware type datalists and annotation presets.
+  - [x] Added / modified / removed states are colour-coded, and the same debounced `POST /api/v1/audit` re-scores `GOD_CLASS` / `MISSING_VALIDATION` on field edits.
+- [x] Implement **AST Patching** (Roslyn / Tree-sitter targeted edits) to preserve custom methods and business logic.
+  - [x] Tree-sitter byte-offset edits for Java fields/annotations/imports and TS/JS properties/decorators.
+  - [x] Trivia-preserving Roslyn rewrites behind a stateless C# `POST /patch` endpoint.
+- [x] Implement **Dry-Run Engine** paired with **Monaco Side-by-Side Diff** approval before any disk write.
+  - [x] `POST /api/v1/dry-run` groups operations by file and returns `originalContent` / `proposedContent` without touching disk.
+  - [x] Diff Preview tab with per-file change counts, patcher warnings, side-by-side/inline toggle and a dry-run banner.
+- [ ] Add Git dirty-working-tree safety checks, disk apply and rollback warnings (Phase 3c).
+- **Definition of Done:** Add 3 new business fields and validations via the UI, review and approve the diff in Monaco, apply it safely, and confirm the target project still compiles cleanly.
 
 ---
 

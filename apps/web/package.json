@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Kodo — Architecture Control Center (Phase 1 Vibe-Code X-Ray)",
+  "description": "Kodo — Architecture Control Center (Phases 1–3b: scan, audit, dry-run field editing)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

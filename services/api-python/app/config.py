@@ -16,6 +16,8 @@ DEFAULT_API_PORT = 8088
 MAX_INSPECT_BYTES = 2_000_000
 MAX_AUDIT_NODES = 20_000
 MAX_AUDIT_RELATIONS = 50_000
+# Dry-run patching reads one file into memory and returns proposed text; nothing is written.
+MAX_PATCH_BYTES = 2_000_000
 
 
 def csharp_analyzer_url() -> str:

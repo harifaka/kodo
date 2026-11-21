@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import type { AuditReport, ComponentRelation, WorkspaceIR } from '../types/core-ir';
+import type { AuditReport, ComponentNode, ComponentRelation, WorkspaceIR } from '../types/core-ir';
 
 export interface DraftAuditState {
   /** Preview report for the draft IR; null while no draft exists or the preview failed. */
@@ -11,9 +11,10 @@ export interface DraftAuditState {
 
 const DEBOUNCE_MS = 220;
 
-/** Re-runs the deterministic audit on the draft relations, debounced, without touching source files. */
+/** Re-runs the deterministic audit on the draft IR (relations, fields, annotations), debounced. */
 export function useDraftAudit(
   workspace: WorkspaceIR | null,
+  nodes: ComponentNode[],
   relations: ComponentRelation[],
   enabled: boolean,
 ): DraftAuditState {
@@ -21,7 +22,11 @@ export function useDraftAudit(
 
   useEffect(() => {
     if (!workspace || !enabled) {
-      setState({ report: null, pending: false, error: null });
+      setState((current) =>
+        current.report === null && !current.pending && current.error === null
+          ? current
+          : { report: null, pending: false, error: null },
+      );
       return;
     }
 
@@ -30,7 +35,7 @@ export function useDraftAudit(
 
     const timer = window.setTimeout(() => {
       api
-        .previewAudit(workspace.nodes, relations, controller.signal)
+        .previewAudit(nodes, relations, controller.signal)
         .then((report) => setState({ report, pending: false, error: null }))
         .catch((reason: unknown) => {
           if (controller.signal.aborted) {
@@ -48,7 +53,7 @@ export function useDraftAudit(
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [workspace, relations, enabled]);
+  }, [workspace, nodes, relations, enabled]);
 
   return state;
 }

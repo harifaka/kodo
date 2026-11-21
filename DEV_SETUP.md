@@ -1,22 +1,24 @@
-# Kodo — Developer Setup (Phases 1–3a: X-Ray, Pattern Audit, Macro Draft)
+# Kodo — Developer Setup (Phases 1–3b: X-Ray, Audit, Draft Editing, Dry-Run Diff)
 
-Phases 1 and 2 are **read-only**. Kodo scans a folder, maps Java, TypeScript, JavaScript and C#
-sources onto the Core IR, runs a deterministic audit over that IR, and renders a layer graph, a
-Mermaid UML diagram, an architecture health score with findings, and a read-only Monaco source
-inspector. Nothing is ever written to the scanned project.
+Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
+TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
+renders a layer graph, a Mermaid UML diagram, an architecture health score with findings, and a
+read-only Monaco source inspector. Nothing is ever written to the scanned project.
 
-Phase 3a adds **macro draft editing**: you can connect and cut relations on the Macro Graph, and the
-deterministic audit re-scores the draft through a stateless API call. Draft edits live in the browser
-only — no source file is touched until a later Phase 3 slice introduces the dry-run/patch pipeline.
+Phase 3a adds **macro draft editing**: connect and cut relations on the Macro Graph, with the audit
+re-scoring the draft through a stateless API call. Phase 3b adds the **Micro field editor** (business
+fields, types, annotations and stack-aware presets) and a **stateless AST dry-run** that returns
+proposed file contents for a Monaco side-by-side diff. Draft edits live in the browser; proposed
+contents live in API memory. There is still no disk write.
 
 ```
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
-services/api-python (FastAPI :8088)      ← owner of the Core IR + deterministic audit engine
-        │  HTTP/JSON
+services/api-python (FastAPI :8088)      ← Core IR, audit, /api/v1/dry-run orchestrator
+        │  HTTP/JSON                         (Tree-sitter patchers for Java/TS/JS)
         ▼
-services/analyzer-csharp (Roslyn :5050)  ← stateless C# / WPF / .NET AST extraction (Docker)
+services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + trivia-preserving /patch
 ```
 
 ---
@@ -105,11 +107,18 @@ Open <http://127.0.0.1:5173>.
    - **Macro Graph** — layer-grouped React Flow map. Click a node to inspect it in the right panel;
      double-click to zoom to it. Nodes and edges with audit findings are outlined in red (error) or
      amber (warning) and carry a finding count badge.
-   - **Macro draft** — drag from a card's right handle onto another card to add a relation (choose the
-     relation type in the **Macro draft** panel first), or click the `×` on an edge / in the side
+   - **Draft edits** — drag from a card's right handle onto another card to add a relation (choose the
+     relation type in the **Draft edits** panel first), or click the `×` on an edge / in the side
      panel's relation list to cut one. Each edit re-runs the deterministic audit, so the health score
      and findings update immediately; **Reset draft** discards the changes. Draft edits stay in the
      browser and are never written to disk.
+   - **Micro field editor** — with a component selected, use **+ Quick add field**, inline edit (`✎`),
+     and `×` in the right panel. Type suggestions and annotation presets follow the component's stack
+     (Spring Boot, C#/.NET or Node.js/TS). Node annotations can be added/removed the same way.
+   - **Preview Diff (Dry-Run)** — in the **Draft edits** panel opens the **Diff Preview** tab. The left
+     sidebar lists every file the draft would change with line counts and patcher warnings; the main
+     pane shows the original vs proposed content in a Monaco `DiffEditor` (side-by-side or inline).
+     **No file is modified on disk.**
    - **UML Diagram** — server-generated Mermaid `classDiagram`. Drag to pan, `Ctrl` + scroll to zoom,
      **Fit** to see everything.
    - **Code Inspector** — read-only Monaco view of the selected component's file.
@@ -144,7 +153,50 @@ ordered deterministically so repeated scans are diffable. The report is returned
 
 It returns the same `AuditReport` shape as `WorkspaceIR.audit`, ignores relations that point at
 unknown node ids, and is pure (no filesystem access). The UI debounces it after every macro draft edit
-so the health score always reflects the graph on screen.
+so the health score always reflects the graph on screen. Micro field/annotation edits are applied to
+the draft nodes before the same call, so rules such as `GOD_CLASS` and `MISSING_VALIDATION` re-score
+immediately.
+
+### Dry-run AST patching (Phase 3b)
+
+`POST /api/v1/dry-run` turns a draft into proposed file contents **in memory**. Example:
+
+```json
+{
+  "rootPath": "C:/work/my-spring-shop",
+  "operations": [
+    {
+      "op": "add_field",
+      "filePath": "src/main/java/com/acme/shop/entity/Order.java",
+      "typeName": "Order",
+      "field": {
+        "name": "total",
+        "type": "BigDecimal",
+        "visibility": "private",
+        "annotations": ["@NotNull", "@Column(nullable = false)"]
+      }
+    }
+  ]
+}
+```
+
+It returns `{ patches: [{ filePath, language, originalContent, proposedContent, summary, warnings }], warnings }`.
+Operations are grouped by `filePath`; every path is resolved and must stay inside `rootPath` (traversal
+is rejected with HTTP 400) and each file is capped at 2 MB. The UI sends node field/annotation edits
+plus best-effort relation edits (`add_dependency` / `remove_dependency`).
+
+- **Java** — `app/patching/java_patcher.py`: Tree-sitter byte offsets target the class body; inserts
+  fields, rewrites annotations/visibility, and adds missing imports (`jakarta.validation.constraints.*`,
+  `jakarta.persistence.*`, `java.math.BigDecimal`, …).
+- **TypeScript / JavaScript** — `app/patching/ts_patcher.py`: Tree-sitter byte offsets for class
+  properties, decorators and interface fields.
+- **C#** — `app/patching/csharp_patcher.py` POSTs `{ filePath, content, operations }` to the Roslyn
+  container's `POST /patch`. `RoslynPatcher` parses with `CSharpSyntaxTree.ParseText` and rewrites only
+  the target members/attributes, preserving trivia (comments and hand-written methods stay verbatim).
+  If the container is offline the original content is returned unchanged with a warning.
+
+Nothing in this pipeline opens a file for writing. Apply-on-disk, Git dirty-tree checks and rollback
+warnings are intentionally deferred to Phase 3c.
 
 Notes:
 
@@ -158,7 +210,7 @@ Notes:
 ## 4. Desktop app (Tauri v2)
 
 The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
-processes in Phases 1–2.
+processes through Phase 3b.
 
 ```powershell
 cd apps/web
@@ -191,7 +243,8 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 ## 6. Tests & validation
 
 ```powershell
-# Python: parsers, relation resolver, Mermaid generator, audit rules, security, Core IR schema conformance
+# Python: parsers, relation resolver, Mermaid generator, audit rules, security,
+# Core IR schema conformance and dry-run patchers (Java/TS always; C# when the container is up)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -225,6 +278,14 @@ conflicts with the published container port — run only one of them. Scans stil
 **Mermaid shows a render error.** The raw diagram is available via the **Source** toggle, and the
 scan response contains the same string under `mermaidClassDiagram` — useful for bug reports.
 
+**The Diff Preview shows a C# warning that the Roslyn analyzer is unreachable.** Start the container
+with `docker compose up -d --build analyzer-csharp`; Java/TS/JS diffs still work without it and the
+`.cs` patch returns the original content unchanged.
+
+**The Diff Preview says no file-level patches were proposed.** A relation cut only becomes a patch
+when the source component has a matching field for that dependency. Constructor/method-level
+dependencies are reported as a draft note and must be edited by hand.
+
 **The audit score is 100 but the code feels messy.** Rules only see components and relations that
 the analyzers actually discovered. Unresolved references, primitives and files outside the scan scope
 produce no edges, so the audit cannot flag them. Narrow the scan to the service/module you care
@@ -245,17 +306,20 @@ attempt a source build and require a C compiler.
 ## 8. Repository layout
 
 ```
-.cursorrules                      Architecture rules (Core IR, layers, read-only Phases 1-2)
+.cursorrules                      Architecture rules (Core IR, layers, zero-write Phases 1-3b)
 docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
 packages/core-ir/schema.json      Canonical JSON Schema contract
 services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
+  Analysis/                       Roslyn Core IR extraction
+  Patching/                       trivia-preserving /patch rewriter (dry-run only)
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088)
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
+  app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py
-  tests/                          pytest suite incl. audit rules + schema conformance
+  tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching
 apps/web/                         React + TypeScript + Vite + Tailwind UI
-  src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, AuditPanel, HealthScore
+  src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)
 ```
 

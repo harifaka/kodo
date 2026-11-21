@@ -26,7 +26,7 @@ import {
 } from '../lib/layout';
 import { KIND_LABEL, LAYER_META, RELATION_META } from '../lib/layers';
 import { SEVERITY_META, auditedEdgeKeys, edgeKey, nodeAuditIndex } from '../lib/audit';
-import { keyOf, relationKey, type RelationDraft } from '../lib/draft';
+import { keyOf, relationKey, type Draft } from '../lib/draft';
 import type { AuditReport, ComponentNode, ComponentRelation, RelationType } from '../types/core-ir';
 import { GraphIcon } from './icons';
 import { AlertBadge } from './AuditPanel';
@@ -43,7 +43,7 @@ interface MacroGraphProps {
   audit: AuditReport;
   selectedId: string | null;
   onSelect: (node: ComponentNode | null) => void;
-  draft: RelationDraft;
+  draft: Draft;
   auditPending: boolean;
   auditError: string | null;
   newRelationType: RelationType;
@@ -51,6 +51,8 @@ interface MacroGraphProps {
   onConnect: (sourceId: string, targetId: string, type: RelationType) => void;
   onDisconnect: (relation: ComponentRelation) => void;
   onResetDraft: () => void;
+  onPreviewDiff: () => void;
+  previewBusy: boolean;
 }
 
 export function MacroGraph({
@@ -69,6 +71,8 @@ export function MacroGraph({
   onConnect,
   onDisconnect,
   onResetDraft,
+  onPreviewDiff,
+  previewBusy,
 }: MacroGraphProps) {
   return (
     <ReactFlowProvider>
@@ -88,6 +92,8 @@ export function MacroGraph({
         onConnect={onConnect}
         onDisconnect={onDisconnect}
         onResetDraft={onResetDraft}
+        onPreviewDiff={onPreviewDiff}
+        previewBusy={previewBusy}
       />
     </ReactFlowProvider>
   );
@@ -109,6 +115,8 @@ function MacroGraphCanvas({
   onConnect,
   onDisconnect,
   onResetDraft,
+  onPreviewDiff,
+  previewBusy,
 }: MacroGraphProps) {
   const { fitView } = useReactFlow();
   const initialized = useNodesInitialized();
@@ -126,7 +134,7 @@ function MacroGraphCanvas({
 
   const auditByNode = useMemo(() => nodeAuditIndex(audit), [audit]);
   const flaggedEdges = useMemo(() => auditedEdgeKeys(audit), [audit]);
-  const draftEdgeKeys = useMemo(() => new Set(draft.added.map(keyOf)), [draft.added]);
+  const draftEdgeKeys = useMemo(() => new Set(draft.relations.added.map(keyOf)), [draft.relations.added]);
 
   const decoratedNodes = useMemo(
     () =>
@@ -305,6 +313,8 @@ function MacroGraphCanvas({
         relationType={newRelationType}
         onRelationTypeChange={onNewRelationTypeChange}
         onReset={onResetDraft}
+        onPreviewDiff={onPreviewDiff}
+        previewBusy={previewBusy}
         pending={auditPending}
         error={auditError}
       />

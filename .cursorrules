@@ -24,19 +24,22 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - `apps/web` MUST NOT parse source code, infer architecture, or know about Roslyn/Tree-sitter internals.
   It renders the Core IR and reads file text through `GET /api/v1/file`.
 - `services/api-python` is the only orchestrator. It owns scanning, IR assembly, relation resolution,
-  Mermaid generation, and warning aggregation. It never calls language tooling directly for C#.
+  Mermaid generation, warning aggregation, and the `/api/v1/dry-run` patch plan. It calls the C#
+  analyzer's `/patch` endpoint but never writes the returned text to disk.
 - `services/analyzer-csharp` is a pure, stateless AST service. It knows nothing about the frontend,
-  Mermaid, or orchestration. It never writes to disk.
+  Mermaid, or orchestration. It never reads or writes workspace files; it receives file text and
+  returns Core IR or proposed text.
 - No shared code between services via file imports. Only the JSON contract crosses process boundaries.
 
-## 3. Read-only Phases 1 & 2 (hard rule)
+## 3. Zero-write phases (hard rule)
 
-Phases 1 (visualizer) and 2 (pattern audit) are **100% read-only** with respect to user source code.
+Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing) and 3b (dry-run AST patching) are
+**100% zero-write** with respect to user source code.
 
-Forbidden until explicitly scoped in a later phase:
+Forbidden until explicitly scoped in Phase 3c:
 - Writing, patching, moving, or deleting user source files.
-- AST rewriting / code generation / `dotnet format` style mutations.
-- Applying audit suggestions automatically ("fix it for me" actions in the UI).
+- Automatic apply / "fix it for me" disk mutations, including applying a dry-run result.
+- Git operations on the user's repository (checkout, reset, stash, commit).
 - LLM/DeepSeek clients of any kind.
 - Dockerfile / compose generation for the scanned workspace.
 
@@ -44,6 +47,9 @@ Allowed:
 - Reading source text from a root that the user explicitly provides.
 - Parsing it in memory and returning Core IR.
 - Running the deterministic audit engine over the Core IR and returning `WorkspaceIR.audit`.
+- Applying AST rewrite operations to **in-memory** syntax trees/text (Tree-sitter byte offsets for
+  Java/TS/JS, Roslyn syntax rewriting for C#) and returning `originalContent` / `proposedContent`
+  through `POST /api/v1/dry-run`. The returned text is never written by Kodo.
 - Serving cached in-memory analysis results to the UI.
 
 ## 3a. Audit engine rules
@@ -57,6 +63,23 @@ Allowed:
 - The score is a fixed penalty per finding severity (error 10, warning 4, info 1), clamped to 0–100.
 - Findings name the exact components involved and always include a concrete, human-applied suggestion.
 
+## 3b. Dry-run patching rules
+
+- The browser's only patching entry point is `POST /api/v1/dry-run` on the orchestrator. The UI must
+  not call Roslyn directly or know Tree-sitter/Roslyn internals.
+- `services/analyzer-csharp` exposes `POST /patch` for the orchestrator only. It is stateless:
+  `{ filePath, content, operations }` in, `{ proposedContent, appliedOps, warnings }` out. No
+  filesystem access, no writes.
+- Java and TS/JS patchers must make surgical byte-offset edits inside the target type body and
+  preserve every untouched token, method, comment and line ending. Regenerating whole files is
+  forbidden.
+- The C# patcher must use `CSharpSyntaxTree.ParseText` + trivia-preserving rewriting. Methods,
+  comments and formatting outside the targeted member/attribute stay verbatim.
+- Every patcher degrades gracefully: unsupported constructs produce a warning and leave the file's
+  proposed content byte-identical; they never raise a 500 and never write.
+- Patching is bounded like inspection: strict path containment, 2 MB per file, and a bounded number
+  of operations per request.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -65,6 +88,8 @@ Allowed:
   scanned `rootPath` the user supplied.
 - Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv` when walking.
 - Enforce file count / file size limits and report them as `WorkspaceIR.warnings`, not exceptions.
+- Dry-run patching repeats the containment check per operation, rejects absolute paths and `..`,
+  enforces the 2 MB cap, and reads each file once into memory. No phase through 3b writes to disk.
 
 ## 5. Degradation, never crashing
 
@@ -87,5 +112,10 @@ Allowed:
 
 - `dotnet build services/analyzer-csharp` succeeds.
 - `python -m pytest services/api-python/tests` succeeds.
+- `python -m ruff check` on changed Python files succeeds.
 - `npm run build` in `apps/web` succeeds (type-check + bundle).
-- The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens read-only.
+- The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens
+  read-only.
+- For patching changes: `docker compose up -d --build analyzer-csharp`, verify `GET /health` and
+  `POST /patch`, then scan -> edit a field -> **Preview Diff (Dry-Run)** and confirm the proposed
+  content preserves hand-written methods/comments **and** the source file's bytes/mtime are unchanged.

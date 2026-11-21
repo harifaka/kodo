@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Kodo.Analyzer.CSharp.Analysis;
 using Kodo.Analyzer.CSharp.Models;
+using Kodo.Analyzer.CSharp.Patching;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,7 +33,7 @@ app.MapGet("/", () => Results.Ok(new
 {
     service = "kodo-analyzer-csharp",
     status = "ok",
-    endpoints = new[] { "GET /health", "POST /analyze" }
+    endpoints = new[] { "GET /health", "POST /analyze", "POST /patch" }
 }));
 
 app.MapPost("/analyze", (AnalyzeRequest request) =>
@@ -56,6 +57,28 @@ app.MapPost("/analyze", (AnalyzeRequest request) =>
     {
         return Results.Problem(
             title: "C# analysis failed",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+// Dry-run only: the caller ships the file text, Roslyn returns proposed text, nothing is written.
+app.MapPost("/patch", (PatchRequest request) =>
+{
+    if (request is null || request.Content is null)
+    {
+        return Results.BadRequest(new { error = "content is required." });
+    }
+
+    try
+    {
+        var result = RoslynPatcher.Patch(request);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "C# patch failed",
             detail: ex.Message,
             statusCode: StatusCodes.Status500InternalServerError);
     }

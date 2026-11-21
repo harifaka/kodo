@@ -6,6 +6,7 @@ import type {
   HealthResponse,
   WorkspaceIR,
 } from '../types/core-ir';
+import type { DryRunResponse, PatchOperation } from '../types/patching';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
@@ -69,6 +70,14 @@ export const api = {
     return request<AuditReport>('/api/v1/audit', {
       method: 'POST',
       body: JSON.stringify({ nodes, relations }),
+      signal,
+    });
+  },
+
+  dryRun(rootPath: string, operations: PatchOperation[], signal?: AbortSignal): Promise<DryRunResponse> {
+    return request<DryRunResponse>('/api/v1/dry-run', {
+      method: 'POST',
+      body: JSON.stringify({ rootPath, operations }),
       signal,
     });
   },

@@ -1,58 +1,81 @@
 import { useCallback, useMemo, useState } from 'react';
 import { CodeInspector } from './components/CodeInspector';
+import { DiffPreview } from './components/DiffPreview';
 import { EmptyState } from './components/EmptyState';
 import { MacroGraph } from './components/MacroGraph';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { TopBar } from './components/TopBar';
 import { UmlDiagram } from './components/UmlDiagram';
 import { WarningsBar } from './components/WarningsBar';
-import { AlertIcon, CodeIcon, GraphIcon, UmlIcon } from './components/icons';
+import { AlertIcon, CodeIcon, DiffIcon, GraphIcon, UmlIcon } from './components/icons';
 import { useDraftAudit } from './hooks/useDraftAudit';
 import { useHealth } from './hooks/useHealth';
 import { api } from './lib/api';
-import { applyDraft, connectRelation, disconnectRelation, emptyDraft, isDraftEmpty } from './lib/draft';
+import {
+  addField,
+  addNodeAnnotation,
+  applyDraft,
+  connectRelation,
+  disconnectRelation,
+  draftEditCount,
+  emptyDraft,
+  isDraftEmpty,
+  removeField,
+  removeNodeAnnotation,
+  updateField,
+  type Draft,
+} from './lib/draft';
 import { buildGraph } from './lib/layout';
 import type {
   AuditFinding,
+  ComponentField,
   ComponentNode,
   ComponentRelation,
   RelationType,
   WorkspaceIR,
 } from './types/core-ir';
 
-type TabId = 'graph' | 'uml' | 'code';
+type TabId = 'graph' | 'uml' | 'code' | 'diff';
 
 const LAST_PATH_KEY = 'kodo:lastPath';
+// Stable empty arrays: useDraftAudit keys its effect on these inputs.
+const NO_NODES: ComponentNode[] = [];
+const NO_RELATIONS: ComponentRelation[] = [];
 
 export default function App() {
   const [path, setPath] = useState(() => window.localStorage.getItem(LAST_PATH_KEY) ?? '');
   const [workspace, setWorkspace] = useState<WorkspaceIR | null>(null);
-  const [draft, setDraft] = useState(emptyDraft);
+  const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [newRelationType, setNewRelationType] = useState<RelationType>('depends_on');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>('graph');
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewRequest, setPreviewRequest] = useState(0);
   const health = useHealth();
 
-  const relations = useMemo(
-    () => (workspace ? applyDraft(workspace.relations, draft) : []),
-    [workspace, draft],
-  );
+  const draftView = useMemo(() => (workspace ? applyDraft(workspace, draft) : null), [workspace, draft]);
+  const nodes = draftView?.nodes ?? NO_NODES;
+  const relations = draftView?.relations ?? NO_RELATIONS;
   const draftDirty = !isDraftEmpty(draft);
-  const draftAudit = useDraftAudit(workspace, relations, draftDirty);
+  const draftCounts = draftEditCount(draft);
+  const draftAudit = useDraftAudit(workspace, nodes, relations, draftDirty);
 
   const view = useMemo<WorkspaceIR | null>(
     () =>
-      workspace
-        ? { ...workspace, relations, audit: draftAudit.report ?? workspace.audit }
+      workspace && draftView
+        ? { ...workspace, nodes: draftView.nodes, relations: draftView.relations, audit: draftAudit.report ?? workspace.audit }
         : null,
-    [workspace, relations, draftAudit.report],
+    [workspace, draftView, draftAudit.report],
   );
 
   const selected = useMemo(
     () => view?.nodes.find((node) => node.id === selectedId) ?? null,
     [view, selectedId],
+  );
+  const baseSelected = useMemo(
+    () => workspace?.nodes.find((node) => node.id === selectedId) ?? null,
+    [workspace, selectedId],
   );
 
   const graph = useMemo(
@@ -84,7 +107,35 @@ export default function App() {
     [workspace],
   );
 
+  const handleAddField = useCallback((nodeId: string, field: ComponentField) => {
+    setDraft((current) => addField(current, nodeId, field));
+  }, []);
+
+  const handleUpdateField = useCallback(
+    (nodeId: string, originalName: string, field: ComponentField) => {
+      setDraft((current) => updateField(current, nodeId, originalName, field));
+    },
+    [],
+  );
+
+  const handleRemoveField = useCallback((nodeId: string, fieldName: string) => {
+    setDraft((current) => removeField(current, nodeId, fieldName));
+  }, []);
+
+  const handleAddAnnotation = useCallback((nodeId: string, annotation: string) => {
+    setDraft((current) => addNodeAnnotation(current, nodeId, annotation));
+  }, []);
+
+  const handleRemoveAnnotation = useCallback((nodeId: string, annotation: string) => {
+    setDraft((current) => removeNodeAnnotation(current, nodeId, annotation));
+  }, []);
+
   const handleResetDraft = useCallback(() => setDraft(emptyDraft()), []);
+
+  const handlePreviewDiff = useCallback(() => {
+    setPreviewRequest((value) => value + 1);
+    setTab('diff');
+  }, []);
 
   const handleOpenFinding = useCallback(
     (finding: AuditFinding) => {
@@ -159,7 +210,7 @@ export default function App() {
                 onChange={setTab}
                 workspace={view}
                 hasSelection={selected !== null}
-                draft={draftDirty ? { added: draft.added.length, removed: draft.removed.length } : null}
+                draft={draftDirty ? draftCounts : null}
               />
               <WarningsBar warnings={view.warnings} />
               <div className="min-h-0 flex-1">
@@ -181,6 +232,8 @@ export default function App() {
                     onConnect={handleConnect}
                     onDisconnect={handleDisconnect}
                     onResetDraft={handleResetDraft}
+                    onPreviewDiff={handlePreviewDiff}
+                    previewBusy={false}
                   />
                 )}
                 {tab === 'uml' && (
@@ -192,6 +245,9 @@ export default function App() {
                   />
                 )}
                 {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}
+                {tab === 'diff' && workspace && (
+                  <DiffPreview workspace={workspace} draft={draft} requestId={previewRequest} />
+                )}
               </div>
             </>
           ) : (
@@ -202,12 +258,19 @@ export default function App() {
         {view && (
           <NodeDetailsPanel
             workspace={view}
+            baseNode={baseSelected}
             selected={selected}
+            draft={draft}
             onSelect={handleSelect}
             onSelectNodeId={handleSelectNodeId}
             onOpenInInspector={openInspector}
             onOpenFinding={handleOpenFinding}
             onDisconnectRelation={handleDisconnect}
+            onAddField={handleAddField}
+            onUpdateField={handleUpdateField}
+            onRemoveField={handleRemoveField}
+            onAddAnnotation={handleAddAnnotation}
+            onRemoveAnnotation={handleRemoveAnnotation}
           />
         )}
       </div>
@@ -226,12 +289,18 @@ function TabBar({
   onChange: (tab: TabId) => void;
   workspace: WorkspaceIR;
   hasSelection: boolean;
-  draft: { added: number; removed: number } | null;
+  draft: ReturnType<typeof draftEditCount> | null;
 }) {
   const tabs: Array<{ id: TabId; label: string; icon: typeof GraphIcon; badge?: string }> = [
     { id: 'graph', label: 'Macro Graph', icon: GraphIcon, badge: String(workspace.nodes.length) },
     { id: 'uml', label: 'UML Diagram', icon: UmlIcon },
     { id: 'code', label: 'Code Inspector', icon: CodeIcon, badge: hasSelection ? '●' : undefined },
+    {
+      id: 'diff',
+      label: 'Diff Preview',
+      icon: DiffIcon,
+      badge: draft && draft.total > 0 ? String(draft.total) : undefined,
+    },
   ];
 
   return (
@@ -273,10 +342,10 @@ function TabBar({
         {draft && (
           <>
             <span
-              title="Uncommitted macro edits — kept in the browser only"
+              title="Uncommitted draft edits — kept in the browser only"
               className="shrink-0 rounded border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9.5px] text-emerald-300"
             >
-              draft +{draft.added} / −{draft.removed}
+              draft {draft.total} · rel {draft.relations} · fields {draft.fields} · ann {draft.annotations}
             </span>
             <span className="h-3 w-px bg-ink-700" />
           </>

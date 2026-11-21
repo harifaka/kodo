@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,6 +18,11 @@ from app.config import (
     csharp_analyzer_url,
 )
 from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
+from app.patching.csharp_patcher import patch_csharp
+from app.patching.java_patcher import patch_java
+from app.patching.models import DryRunRequest, DryRunResponse, PatchResult, summarize
+from app.patching.paths import PatchRejected, build_targets
+from app.patching.ts_patcher import patch_script
 from app.services.csharp_client import check_health
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
 
@@ -99,7 +104,7 @@ async def health() -> HealthResponse:
         service="kodo-api-python",
         version=__version__,
         analyzers={"csharp": CSharpHealth(url=csharp_analyzer_url(), reachable=reachable)},
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
     )
 
 
@@ -125,6 +130,37 @@ async def audit_preview(request: AuditRequest) -> AuditReport:
         seen.add(key)
         relations.append(relation)
     return run_audit(request.nodes, relations)
+
+
+@router.post("/api/v1/dry-run", response_model=DryRunResponse, tags=["patching"])
+async def dry_run(request: DryRunRequest) -> DryRunResponse:
+    """Compute proposed file contents in memory. No file is created, modified or deleted."""
+    try:
+        targets = build_targets(request.root_path, request.operations)
+    except PatchRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    patches: list[PatchResult] = []
+    for target in targets:
+        if target.language == "java":
+            outcome = patch_java(target.content, target.operations)
+        elif target.language in {"typescript", "javascript"}:
+            outcome = patch_script(target.content, target.operations, target.file_path)
+        else:
+            outcome = await patch_csharp(target.file_path, target.content, target.operations)
+
+        patches.append(
+            PatchResult(
+                file_path=target.file_path,
+                language=target.language,
+                original_content=target.content,
+                proposed_content=outcome.content,
+                summary=summarize(outcome),
+                warnings=outcome.warnings,
+            )
+        )
+
+    return DryRunResponse(patches=patches, warnings=[])
 
 
 @router.get("/api/v1/file", response_model=FileContent, tags=["inspection"])
