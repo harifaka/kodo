@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 5](https://img.shields.io/badge/Status-Phase%205%20delivered-brightgreen.svg)
+![Status: MVP Complete](https://img.shields.io/badge/Status-MVP%20Complete%20%C2%B7%20Phases%201--6%20delivered-brightgreen.svg)
 
 ---
 
@@ -18,6 +18,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
 - **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
 - **DeepSeek Architecture Copilot:** OpenAI-compatible client for **DeepSeek Cloud** or air-gapped **Ollama / vLLM** that turns a business spec into a blueprint, proposes fixes for audit findings and implements single methods — always as IR-aware proposals reviewed in the Monaco diff. The LLM never writes to disk.
+- **Deploy Studio:** Generates non-root multi-stage `Dockerfile`s, a healthchecked `docker-compose.yml` (PostgreSQL / Redis / RabbitMQ on a `kodo-net` bridge) and a placeholder-only `.env.example` — then controls local Docker (compose up/down, live health, filterable logs), exports Git branches and GitHub PRs, and records every apply/rollback/deploy/Git action in a local append-only audit log.
 
 ---
 
@@ -38,7 +39,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
-## Quick Start (Phases 1–5)
+## Quick Start (Phases 1–6)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -53,6 +54,9 @@ uvicorn app.main:app --reload --port 8088
 # 3. Web UI -> http://127.0.0.1:5173
 cd apps/web ; npm install ; npm run dev
 ```
+
+Docker Desktop is only needed for the Roslyn container and the **Deploy** tab; scanning, auditing,
+editing and Git export all work without it.
 
 Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
 read-only Code Inspector. Select a component to draft business-field and annotation edits, then click
@@ -78,11 +82,25 @@ From there: **AI Generate from Spec** in the Builder turns a business descriptio
 proposes a patch, and **AI Implement** on a method fills in a single method. Every AI result is a normal
 dry-run plan — reviewed in the Monaco side-by-side diff and applied (or rolled back) only by you.
 
+The **Deploy** tab packages a workspace for production. Pick the detected (or an explicit) stack, the
+app port and any backing services, then **Preview Docker Files (Dry-Run)**. The multi-stage, non-root
+`Dockerfile`, `.dockerignore`, healthchecked `docker-compose.yml` and placeholder-only `.env.example`
+appear in the same Monaco diff and reach disk only through the guarded apply (existing files require
+the **Overwrite existing** toggle and its SHA-256 check; a WPF desktop project gets a warning plus an
+optional sidecar/API compose template instead of an unusable Linux image). **Container Control** then
+drives `docker compose up -d --build` / `down` with live health badges and a filterable log viewer, and
+**Git Export** clones HTTPS GitHub/GitLab repositories into Kodo's own workspaces folder, or branches,
+commits and (optionally) opens a pull request with a session-only token. Every action is recorded in
+`~/.kodo/audit.jsonl` and shown in the audit table.
+
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
 
 ## 6-Phase MVP Roadmap
+
+**All six phases are delivered** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Deploy**
+loop end to end.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -111,10 +129,13 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - Context-efficient prompting powered by **Core IR** + Audit findings, packed into a hard character budget (no raw codebase dumps, no `node_modules` scraping).
 - Workflows: *Business Spec -> Blueprint* (schema-validated with one repair retry), *Audit Error -> Diff Fix*, and *Targeted Method Implementation* — each one returns a normal dry-run plan for the Monaco diff; the LLM has no write access.
 
-### Phase 6: Ready-to-Deploy Docker Studio
-- Auto-generated multi-stage `Dockerfile`s, `docker-compose.yml` (wiring databases, queues, networks, healthchecks), and `.env.example`.
-- Built-in Docker lifecycle controls (`up --build`, live container status, filterable log viewer).
-- Local audit logging and Git commit/tag export.
+### Phase 6: Ready-to-Deploy Docker Studio - Delivered
+- Stack-aware, **non-root multi-stage Dockerfiles** (Maven/Temurin 21 JRE, `node:22-alpine`, .NET 8 SDK → `aspnet:8.0-alpine`) with `EXPOSE` and `HEALTHCHECK`; WPF projects get an explicit "desktop app cannot run in Linux" warning plus an optional sidecar/API compose template.
+- **`docker-compose.yml`** with selectable PostgreSQL / Redis / RabbitMQ, pinned Alpine images, healthchecks, `depends_on: condition: service_healthy`, a `kodo-net` bridge, named volumes and `${VAR}` interpolation — plus a `.env.example` that only ever holds placeholders.
+- **Local Docker control panel:** daemon/CLI status, `compose up -d --build`, `compose down [--volumes]`, container health table and a filterable log viewer (tail clamped, service name validated, `shell=False`, strict root containment and timeouts).
+- **SaaS / Git adapter:** shallow clone of HTTPS GitHub/GitLab repositories into `~/.kodo/workspaces` (token passed as a transient `http.extraHeader`, never stored), branch + commit export, and optional GitHub Pull Request creation.
+- **Local audit log:** append-only JSONL at `~/.kodo/audit.jsonl` (configurable) recording `apply`, `rollback`, `deploy_up`, `deploy_down`, `git_clone` and `git_export` with redacted summaries — no file contents, no tokens.
+- All generated container artifacts ride the Phase 3c pipeline: **Dry-Run → Monaco Diff → guarded Apply → atomic Rollback**.
 
 ---
 

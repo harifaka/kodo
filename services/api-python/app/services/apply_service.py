@@ -33,6 +33,11 @@ from app.patching.paths import (
     resolve_new_member,
     resolve_root,
 )
+from app.services.audit_log import (
+    AUDIT_ACTION_APPLY,
+    AUDIT_ACTION_ROLLBACK,
+    record_event,
+)
 from app.services.git_safety import GitStatus, inspect_git_status
 
 MAX_ROLLBACK_BATCHES = 10
@@ -140,6 +145,27 @@ _lock = threading.Lock()
 
 def apply_patches(request: ApplyRequest) -> ApplyResponse:
     """Validate the whole batch, then write every file. Nothing is written on any rejection."""
+    try:
+        response = _apply_locked(request)
+    except ApplyRejected as exc:
+        record_event(
+            AUDIT_ACTION_APPLY,
+            request.root_path,
+            f"Rejected ({exc.code}): {exc}",
+            status="failed",
+        )
+        raise
+
+    record_event(
+        AUDIT_ACTION_APPLY,
+        request.root_path,
+        f"Applied {len(response.applied_files)} file(s), {len(response.created_files)} created",
+        files_count=len(response.applied_files),
+    )
+    return response
+
+
+def _apply_locked(request: ApplyRequest) -> ApplyResponse:
     with _lock:
         root = _root(request.root_path)
         prepared, warnings = _preflight(root, request)
@@ -207,6 +233,36 @@ def apply_patches(request: ApplyRequest) -> ApplyResponse:
 
 def rollback(request: RollbackRequest) -> RollbackResponse:
     """Undo a batch: restore overwritten bytes and delete created files (``force`` overrides drift)."""
+    try:
+        response, root_path = _rollback_locked(request)
+    except ApplyRejected as exc:
+        record_event(
+            AUDIT_ACTION_ROLLBACK,
+            _batch_root(request.apply_id),
+            f"Rejected ({exc.code}): {exc}",
+            status="failed",
+        )
+        raise
+
+    count = len(response.restored_files) + len(response.deleted_files)
+    record_event(
+        AUDIT_ACTION_ROLLBACK,
+        root_path,
+        f"Rolled back {count} file(s): {len(response.restored_files)} restored, "
+        f"{len(response.deleted_files)} deleted",
+        files_count=count,
+    )
+    return response
+
+
+def _batch_root(apply_id: str, fallback: str = "") -> str:
+    for batch in _batches:
+        if batch.apply_id == apply_id:
+            return batch.root_path
+    return fallback
+
+
+def _rollback_locked(request: RollbackRequest) -> tuple[RollbackResponse, str]:
     with _lock:
         batch = next((item for item in reversed(_batches) if item.apply_id == request.apply_id), None)
         if batch is None:
@@ -275,7 +331,7 @@ def rollback(request: RollbackRequest) -> RollbackResponse:
 
         _prune_directories(root, batch.created_dirs)
         _batches.remove(batch)
-        return RollbackResponse(restored_files=restored, deleted_files=deleted)
+        return RollbackResponse(restored_files=restored, deleted_files=deleted), batch.root_path
 
 
 def _matches(path: Path, written_sha256: str, force: bool) -> bool:

@@ -6,7 +6,7 @@ import { buildPatchOperations, isDraftEmpty, type Draft } from '../lib/draft';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { PlanPreview } from '../types/ai';
 import type { DryRunResponse, GitStatus } from '../types/patching';
-import { AlertIcon, BuilderIcon, CheckIcon, DiffIcon, ShieldIcon, SparkIcon, Spinner } from './icons';
+import { AlertIcon, BuilderIcon, CheckIcon, DeployIcon, DiffIcon, ShieldIcon, SparkIcon, Spinner } from './icons';
 
 interface DiffPreviewProps {
   workspace: WorkspaceIR;
@@ -301,6 +301,8 @@ export function DiffPreview({
           <div className="flex flex-wrap items-center gap-2">
             {externalPlan.kind === 'ai' ? (
               <SparkIcon className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+            ) : externalPlan.kind === 'deploy' ? (
+              <DeployIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
             ) : (
               <BuilderIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
             )}
@@ -309,16 +311,21 @@ export function DiffPreview({
                 externalPlan.kind === 'ai' ? 'text-violet-100' : 'text-sky-100'
               }`}
             >
-              {externalPlan.kind === 'ai' ? 'AI proposal' : 'Generated plan'} · {externalPlan.label} ·{' '}
+              {externalPlan.kind === 'ai'
+                ? 'AI proposal'
+                : externalPlan.kind === 'deploy'
+                  ? 'Docker plan'
+                  : 'Generated plan'}{' '}
+              · {externalPlan.label} ·{' '}
               {patches.length} file
               {patches.length === 1 ? '' : 's'}
               {newFileCount > 0 ? ` · ${newFileCount} new` : ''}
               {externalPlan.modelUsed ? ` · ${externalPlan.modelUsed}` : ''}
             </p>
-            {externalPlan.kind === 'scaffold' && conflictCount > 0 && (
+            {externalPlan.kind !== 'ai' && conflictCount > 0 && (
               <span className="text-[10px] leading-relaxed text-rose-300">
                 {conflictCount} path{conflictCount === 1 ? '' : 's'} already exist — applying is rejected
-                with FILE_EXISTS (Kodo never overwrites while scaffolding).
+                with FILE_EXISTS (Kodo never overwrites existing files).
               </span>
             )}
             {onPlanDismiss && (

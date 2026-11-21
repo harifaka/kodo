@@ -6,19 +6,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api.git_routes import router as git_router
 from app.api.routes import router
 from app.config import DEFAULT_API_PORT, cors_origins
+from app.deploy.routes import router as deploy_router
 from app.llm.routes import router as ai_router
 
 app = FastAPI(
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–5. "
+        "Kodo Architecture Control Center — Phases 1–6. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
         "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
-        "and applies reviewed patches to disk behind path-containment, SHA-256 optimistic concurrency "
-        "and Git working-tree guards."
+        "generates production Docker artifacts (reviewed through the same diff), controls local Docker "
+        "Compose, and exports Git branches/pull requests — all applied to disk behind path-containment, "
+        "SHA-256 optimistic concurrency and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -33,6 +36,8 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(ai_router)
+app.include_router(deploy_router)
+app.include_router(git_router)
 
 
 @app.get("/", tags=["system"])
@@ -53,6 +58,14 @@ async def root() -> dict[str, str]:
         "aiSpecToBlueprint": "POST /api/v1/ai/spec-to-blueprint",
         "aiAuditFix": "POST /api/v1/ai/audit-fix",
         "aiImplementMethod": "POST /api/v1/ai/implement-method",
+        "deployDryRun": "POST /api/v1/deploy/dry-run",
+        "dockerStatus": "GET /api/v1/deploy/docker/status",
+        "dockerUp": "POST /api/v1/deploy/docker/up",
+        "dockerDown": "POST /api/v1/deploy/docker/down",
+        "dockerLogs": "GET /api/v1/deploy/docker/logs",
+        "auditLog": "GET /api/v1/audit-log",
+        "gitClone": "POST /api/v1/git/clone",
+        "gitExport": "POST /api/v1/git/export",
     }
 
 

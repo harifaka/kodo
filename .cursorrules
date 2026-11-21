@@ -39,16 +39,21 @@ Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing), 3b (dry-run AST pa
 generator half of Phase 4 (blueprint rendering) are **100% zero-write** with respect to user source
 code. Phase 3c adds exactly one, tightly guarded write path (see §3c), and Phase 4 reuses it for
 create-only scaffolding (§3d). Phase 5 adds AI **proposals** that must come back through that same
-reviewed write path (§3e). Anything else stays read-only.
+reviewed write path (§3e). Phase 6 adds container artifact generation (§3f) that reuses the same
+pipeline, plus local Docker/Git operations that never write workspace files except through the guarded
+apply. Anything else stays read-only.
 
 Forbidden:
 - Writing, patching, moving, or deleting user source files outside the guarded apply service.
 - Automatic apply / "fix it for me" disk mutations without an explicit user confirmation.
 - Overwriting an existing file while scaffolding — a create-only patch that targets an existing path
   must fail with HTTP 409 `FILE_EXISTS`.
-- Mutating Git state on the user's repository (add, commit, checkout, reset, stash, tag, clean).
+- Mutating Git history or remote refs outside the explicit `/api/v1/git/export` user action
+  (branch, commit, optional push); never `reset --hard`, `clean -fd`, force-push or rewrite history.
 - Any LLM call that writes to disk, applies its own patch, or bypasses the Monaco diff/apply review.
-- Dockerfile / compose generation for the scanned workspace.
+- Running Docker or Git with `shell=True`, an unvalidated `cwd`, or interpolated user input.
+- Persisting a Git/GitHub token in `.git/config`, a remote URL, the audit log, an error message, a
+  response body or any file on disk.
 
 Allowed:
 - Reading source text from a root that the user explicitly provides.
@@ -59,6 +64,8 @@ Allowed:
   through `POST /api/v1/dry-run`. The returned text is never written by the dry-run itself.
 - Rendering stack-plugin templates into **in-memory** file text (`app/generators/`) and returning it
   through `POST /api/v1/scaffold/dry-run` as create-only patches. Nothing is written there either.
+- Rendering Docker artifacts into **in-memory** file text (`app/deploy/generator.py`) and returning it
+  through `POST /api/v1/deploy/dry-run` (§3f).
 - Reading `kodo.blueprint.json` from the workspace root (`GET /api/v1/blueprint`).
 - Calling an OpenAI-compatible LLM (`app/llm/`) with compact Core IR context and a bounded set of
   source files, returning proposals as dry-run patches or a validated blueprint (§3e). The proposal
@@ -66,6 +73,8 @@ Allowed:
 - Inspecting Git status read-only through `app/services/git_safety.py` (`GIT_OPTIONAL_LOCKS=0`, no
   mutating subcommands).
 - Writing reviewed patches through `app/services/apply_service.py` only (§3c, §3d).
+- Running `docker compose` inspection/up/down through `app/deploy/runner.py` (§3f) and
+  cloning/exporting through `app/services/git_remote.py` (§3f).
 - Serving cached in-memory analysis results and rollback snapshots to the UI.
 
 ## 3a. Audit engine rules
@@ -176,6 +185,55 @@ Allowed:
   `RATE_LIMITED` (429), `TIMEOUT` (504), `UNREACHABLE` (502), `INVALID_JSON` / `INVALID_BLUEPRINT` /
   `INVALID_PATCH` (422). Messages must be safe to display and free of prompt content and secrets.
 
+## 3f. Deploy Studio & Git adapter rules (Docker + SaaS)
+
+- **Same guarded write path.** `app/deploy/generator.py` is pure text-in/text-out. Docker artifacts
+  (`Dockerfile`, `Dockerfile.sidecar`, `.dockerignore`, `docker-compose.yml`, `.env.example`) are
+  returned by `POST /api/v1/deploy/dry-run` as a normal `DryRunResponse`; they reach disk only through
+  `POST /api/v1/apply` and are undone by `POST /api/v1/apply/rollback`. Never write them from the
+  generator, the runner or a route.
+- **Create-only by default.** Existing container files are create-only patches (`409 FILE_EXISTS`)
+  unless the caller sets `overwriteExisting: true`, in which case they are ordinary SHA-256 verified
+  overwrites (`originalSha256` echoed by the UI). Never silently replace a user's Dockerfile.
+- **Image rules.** Every generated Dockerfile is multi-stage, pins an Alpine/slim runtime, creates a
+  `kodo` user/group and drops privileges (`USER kodo`), exposes the configured port and declares a
+  `HEALTHCHECK`. Spring Boot must use `eclipse-temurin:21-jre-alpine` with `/actuator/health`.
+- **WPF honesty.** WPF is Windows-only. For `csharp-wpf` emit a clear warning, no Linux `Dockerfile`,
+  and an optional sidecar/API template (`Dockerfile.sidecar` + `profiles: ["sidecar"]`). Never claim a
+  desktop UI can be containerized on Linux.
+- **Secrets in templates are placeholders.** `.env.example` may only contain obvious placeholders
+  (`change-me-local-only`) and compose values use `${VAR}` interpolation. Never emit a real credential,
+  token or production password — and never copy a value out of the analysed repository.
+- **Subprocess safety.** Docker and Git run through `app/deploy/runner.py` / `app/services/git_remote.py`
+  with list arguments, `shell=False`, an explicit timeout, and `cwd` set to a `resolve_root`-validated
+  folder (or Kodo's own workspaces dir). No `shell=True`, no string interpolation into a command, no
+  unbounded process. Docker commands only run when `docker-compose.yml` exists inside that root.
+- **Input sanitization.** Service names must match `[A-Za-z0-9][A-Za-z0-9_.-]{0,62}`; log `tail` is
+  clamped to 1–1000; CLI output is ANSI-stripped and length-clipped; only `ps`, `version`, `info`,
+  `logs`, `compose up` and `compose down` are ever executed.
+- **Git URL policy.** Clone accepts `https://github.com/<owner>/<repo>` or `https://gitlab.com/<owner>/<repo>`
+  only (plus `KODO_GIT_ALLOWED_HOSTS`). Reject `file://`, `ssh`, embedded credentials, query strings,
+  traversal, spaces and shell metacharacters with `400 INVALID_REPO_URL`.
+- **Tokens are transient.** Pass Git tokens only as `-c http.extraHeader=Authorization: Basic …` for a
+  single invocation; keep them in UI memory/sessionStorage only. Never put them in a remote URL, never
+  write them to `.git/config`, never log or audit them, never return them in a response, and never
+  include them in an error message.
+- **Clone destination.** Shallow clones (`--depth 1 --single-branch`) land in
+  `KODO_WORKSPACES_DIR` (default `~/.kodo/workspaces/<slug>-<shortid>`), never inside the Kodo repo or
+  the currently scanned root.
+- **Export policy.** Validate branch names (`[A-Za-z0-9][A-Za-z0-9._/-]{1,199}`, no `..`, `@{`,
+  `refs/`, trailing dot/slash/`.lock`) before any Git call. Branch + commit are allowed; push and PR
+  creation only happen with `createPr`, a GitHub `origin` and a session token. Never force-push,
+  reset, clean or rewrite history.
+- **Local audit log.** `app/services/audit_log.py` appends one JSONL line per `apply`, `rollback`,
+  `deploy_up`, `deploy_down`, `git_clone` and `git_export` to `~/.kodo/audit.jsonl`
+  (`KODO_AUDIT_LOG_PATH`), outside the repository. Metadata only — never file contents, never tokens,
+  with credential-shaped fragments redacted. Auditing is best-effort and must never break the action
+  it is recording.
+- **Deterministic tests.** `tests/test_deploy_studio.py` mocks the Docker CLI (`_run_cli`) and the
+  GitHub API (`httpx.MockTransport` via `set_transport_override`); pytest must never need a Docker
+  daemon or internet access. The audit log is redirected to `tmp_path` by `tests/conftest.py`.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -189,6 +247,9 @@ Allowed:
 - Scaffolding resolves **non-existent** targets with `resolve_new_member`: the deepest existing
   ancestor is resolved and must stay inside the root, symlinked folders are rejected, and the final
   component must not exist. Reverse-verify containment after creating parent folders.
+- Docker/Git subprocesses use `resolve_root` for `cwd`, require `docker-compose.yml` to live inside
+  that root, and only ever write outside the workspace inside Kodo's own app directories
+  (`KODO_WORKSPACES_DIR`, `KODO_AUDIT_LOG_PATH`). Never expose those app paths as workspace paths.
 
 ## 5. Degradation, never crashing
 
@@ -197,6 +258,9 @@ Allowed:
 - Unparsable files, unknown extensions, and oversized files produce warnings, never 500s.
 - AI Copilot failures (missing key, 401/403, 429, timeout, unreachable local server) return the
   structured error codes from §3e; they never block scanning, auditing or the guarded apply path.
+- Docker being unavailable (no CLI, no daemon, no compose file) is a reported status with a warning,
+  never a 500; scanning, auditing, patching and applying keep working. Audit-log write failures are
+  swallowed. A failed `docker compose up/down` returns `success: false` with stderr instead of raising.
 - The UI must render a usable empty state when `nodes` is empty.
 
 ## 6. Code style
@@ -235,3 +299,9 @@ Allowed:
   Ollama/vLLM server. Generate a blueprint, run **Fix with AI** on a real finding and **AI Implement**
   on a method, and confirm each result only reaches disk through the Diff Preview Apply button —
   rollback restores the original bytes.
+- For Deploy changes: run `pytest services/api-python/tests/test_deploy_studio.py` (Docker CLI and
+  GitHub API mocked), then in the UI generate Docker files for a git-initialised temp project, review
+  the four files in Monaco, apply, confirm `docker compose config` passes, roll back and confirm the
+  files are gone. With Docker running, press **Compose Up (--build)**, verify the container health
+  badges and filtered logs, then **Compose Down**. Confirm `~/.kodo/audit.jsonl` gained entries with
+  no token or file content in them.

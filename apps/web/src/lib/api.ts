@@ -16,6 +16,17 @@ import type {
 } from '../types/patching';
 import type { BlueprintResponse, ScaffoldRequest } from '../types/blueprint';
 import type {
+  AuditLogResponse,
+  CloneRequest,
+  CloneResponse,
+  ComposeLogs,
+  ComposeResult,
+  DeployDryRunRequest,
+  DockerStatus,
+  ExportRequest,
+  ExportResponse,
+} from '../types/deploy';
+import type {
   AiPatchResponse,
   AuditFixRequest,
   ImplementMethodRequest,
@@ -175,6 +186,67 @@ export const api = {
 
   aiImplementMethod(payload: ImplementMethodRequest, signal?: AbortSignal): Promise<AiPatchResponse> {
     return request<AiPatchResponse>('/api/v1/ai/implement-method', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  deployDryRun(payload: DeployDryRunRequest, signal?: AbortSignal): Promise<DryRunResponse> {
+    return request<DryRunResponse>('/api/v1/deploy/dry-run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  dockerStatus(root: string, signal?: AbortSignal): Promise<DockerStatus> {
+    const params = new URLSearchParams({ root });
+    return request<DockerStatus>(`/api/v1/deploy/docker/status?${params.toString()}`, { signal });
+  },
+
+  dockerUp(rootPath: string, build: boolean): Promise<ComposeResult> {
+    return request<ComposeResult>('/api/v1/deploy/docker/up', {
+      method: 'POST',
+      body: JSON.stringify({ rootPath, build }),
+    });
+  },
+
+  dockerDown(rootPath: string, removeVolumes: boolean): Promise<ComposeResult> {
+    return request<ComposeResult>('/api/v1/deploy/docker/down', {
+      method: 'POST',
+      body: JSON.stringify({ rootPath, removeVolumes }),
+    });
+  },
+
+  dockerLogs(
+    root: string,
+    service: string | null,
+    tail: number,
+    signal?: AbortSignal,
+  ): Promise<ComposeLogs> {
+    const params = new URLSearchParams({ root, tail: String(tail) });
+    if (service) {
+      params.set('service', service);
+    }
+    return request<ComposeLogs>(`/api/v1/deploy/docker/logs?${params.toString()}`, { signal });
+  },
+
+  auditLog(limit = 100, signal?: AbortSignal): Promise<AuditLogResponse> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return request<AuditLogResponse>(`/api/v1/audit-log?${params.toString()}`, { signal });
+  },
+
+  gitClone(payload: CloneRequest, signal?: AbortSignal): Promise<CloneResponse> {
+    return request<CloneResponse>('/api/v1/git/clone', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  gitExport(payload: ExportRequest, signal?: AbortSignal): Promise<ExportResponse> {
+    return request<ExportResponse>('/api/v1/git/export', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal,

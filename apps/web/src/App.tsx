@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { BuilderPanel } from './components/BuilderPanel';
 import { CodeInspector } from './components/CodeInspector';
+import { DeployStudio } from './components/DeployStudio';
 import { DiffPreview } from './components/DiffPreview';
 import { EmptyState } from './components/EmptyState';
 import { MacroGraph } from './components/MacroGraph';
@@ -14,6 +15,7 @@ import {
   BuilderIcon,
   CheckIcon,
   CodeIcon,
+  DeployIcon,
   DiffIcon,
   GraphIcon,
   Spinner,
@@ -49,7 +51,7 @@ import type {
   WorkspaceIR,
 } from './types/core-ir';
 
-type TabId = 'graph' | 'uml' | 'code' | 'builder' | 'diff';
+type TabId = 'graph' | 'uml' | 'code' | 'builder' | 'deploy' | 'diff';
 
 const LAST_PATH_KEY = 'kodo:lastPath';
 // Stable empty arrays: useDraftAudit keys its effect on these inputs.
@@ -319,6 +321,28 @@ export default function App() {
     [handleApplied],
   );
 
+  const handleWorkspaceCloned = useCallback(
+    async (localPath: string) => {
+      setPath(localPath);
+      setError(null);
+      setLastApply(null);
+      setRollbackConflict(null);
+      try {
+        const result = await scanWorkspace(localPath, { resetView: true });
+        setNotice(
+          `Cloned repository ready at ${result.rootPath} — ${result.nodes.length} component(s) scanned.`,
+        );
+      } catch (reason) {
+        setError(
+          `The repository was cloned to ${localPath}, but scanning it failed: ${
+            reason instanceof Error ? reason.message : String(reason)
+          }`,
+        );
+      }
+    },
+    [scanWorkspace],
+  );
+
   const handleAiAuditFix = useCallback(
     async (finding: AuditFinding) => {
       if (!workspace || aiFixingId) {
@@ -526,6 +550,20 @@ export default function App() {
                     }}
                   />
                 )}
+                {tab === 'deploy' && (
+                  <DeployStudio
+                    key={`${view.rootPath}-deploy`}
+                    rootPath={view.rootPath}
+                    workspaceName={view.name}
+                    detectedStacks={view.detectedStacks}
+                    revision={workspaceRevision}
+                    onPreviewReady={(preview) => {
+                      setPlan(preview);
+                      setTab('diff');
+                    }}
+                    onWorkspaceCloned={(localPath) => void handleWorkspaceCloned(localPath)}
+                  />
+                )}
                 {tab === 'diff' && workspace && (
                   <DiffPreview
                     workspace={workspace}
@@ -598,6 +636,7 @@ function TabBar({
       icon: BuilderIcon,
       badge: planCount ? String(planCount) : undefined,
     },
+    { id: 'deploy', label: 'Deploy', icon: DeployIcon },
     {
       id: 'diff',
       label: 'Diff Preview',

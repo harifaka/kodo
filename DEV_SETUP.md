@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–5: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot)
+# Kodo — Developer Setup (Phases 1–6: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -25,14 +25,22 @@ air-gapped Ollama/vLLM, IR context packing with a hard character budget, and thr
 workflows (spec → blueprint, audit finding → patch, method → implementation). AI output is always a
 dry-run plan reviewed in the Monaco diff; the model has no write access.
 
+Phase 6 adds the **Deploy Studio**: deterministic non-root multi-stage Dockerfiles, a compose stack
+with healthchecks/`depends_on`/`kodo-net`, a placeholder-only `.env.example`, a local Docker control
+panel (`compose up --build`, container health, filterable logs), a Git clone/export adapter with
+optional GitHub pull requests, and an append-only local audit log. Generated container files flow
+through the same dry-run → Monaco diff → guarded apply → rollback pipeline.
+
 ```
 apps/web (Vite :5173, or Tauri desktop)
         │  HTTP/JSON
         ▼
 services/api-python (FastAPI :8088)      ← Core IR, audit, dry-run + scaffold orchestrator,
-        │  HTTP/JSON                         blueprint store, AI Copilot, guarded apply (only writer)
-        │  HTTPS/JSON (OpenAI-compatible)
+        │  HTTP/JSON                         blueprint store, AI Copilot, Deploy Studio, guarded apply
+        │  HTTPS/JSON (OpenAI-compatible)    (the only writer)
         ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
+        ├──▶ Docker CLI + daemon (compose up/down/ps/logs, list args, shell=False)
+        ├──▶ GitHub API (pull requests, only when you provide a session token)
         ▼
 services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + trivia-preserving /patch
                                             (also re-audits generated WPF slices)
@@ -44,12 +52,12 @@ services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + triv
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Docker Desktop | 4.x+ (Compose v2) | Roslyn analyzer container (recommended) |
+| Docker Desktop | 4.x+ (Compose v2) | Roslyn analyzer container (recommended) and the Deploy Studio Docker control panel |
 | Python | 3.12+ | FastAPI orchestrator, tree-sitter analyzers |
 | .NET SDK | 8.0+ | Building/testing the Roslyn analyzer (`net8.0`, rolls forward to newer runtimes) |
 | Node.js | 20+ | React / Vite frontend |
 | Rust | 1.77+ | **only** for the Tauri desktop build (`rustup`, platform toolchain) |
-| Git | any | cloning the repo |
+| Git | any | cloning the repo, the guarded apply safety check and the Git clone/export adapter |
 
 Windows commands are shown; macOS/Linux equivalents are noted where they differ.
 
@@ -450,6 +458,70 @@ Notes:
 
 ---
 
+### Deploy Studio, Docker control & Git adapter (Phase 6)
+
+The **Deploy** tab turns an audited workspace into a containerised deployment. Nothing is written
+outside the Phase 3c guarded apply: the Docker artifacts are a normal dry-run plan and are reviewed in
+the Monaco diff before Apply/Rollback.
+
+**1. Docker Generator**
+
+| Field | Notes |
+| --- | --- |
+| Stack | `Auto` detects from marker files (`pom.xml`/`build.gradle`, `package.json`, `*.csproj`/`*.sln`/`*.xaml`) |
+| Project name | Becomes the compose project, image and container names |
+| App port | Host/app port used in `EXPOSE`, the healthcheck URL and the compose mapping |
+| Backing services | `PostgreSQL`, `Redis`, `RabbitMQ` — each adds a pinned Alpine image, healthcheck and `depends_on: condition: service_healthy` |
+| Overwrite existing | Off: create-only patches (apply returns `409 FILE_EXISTS`). On: SHA-256 verified replacement |
+
+Generated files:
+
+| File | Contents |
+| --- | --- |
+| `Dockerfile` | Multi-stage, non-root (`USER kodo`), `EXPOSE`, `HEALTHCHECK` — Maven/Temurin 21 JRE Alpine, `node:22-alpine`, or `dotnet/sdk:8.0` → `aspnet:8.0-alpine` |
+| `Dockerfile.sidecar` | WPF only: the WPF UI cannot run in Linux containers, so Kodo emits a warning plus an optional Linux sidecar/API template |
+| `.dockerignore` | VCS, `.env` (keeping `.env.example`), build output and dependency folders |
+| `docker-compose.yml` | App + selected services, `kodo-net` bridge, healthchecks, `${VAR}` interpolation, named volumes |
+| `.env.example` | Placeholders only (`change-me-local-only`) — never real credentials |
+
+`POST /api/v1/deploy/dry-run` accepts
+`{ rootPath, projectName, stack, appPort, backingServices, overwriteExisting }` and returns the standard
+`DryRunResponse` (`isNewFile`, `originalSha256` for overwrites, `warnings`).
+
+**2. Container Control** (`GET /api/v1/deploy/docker/status`, `POST …/up`, `POST …/down`, `GET …/logs`)
+
+- Every Docker command is a list-argument `subprocess.run` with `shell=False`, a validated
+  `rootPath` working directory and a timeout; `docker-compose.yml` must exist inside that root.
+- `status` reports CLI/daemon reachability, compose presence and a parsed `docker compose ps --format
+  json` table; `up` runs `docker compose up -d [--build]`, `down` runs `docker compose down
+  [--volumes]`, `logs` clamps `tail` to 1000 and validates the service name (`[A-Za-z0-9_.-]{1,63}`).
+- The UI shows a daemon status pill, health badges (green/amber/red), a service dropdown, a text
+  filter and a 10-second auto-refresh while the panel is open.
+
+**3. Git & SaaS adapter** (`POST /api/v1/git/clone`, `POST /api/v1/git/export`)
+
+- Clone accepts **HTTPS GitHub/GitLab URLs only** (no `file://`, no `ssh`, no credentials in the URL,
+  no shell metacharacters), shallow-clones (`--depth 1 --single-branch`) into
+  `KODO_WORKSPACES_DIR` (default `~/.kodo/workspaces/<slug>-<shortid>`) and returns
+  `{ localPath, repoUrl, branch }` so the UI scans it immediately.
+- The token is passed as a transient `-c http.extraHeader=Authorization: Basic <base64>` argument for
+  that one Git invocation — never in the URL, never in `.git/config`, never in logs or responses.
+- Export validates the branch name (`[A-Za-z0-9][A-Za-z0-9._/-]*`, no `..`, no `@{`, no `refs/`),
+  checks out/creates the branch, stages and commits, and — only with `createPr` + a GitHub `origin`
+  + a session token — pushes and opens a pull request through `https://api.github.com`. Without a
+  token it completes cleanly as a local branch + commit (`pushed: false`, `prUrl: null`).
+- Point self-hosted Git at the allow-list with `KODO_GIT_ALLOWED_HOSTS=git.mycorp.example`.
+
+**4. Local audit log** (`GET /api/v1/audit-log?limit=100`)
+
+- Append-only JSONL at `KODO_AUDIT_LOG_PATH` (default `~/.kodo/audit.jsonl`) — deliberately outside the
+  analysed repository.
+- Records `apply`, `rollback`, `deploy_up`, `deploy_down`, `git_clone` and `git_export` with
+  `{ timestamp, action, rootPath, summary, filesCount, status }`. Never file contents, never tokens
+  (credential-shaped fragments are redacted before the line is written).
+
+---
+
 ## 4. Desktop app (Tauri v2)
 
 The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
@@ -484,6 +556,9 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 | `KODO_LLM_REASONING_MODEL` | FastAPI process | `deepseek-reasoner` | Reasoning model for spec → blueprint |
 | `KODO_LLM_TIMEOUT_SECONDS` | FastAPI process | `90` | Per-request LLM timeout (raise for slow local models) |
 | `KODO_LLM_MAX_CONTEXT_CHARS` | FastAPI process | `24000` | Hard IR prompt budget (clamped 2 000–200 000) |
+| `KODO_AUDIT_LOG_PATH` | FastAPI process | `~/.kodo/audit.jsonl` | Append-only local audit log (outside the analysed repo) |
+| `KODO_WORKSPACES_DIR` | FastAPI process | `~/.kodo/workspaces` | Destination folder for `POST /api/v1/git/clone` |
+| `KODO_GIT_ALLOWED_HOSTS` | FastAPI process | GitHub + GitLab only | Extra comma-separated hosts allowed for clone/export |
 | `KODO_CSHARP_URL` | Roslyn process | `http://localhost:5050` | Kestrel bind address (overrides `ASPNETCORE_URLS`) |
 | `ASPNETCORE_URLS` | Roslyn container | `http://+:5050` | Container bind address |
 
@@ -495,8 +570,9 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 # Python: parsers, relation resolver, Mermaid generator, audit rules, security,
 # Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up),
 # the guarded apply/rollback suite (needs `git` on PATH), the Phase 4 generator suite
-# (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up)
-# and the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed)
+# (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up),
+# the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed)
+# and the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -585,6 +661,29 @@ from Test Connection (for example `qwen2.5:3b`, not the preset's `deepseek-coder
 schema. Use `deepseek-reasoner` (or another instruction-following model) as the reasoning model, and
 check `detail.details` for the exact field that failed validation.
 
+**Deploy Studio says "Docker CLI missing" or "Daemon offline".** Install Docker Desktop (or the Docker
+engine + Compose v2 plugin) and start it; `docker version` and `docker info` must both succeed in the
+same shell that runs FastAPI. The panel degrades gracefully — scanning, auditing and applying still work.
+
+**`docker compose up` returns `400 NO_COMPOSE_FILE`.** Generate the Docker artifacts, review the diff and
+Apply them first; Kodo only runs compose inside a `rootPath` that actually contains `docker-compose.yml`.
+
+**Deploy apply is rejected with `409 FILE_EXISTS`.** The workspace already has a `Dockerfile`,
+`docker-compose.yml`, `.dockerignore` or `.env.example`. Enable **Overwrite existing** to update them
+through the SHA-256 verified overwrite path (still one atomic, reversible batch).
+
+**Clone is rejected with `400 INVALID_REPO_URL`.** Only `https://github.com/<owner>/<repo>` and
+`https://gitlab.com/<owner>/<repo>` are accepted. SSH remotes, `file://`, embedded credentials and
+shell metacharacters are refused by design. Self-hosted Git needs `KODO_GIT_ALLOWED_HOSTS`.
+
+**Export returns `502 PUSH_FAILED` / `PR_FAILED`.** The push needs a token with `repo` scope, and the
+`origin` remote must be `https://github.com/<owner>/<repo>`. Private repositories and organization
+SSO may require an authorized PAT. Kodo never writes the token to `.git/config`; retry with a fresh one.
+
+**Where did the audit log go?** `~/.kodo/audit.jsonl` (or `KODO_AUDIT_LOG_PATH`). It is append-only,
+outside your repository, and contains metadata only — no file contents, no tokens. If the folder is not
+writable, audit writes are skipped silently rather than failing an apply or a deploy.
+
 **Tauri build fails immediately.** Rust/toolchain prerequisites are missing; the browser workflow
 (`npm run dev`) does not require Rust.
 
@@ -614,14 +713,24 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   prompts.py (system prompts), sources.py (bounded file reads),
                                   workflows.py (spec→blueprint, audit-fix, implement-method), routes.py
   app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
+  app/deploy/                     generator.py (orchestration + detection), spec.py (constants),
+                                  dockerfiles.py (multi-stage templates), compose.py (compose/.dockerignore/
+                                  .env.example), models.py (control-panel responses),
+                                  studio_service.py (dry-run), runner.py (docker compose status/up/down/
+                                  logs, shell=False), routes.py (/deploy/*, /audit-log)
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
                                   git_safety.py (read-only git), apply_service.py (the only writer),
-                                  scaffold_service.py (blueprint → create-only dry-run)
+                                  scaffold_service.py (blueprint → create-only dry-run),
+                                  audit_log.py (append-only JSONL), git_remote.py (clone/export),
+                                  github_client.py (pull requests), git_errors.py
+  app/api/git_routes.py           /git/clone and /git/export endpoints
   tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
                                   guarded apply/rollback, stack generators + 100/100 self-audit,
-                                  AI Copilot (mocked httpx transport)
+                                  AI Copilot (mocked httpx transport), Deploy Studio (mocked Docker CLI
+                                  + GitHub API, real local git)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
+                                  DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
                                   AiSettingsModal, MethodsSection
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)

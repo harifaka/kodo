@@ -71,9 +71,9 @@ export interface TestConnectionResponse {
   models: string[];
 }
 
-/** A reviewed plan handed to the Diff Preview tab (Builder scaffolding or an AI proposal). */
+/** A reviewed plan handed to the Diff Preview tab (Builder scaffolding, Docker or an AI proposal). */
 export interface PlanPreview extends ScaffoldPreview {
-  kind: 'scaffold' | 'ai';
+  kind: 'scaffold' | 'ai' | 'deploy';
   /** AI rationale shown above the diff; never used for scaffolding. */
   explanation?: string;
   modelUsed?: string;

@@ -136,11 +136,46 @@ Builder for human approval. Zero AI writes: the only writer remains the Phase 3c
 
 ---
 
-## Phase 6: Ready-to-Deploy Docker Studio
+## Phase 6: Ready-to-Deploy Docker Studio ✅
 **Goal:** Package audited, edited projects into production-ready containerized deployments.
 
-- [ ] Auto-generate optimized multi-stage `Dockerfile`s per stack (non-root users, minimal runtime images).
-- [ ] Auto-generate `docker-compose.yml` wiring services, databases (PostgreSQL, Redis, etc.), internal networks, healthchecks, and `.env.example`.
-- [ ] Add local **Docker Control Panel** (`compose up --build`, live container status, filterable log streaming).
-- [ ] Add SaaS/Git adapter mode (GitHub/GitLab clone -> analyze -> open Pull Request) and local audit logging.
-- **Definition of Done:** Launch a visually built multi-service project in local Docker with one click and verify green healthchecks across all services.
+**Status:** Delivered — the Deploy Studio generates non-root multi-stage Dockerfiles, a
+healthchecked compose stack and a placeholder-only `.env.example` through the same dry-run → Monaco
+diff → guarded apply → rollback pipeline, controls local Docker Compose, clones/exports Git branches
+and PRs, and records every action in an append-only local audit log.
+
+- [x] Auto-generate optimized multi-stage `Dockerfile`s per stack (non-root users, minimal runtime images).
+  - [x] Spring Boot 3 / Java 21: `maven:3.9-eclipse-temurin-21` build → `eclipse-temurin:21-jre-alpine`
+        runtime, `EXPOSE 8080`, `HEALTHCHECK` on `/actuator/health`.
+  - [x] Node.js / TypeScript: `node:22-alpine` build (`npm run build`) → slim non-root runtime,
+        `EXPOSE 3000`, `HEALTHCHECK` on `/health`.
+  - [x] C# / .NET 8: `dotnet/sdk:8.0` build → `aspnet:8.0-alpine` runtime, `EXPOSE 8080`,
+        `HEALTHCHECK` on `/health`, published-assembly entrypoint.
+  - [x] WPF desktop apps: explicit "cannot run in a Linux container" warning plus an optional
+        sidecar/API `Dockerfile.sidecar` + compose profile template.
+  - [x] Every image creates a `kodo` user/group and drops privileges with `USER kodo`.
+- [x] Auto-generate `docker-compose.yml` wiring services, databases (PostgreSQL, Redis, etc.), internal networks, healthchecks, and `.env.example`.
+  - [x] Selectable `postgres:16-alpine`, `redis:7-alpine`, `rabbitmq:3.13-alpine` with healthchecks,
+        `depends_on: condition: service_healthy`, named volumes and `${VAR}` interpolation.
+  - [x] Internal `kodo-net` bridge network and a `.env.example` holding placeholders only.
+  - [x] Stack-appropriate `.dockerignore` (VCS, `.env`, `target/`, `node_modules/`, `bin/`, `obj/`, …).
+  - [x] `POST /api/v1/deploy/dry-run` returns the standard `DryRunResponse` (`isNewFile`, SHA-256
+        overwrite when `overwriteExisting=true`, warnings).
+- [x] Add local **Docker Control Panel** (`compose up --build`, live container status, filterable log streaming).
+  - [x] `GET /api/v1/deploy/docker/status` (CLI + daemon + compose presence + parsed `compose ps`).
+  - [x] `POST /api/v1/deploy/docker/up` / `down` and `GET /api/v1/deploy/docker/logs` (tail clamped to
+        1000, service name validated, `shell=False`, timeouts, strict `rootPath` containment).
+- [x] Add SaaS/Git adapter mode (GitHub/GitLab clone -> analyze -> open Pull Request) and local audit logging.
+  - [x] `POST /api/v1/git/clone`: HTTPS-only URL validation, `--depth 1` clone into
+        `KODO_WORKSPACES_DIR`, token passed as a transient `http.extraHeader` (never persisted).
+  - [x] `POST /api/v1/git/export`: branch + commit, optional push and GitHub Pull Request via `httpx`.
+  - [x] Append-only JSONL audit log (`~/.kodo/audit.jsonl`, `KODO_AUDIT_LOG_PATH`) recording apply,
+        rollback, deploy and git actions; `GET /api/v1/audit-log?limit=100` newest first.
+- [x] `tests/test_deploy_studio.py`: Dockerfile/compose generation (including the WPF warning), the
+      dry-run → apply → rollback cycle, mocked Docker CLI (status/up/down/logs + sanitization), audit
+      log recording/retrieval without token leakage, and mocked Git clone URL validation plus export
+      with a mocked GitHub PR. All Docker and GitHub calls are mocked — no daemon or network needed.
+- **Definition of Done:** Launch a visually built multi-service project in local Docker with one click
+  and verify green healthchecks across all services. ✅ Generated stacks validate with
+  `docker compose config` (zero syntax errors) on this machine; the Deploy tab previews the files in
+  the Monaco diff, applies them atomically and shows live container health/logs with one click.
