@@ -59,7 +59,8 @@ export function DraftToolbar({
       </div>
 
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-        Drag between cards to connect. Edit fields in the component panel. Nothing is written to disk.
+        Drag between cards to connect. Edit fields in the component panel. Nothing touches disk until you
+        apply the reviewed diff.
       </p>
 
       <div className="mt-2 flex flex-wrap gap-1">

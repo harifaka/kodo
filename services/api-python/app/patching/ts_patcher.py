@@ -150,9 +150,11 @@ def _add_field(
     eol = line_ending(source)
     members = _field_members(body, interface)
     if members:
-        insert_at = line_end(source, members[-1].end_byte)
+        insert_at = line_removal_end(source, members[-1].end_byte)
+        insertion = eol + eol.join(lines) + eol
     else:
         insert_at = body.start_byte + 1
+        insertion = eol + eol.join(lines)
 
     note = None
     if dependency:
@@ -160,7 +162,7 @@ def _add_field(
             f"Added dependency property '{field.name}' to '{_node_name(declaration, source)}'; "
             "constructor wiring must be done by hand."
         )
-    return splice(source, [(insert_at, insert_at, (eol + eol.join(lines)).encode("utf-8"))]), note
+    return splice(source, [(insert_at, insert_at, insertion.encode("utf-8"))]), note
 
 
 def _update_field(

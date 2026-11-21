@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — locally via desktop app or self-hosted/SaaS via Docker.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Phase 3](https://img.shields.io/badge/Status-Phase%203%20(in%20progress)-orange.svg)
+![Status: Phase 3](https://img.shields.io/badge/Status-Phase%203%20delivered-brightgreen.svg)
 
 ---
 
@@ -36,7 +36,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 ---
 
-## Quick Start (Phases 1–3b)
+## Quick Start (Phases 1–3)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -54,8 +54,11 @@ cd apps/web ; npm install ; npm run dev
 
 Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
 read-only Code Inspector. Select a component to draft business-field and annotation edits, then click
-**Preview Diff (Dry-Run)** to review the surgical AST patch in a Monaco side-by-side diff. Nothing is
-written to disk. Desktop mode: `npm run tauri dev` (requires Rust).
+**Preview Diff (Dry-Run)** to review the surgical AST patch in a Monaco side-by-side diff. The
+**Git Safety & Apply** bar shows whether the working tree is clean, lets you pick which files to write,
+and applies them atomically after a SHA-256 freshness check — with a one-click **Undo / Rollback** and
+an automatic re-scan. Dirty or non-Git workspaces require an explicit risk confirmation. Desktop mode:
+`npm run tauri dev` (requires Rust).
 
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
@@ -74,10 +77,10 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 - Detects architectural drift and vibe-code anti-patterns: layer violations (e.g., Controller -> Repository), circular dependencies, God Classes, exposed entities, missing validation and orphan components.
 - Visual error highlighting on the graph + **Architecture Health Score** panel with file jump-to-line links.
 
-### Phase 3: Real-Life Business Field Editor & Safe Round-Trip (in progress)
+### Phase 3: Real-Life Business Field Editor & Safe Round-Trip - Delivered
 - Macro/Micro editing: connect/disconnect relations on the canvas and edit real business fields, types, and annotations (`@Entity`, `@Column`, `[Required]`, etc.) in a keyboard-friendly inspector with stack-aware presets.
 - **Dry-Run Monaco Side-by-Side Diff** for every draft edit, computed in memory with **Tree-sitter byte-offset patching** (Java/TS/JS) and **trivia-preserving Roslyn rewriting** (C#). Hand-written methods and comments stay verbatim.
-- Git dirty-tree safety checks, disk apply, and rollback warnings are the remaining Phase 3c slice.
+- **Guarded apply to disk**: read-only Git status inspection, a dirty-tree / non-Git confirmation gate, SHA-256 optimistic concurrency (stale files abort the whole batch), atomic writes that preserve CRLF/LF, and an in-memory rollback snapshot with one-click undo. Applying re-scans the workspace so the graph, UML and health score immediately reflect the saved code.
 
 ### Phase 4: Multi-Stack Builder & Pattern Blueprints
 - Full stack plugin generators for **Spring Boot**, **C# WPF (MVVM)**, and **Node.js (Express/NestJS)**.

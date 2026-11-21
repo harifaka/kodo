@@ -18,6 +18,8 @@ MAX_AUDIT_NODES = 20_000
 MAX_AUDIT_RELATIONS = 50_000
 # Dry-run patching reads one file into memory and returns proposed text; nothing is written.
 MAX_PATCH_BYTES = 2_000_000
+# Guarded apply writes at most this many files per atomic batch.
+MAX_APPLY_FILES = 200
 
 
 def csharp_analyzer_url() -> str:

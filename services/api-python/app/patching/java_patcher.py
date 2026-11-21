@@ -181,18 +181,20 @@ def _add_field(
 
     fields = _field_members(body)
     if fields:
-        insert_at = line_end(source, fields[-1].end_byte)
+        # Insert after the full line terminator: landing on the "\n" of a CRLF line would
+        # duplicate the "\r" and mix line endings once the patch is written to disk.
+        insert_at = line_removal_end(source, fields[-1].end_byte)
+        insertion = eol + eol.join(lines) + eol
     else:
         insert_at = body.start_byte + 1
-
-    insertion = (eol + eol.join(lines)).encode("utf-8")
+        insertion = eol + eol.join(lines)
     note = None
     if dependency:
         note = (
             f"Added dependency field '{field.name}' to '{_node_name(declaration, source)}'; "
             "constructor or setter injection must be wired by hand."
         )
-    return splice(source, [(insert_at, insert_at, insertion)]), note
+    return splice(source, [(insert_at, insert_at, insertion.encode("utf-8"))]), note
 
 
 def _update_field(

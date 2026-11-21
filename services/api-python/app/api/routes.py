@@ -20,10 +20,26 @@ from app.config import (
 from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
 from app.patching.csharp_patcher import patch_csharp
 from app.patching.java_patcher import patch_java
-from app.patching.models import DryRunRequest, DryRunResponse, PatchResult, summarize
+from app.patching.models import (
+    DryRunRequest,
+    DryRunResponse,
+    PatchResult,
+    sha256_hex,
+    summarize,
+)
 from app.patching.paths import PatchRejected, build_targets
 from app.patching.ts_patcher import patch_script
+from app.services.apply_service import (
+    ApplyRejected,
+    ApplyRequest,
+    ApplyResponse,
+    RollbackRequest,
+    RollbackResponse,
+    apply_patches,
+    rollback,
+)
 from app.services.csharp_client import check_health
+from app.services.git_safety import GitStatus, inspect_git_status
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
 
 router = APIRouter()
@@ -154,6 +170,7 @@ async def dry_run(request: DryRunRequest) -> DryRunResponse:
                 file_path=target.file_path,
                 language=target.language,
                 original_content=target.content,
+                original_sha256=sha256_hex(target.raw),
                 proposed_content=outcome.content,
                 summary=summarize(outcome),
                 warnings=outcome.warnings,
@@ -161,6 +178,40 @@ async def dry_run(request: DryRunRequest) -> DryRunResponse:
         )
 
     return DryRunResponse(patches=patches, warnings=[])
+
+
+@router.get("/api/v1/git/status", response_model=GitStatus, tags=["safety"])
+def git_status(
+    root: str = Query(..., description="Workspace root exactly as returned by /api/v1/scan."),
+) -> GitStatus:
+    """Read-only Git inspection: Kodo never runs a mutating Git command."""
+    try:
+        root_path = Path(root).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Workspace root does not exist.") from exc
+
+    if not root_path.is_dir():
+        raise HTTPException(status_code=400, detail="Workspace root is not a directory.")
+
+    return inspect_git_status(str(root_path))
+
+
+@router.post("/api/v1/apply", response_model=ApplyResponse, tags=["patching"])
+def apply_to_disk(request: ApplyRequest) -> ApplyResponse:
+    """Write reviewed dry-run patches to disk behind Git + SHA-256 + path-containment guards."""
+    try:
+        return apply_patches(request)
+    except ApplyRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
+
+
+@router.post("/api/v1/apply/rollback", response_model=RollbackResponse, tags=["patching"])
+def rollback_apply(request: RollbackRequest) -> RollbackResponse:
+    """Restore the previous bytes of an apply batch (aborts if a file changed, unless forced)."""
+    try:
+        return rollback(request)
+    except ApplyRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
 
 
 @router.get("/api/v1/file", response_model=FileContent, tags=["inspection"])

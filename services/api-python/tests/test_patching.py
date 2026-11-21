@@ -202,6 +202,31 @@ def test_dry_run_patches_typescript_class_and_interface(client: TestClient, tmp_
     assert _snapshot([cls, interface]) == before, "dry-run must not modify the source files"
 
 
+def test_dry_run_preserves_crlf_line_endings(client: TestClient, tmp_path: Path) -> None:
+    _write(tmp_path, "order.ts", TYPESCRIPT_ENTITY.replace("\n", "\r\n"))
+
+    response = client.post(
+        "/api/v1/dry-run",
+        json={
+            "rootPath": str(tmp_path),
+            "operations": [
+                {
+                    "op": "add_field",
+                    "filePath": "order.ts",
+                    "typeName": "Order",
+                    "field": {"name": "total", "type": "number", "annotations": ["@Column()"]},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    proposed = response.json()["patches"][0]["proposedContent"]
+    assert "total: number;" in proposed
+    assert "\r\n" in proposed
+    assert "\n" not in proposed.replace("\r\n", ""), "inserted members must reuse the file's line endings"
+
+
 def test_dry_run_removes_java_annotations_and_fields(client: TestClient, tmp_path: Path) -> None:
     source = """package com.acme.shop.entity;
 

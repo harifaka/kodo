@@ -1,15 +1,19 @@
-# Kodo — Developer Setup (Phases 1–3b: X-Ray, Audit, Draft Editing, Dry-Run Diff)
+# Kodo — Developer Setup (Phases 1–3: X-Ray, Audit, Draft Editing, Dry-Run Diff, Guarded Apply)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
 renders a layer graph, a Mermaid UML diagram, an architecture health score with findings, and a
-read-only Monaco source inspector. Nothing is ever written to the scanned project.
+read-only Monaco source inspector.
 
 Phase 3a adds **macro draft editing**: connect and cut relations on the Macro Graph, with the audit
 re-scoring the draft through a stateless API call. Phase 3b adds the **Micro field editor** (business
 fields, types, annotations and stack-aware presets) and a **stateless AST dry-run** that returns
 proposed file contents for a Monaco side-by-side diff. Draft edits live in the browser; proposed
-contents live in API memory. There is still no disk write.
+contents live in API memory.
+
+Phase 3c adds the only write path in Kodo: a **guarded apply** that writes reviewed patches to disk
+behind strict path containment, a Git working-tree check, SHA-256 optimistic concurrency, atomic
+writes and an in-memory rollback. Every write is explicitly confirmed by a human.
 
 ```
 apps/web (Vite :5173, or Tauri desktop)
@@ -116,9 +120,14 @@ Open <http://127.0.0.1:5173>.
      and `×` in the right panel. Type suggestions and annotation presets follow the component's stack
      (Spring Boot, C#/.NET or Node.js/TS). Node annotations can be added/removed the same way.
    - **Preview Diff (Dry-Run)** — in the **Draft edits** panel opens the **Diff Preview** tab. The left
-     sidebar lists every file the draft would change with line counts and patcher warnings; the main
-     pane shows the original vs proposed content in a Monaco `DiffEditor` (side-by-side or inline).
-     **No file is modified on disk.**
+     sidebar lists every file the draft would change with line counts, patcher warnings and an apply
+     checkbox; the main pane shows the original vs proposed content in a Monaco `DiffEditor`
+     (side-by-side or inline).
+   - **Git Safety & Apply bar** — above the diff, a pill reports `Git clean (branch: main)`,
+     `Git dirty (N modified files)` (click for the file list) or `Not a Git repository`. Choose the
+     files to write, press **Apply N Files to Disk**, and confirm the risk dialog if the tree is dirty
+     or the folder is not a Git repo. On success Kodo clears the draft, re-scans automatically and
+     shows an **Undo / Rollback Last Apply** banner.
    - **UML Diagram** — server-generated Mermaid `classDiagram`. Drag to pan, `Ctrl` + scroll to zoom,
      **Fit** to see everything.
    - **Code Inspector** — read-only Monaco view of the selected component's file.
@@ -195,13 +204,98 @@ plus best-effort relation edits (`add_dependency` / `remove_dependency`).
   the target members/attributes, preserving trivia (comments and hand-written methods stay verbatim).
   If the container is offline the original content is returned unchanged with a warning.
 
-Nothing in this pipeline opens a file for writing. Apply-on-disk, Git dirty-tree checks and rollback
-warnings are intentionally deferred to Phase 3c.
+Nothing in the dry-run pipeline opens a file for writing. Apply-on-disk is Phase 3c and goes through
+a separate, guarded endpoint (below).
+
+### Guarded apply & rollback (Phase 3c)
+
+Every disk write goes through `services/api-python/app/services/apply_service.py`. It is the only
+module allowed to write workspace files, and it refuses to write anything that has not been reviewed.
+
+**Read-only Git inspection.**
+
+```powershell
+curl "http://127.0.0.1:8088/api/v1/git/status?root=C:/work/my-spring-shop"
+# {"isGitRepo":true,"branch":"main","isDirty":false,"dirtyFiles":[],"untrackedCount":0,
+#  "gitAvailable":true,"warning":null}
+```
+
+`git` is invoked with `capture_output=True`, a 5 s timeout, `GIT_TERMINAL_PROMPT=0` and
+`GIT_OPTIONAL_LOCKS=0`, so inspection never refreshes `.git/index` and no mutating subcommand is ever
+run. A missing `git` binary or a non-repo folder returns `isGitRepo: false` plus a `warning` instead of
+an error.
+
+**Apply.** Send the exact `filePath` / `originalSha256` / `proposedContent` triples the dry-run
+returned:
+
+```json
+{
+  "rootPath": "C:/work/my-spring-shop",
+  "patches": [
+    {
+      "filePath": "src/main/java/com/acme/shop/entity/Order.java",
+      "expectedSha256": "<originalSha256 from /api/v1/dry-run>",
+      "proposedContent": "<proposedContent from /api/v1/dry-run>"
+    }
+  ],
+  "allowDirty": false,
+  "allowNonGit": false
+}
+```
+
+Pre-flight runs **before any byte is written**, in this order:
+
+1. Every path is resolved and must stay inside `rootPath` (no absolute paths, no `..`, no symlink
+   escape), must be an existing regular file, and must be ≤ 2 MB (`PATH_REJECTED`, `FILE_TOO_LARGE`,
+   `NOT_UTF8`). The proposed content is size-capped too, and duplicate targets are rejected.
+2. Git status is inspected. A dirty tree without `allowDirty` → HTTP 409 `GIT_DIRTY` (+ `dirtyFiles`).
+   Not a Git repo (or no `git` binary) without `allowNonGit` → HTTP 409 `NOT_A_GIT_REPO`.
+3. Every file's current SHA-256 is compared with `expectedSha256`. A single mismatch aborts the whole
+   batch with HTTP 409 `STALE_FILE` (+ `paths`) and **nothing** is written.
+
+Writes are atomic (sibling temp file → `fsync` → `os.replace`), keep UTF-8 bytes exactly as produced
+(no CRLF/LF translation), and a failure mid-batch restores everything already written. A successful
+response is:
+
+```json
+{ "applyId": "9f2c…", "appliedFiles": ["src/…/Order.java"], "gitStatus": { … }, "warnings": [] }
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8088/api/v1/apply -H "Content-Type: application/json" -d "@apply.json"
+```
+
+**Rollback.** The last 10 apply batches are kept **in API memory** (`applyId`, `rootPath`, timestamp,
+`{filePath, previousContent, writtenSha256}`):
+
+```json
+{ "applyId": "9f2c…", "force": false }
+```
+
+Rollback re-verifies each file against `writtenSha256` and aborts the entire restore on a mismatch with
+HTTP 409 `STALE_FILE` unless `force: true`; it then restores the previous bytes atomically and returns
+`{ "restoredFiles": [...] }`. Batches are single-use and are lost when the API restarts — that is why
+the UI warns before applying to a non-Git folder.
+
+Error responses always carry a structured `detail` object, which the UI maps to a message:
+
+| HTTP | `code` | Meaning |
+| --- | --- | --- |
+| 400/404 | `PATH_REJECTED` | Outside `rootPath`, absolute path, missing file or deleted parent. |
+| 400 | `DUPLICATE_TARGET` | The same file appears twice in one batch. |
+| 400 | `NOT_UTF8` | The file is not valid UTF-8, so a text patch cannot be applied safely. |
+| 409 | `GIT_DIRTY` | Uncommitted changes; retry with `allowDirty: true` after explicit confirmation. |
+| 409 | `NOT_A_GIT_REPO` | Not a Git repo (or no `git`); retry with `allowNonGit: true`. |
+| 409 | `STALE_FILE` | A file changed since the dry-run; re-run the dry-run and review again. |
+| 413 | `FILE_TOO_LARGE` | Current or proposed content exceeds the 2 MB apply limit. |
+| 500 | `WRITE_FAILED` | Disk error; the batch was restored, nothing is half-written. |
 
 Notes:
 
 - Start with a single service/module folder. Limits are 6000 files and 2 MB per file; anything
   skipped is reported in the amber **diagnostics** bar rather than failing the scan.
+- Applying needs `git` on PATH for the safety check unless you explicitly override a non-Git folder;
+  rollback snapshots live in API memory (last 10 applies) and disappear on restart.
 - If the Roslyn service is not running, the scan still succeeds for Java/TS/JS and adds a warning.
 - Use the health pills in the top bar to confirm FastAPI and Roslyn reachability.
 
@@ -210,7 +304,7 @@ Notes:
 ## 4. Desktop app (Tauri v2)
 
 The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
-processes through Phase 3b.
+processes through Phase 3.
 
 ```powershell
 cd apps/web
@@ -244,7 +338,8 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 
 ```powershell
 # Python: parsers, relation resolver, Mermaid generator, audit rules, security,
-# Core IR schema conformance and dry-run patchers (Java/TS always; C# when the container is up)
+# Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up)
+# and the guarded apply/rollback suite (needs `git` on PATH)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -291,6 +386,23 @@ the analyzers actually discovered. Unresolved references, primitives and files o
 produce no edges, so the audit cannot flag them. Narrow the scan to the service/module you care
 about and check the diagnostics bar for skipped or unparsable files.
 
+**The apply button is disabled.** Nothing is selected, the dry-run is still running, or there are no
+file-level patches. Pick at least one file in the diff sidebar.
+
+**Apply is rejected with `GIT_DIRTY` / `NOT_A_GIT_REPO`.** Commit or stash your changes (or work in a
+git-initialised folder) and retry. Kodo only continues if you confirm the risk dialog, which resends
+the request with `allowDirty` / `allowNonGit`.
+
+**Apply is rejected with `STALE_FILE`.** A file changed on disk between the dry-run and the apply, so
+the whole batch was aborted and nothing was written. Press **Re-run Dry-Run**, review the new diff and
+apply again.
+
+**Rollback is rejected with `STALE_FILE`.** A file changed after the apply. Re-scan the workspace, or
+use the **Force rollback** action (the API's `force: true`) if you really want to restore the snapshot.
+
+**Rollback says `UNKNOWN_APPLY`.** The API keeps only the last 10 applies in memory and loses them on
+restart. Anything not covered by a snapshot must be reverted with Git.
+
 **A finding seems wrong.** Findings are deterministic: the same tree always produces the same ids.
 Compare `workspace.audit.findings[].nodeIds` / `edgeKeys` with the graph, and adjust the rule
 thresholds in `services/api-python/app/audit/rules/` if the guideline is too strict for your project.
@@ -306,7 +418,7 @@ attempt a source build and require a C compiler.
 ## 8. Repository layout
 
 ```
-.cursorrules                      Architecture rules (Core IR, layers, zero-write Phases 1-3b)
+.cursorrules                      Architecture rules (Core IR, layers, guarded-write Phase 3c)
 docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
 packages/core-ir/schema.json      Canonical JSON Schema contract
 services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
@@ -316,8 +428,10 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
   app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
-  app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py
-  tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching
+  app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
+                                  git_safety.py (read-only git), apply_service.py (the only writer)
+  tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
+                                  guarded apply/rollback
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore
   src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)

@@ -38,10 +38,10 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
 
 ---
 
-## Phase 3: Real-Life Business Field Editor & Safe Round-Trip
+## Phase 3: Real-Life Business Field Editor & Safe Round-Trip ✅
 **Goal:** Safely edit real business models (fields, types, validations, relations) without overwriting hand-written business logic.
 
-**Status:** In progress — Macro editing, Micro field/annotation editing, AST dry-run patching and the Monaco diff are delivered. Everything is computed in memory: no file is written to disk yet.
+**Status:** Delivered — macro editing, micro field/annotation editing, stateless AST dry-run patching, the Monaco diff, and guarded apply-to-disk with Git safety, SHA-256 optimism and rollback.
 
 - [x] Enable interactive Macro editing (connect/disconnect services and dependencies on the React Flow canvas).
   - [x] Client-side **relation draft** (add/cut) with per-workspace reset and an unsaved-changes indicator.
@@ -53,10 +53,15 @@ This roadmap tracks the iterative delivery of **Kodo** from a read-only architec
   - [x] Tree-sitter byte-offset edits for Java fields/annotations/imports and TS/JS properties/decorators.
   - [x] Trivia-preserving Roslyn rewrites behind a stateless C# `POST /patch` endpoint.
 - [x] Implement **Dry-Run Engine** paired with **Monaco Side-by-Side Diff** approval before any disk write.
-  - [x] `POST /api/v1/dry-run` groups operations by file and returns `originalContent` / `proposedContent` without touching disk.
-  - [x] Diff Preview tab with per-file change counts, patcher warnings, side-by-side/inline toggle and a dry-run banner.
-- [ ] Add Git dirty-working-tree safety checks, disk apply and rollback warnings (Phase 3c).
-- **Definition of Done:** Add 3 new business fields and validations via the UI, review and approve the diff in Monaco, apply it safely, and confirm the target project still compiles cleanly.
+  - [x] `POST /api/v1/dry-run` groups operations by file and returns `originalContent` / `proposedContent` plus an `originalSha256` token without touching disk.
+  - [x] Diff Preview tab with per-file change counts, patcher warnings, side-by-side/inline toggle and per-file apply selection.
+- [x] Add Git dirty-working-tree safety checks, disk apply and rollback (Phase 3c).
+  - [x] Read-only `GET /api/v1/git/status` (`isGitRepo`, `branch`, `isDirty`, `dirtyFiles`, `untrackedCount`, `gitAvailable`, `warning`); never mutates the repository.
+  - [x] `POST /api/v1/apply` pre-flight: strict path containment, existing regular file under 2 MB, Git gate (`GIT_DIRTY` / `NOT_A_GIT_REPO` 409 unless explicitly overridden) and SHA-256 optimistic concurrency (`STALE_FILE` 409 aborts the whole batch).
+  - [x] Atomic writes (sibling temp file + `os.replace`, UTF-8 without newline translation) with a mid-batch restore, plus a bounded in-memory rollback snapshot of the last 10 applies.
+  - [x] `POST /api/v1/apply/rollback` restores the previous bytes, verifying `writtenSha256` first (`force: true` to override).
+  - [x] Frontend **Git Safety & Apply bar** (clean/dirty/non-Git pills), per-file checkboxes, risk confirmation modal for dirty/non-Git applies, `STALE_FILE` recovery, and an **Undo / Rollback Last Apply** banner that re-scans automatically.
+- **Definition of Done:** Add 3 new business fields and validations via the UI, review and approve the diff in Monaco, apply it safely, and confirm the target project still compiles cleanly. ✅ verified on a git-initialised Spring Boot project: apply changed the file on disk, the re-scan showed the new health score, and rollback restored the exact original bytes with a clean `git status`.
 
 ---
 

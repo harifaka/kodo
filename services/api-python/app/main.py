@@ -1,4 +1,4 @@
-"""Kodo FastAPI orchestrator — scan, deterministic audit, and zero-write dry-run patching."""
+"""Kodo FastAPI orchestrator — scan, deterministic audit, dry-run patching and guarded apply."""
 
 from __future__ import annotations
 
@@ -12,9 +12,10 @@ from app.config import DEFAULT_API_PORT, cors_origins
 app = FastAPI(
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–3b. "
+        "Kodo Architecture Control Center — Phases 1–3. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
-        "audit, and computes dry-run AST patches in memory without ever writing to disk."
+        "audit, computes dry-run AST patches in memory, and applies reviewed patches to disk behind "
+        "path-containment, SHA-256 optimistic concurrency and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -39,6 +40,9 @@ async def root() -> dict[str, str]:
         "scan": "POST /api/v1/scan",
         "audit": "POST /api/v1/audit",
         "dryRun": "POST /api/v1/dry-run",
+        "gitStatus": "GET /api/v1/git/status",
+        "apply": "POST /api/v1/apply",
+        "rollback": "POST /api/v1/apply/rollback",
     }
 
 

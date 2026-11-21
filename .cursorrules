@@ -24,22 +24,24 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - `apps/web` MUST NOT parse source code, infer architecture, or know about Roslyn/Tree-sitter internals.
   It renders the Core IR and reads file text through `GET /api/v1/file`.
 - `services/api-python` is the only orchestrator. It owns scanning, IR assembly, relation resolution,
-  Mermaid generation, warning aggregation, and the `/api/v1/dry-run` patch plan. It calls the C#
-  analyzer's `/patch` endpoint but never writes the returned text to disk.
+  Mermaid generation, warning aggregation, the `/api/v1/dry-run` patch plan, and — for Phase 3c — the
+  guarded `/api/v1/apply` + `/api/v1/apply/rollback` write path. It calls the C# analyzer's `/patch`
+  endpoint and never returns that text to disk without the apply pre-flight.
 - `services/analyzer-csharp` is a pure, stateless AST service. It knows nothing about the frontend,
   Mermaid, or orchestration. It never reads or writes workspace files; it receives file text and
   returns Core IR or proposed text.
 - No shared code between services via file imports. Only the JSON contract crosses process boundaries.
 
-## 3. Zero-write phases (hard rule)
+## 3. Write policy (hard rule)
 
 Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing) and 3b (dry-run AST patching) are
-**100% zero-write** with respect to user source code.
+**100% zero-write** with respect to user source code. Phase 3c adds exactly one, tightly guarded
+write path (see §3c). Anything else stays read-only.
 
-Forbidden until explicitly scoped in Phase 3c:
-- Writing, patching, moving, or deleting user source files.
-- Automatic apply / "fix it for me" disk mutations, including applying a dry-run result.
-- Git operations on the user's repository (checkout, reset, stash, commit).
+Forbidden:
+- Writing, patching, moving, or deleting user source files outside the guarded apply service.
+- Automatic apply / "fix it for me" disk mutations without an explicit user confirmation.
+- Mutating Git state on the user's repository (add, commit, checkout, reset, stash, tag, clean).
 - LLM/DeepSeek clients of any kind.
 - Dockerfile / compose generation for the scanned workspace.
 
@@ -49,8 +51,11 @@ Allowed:
 - Running the deterministic audit engine over the Core IR and returning `WorkspaceIR.audit`.
 - Applying AST rewrite operations to **in-memory** syntax trees/text (Tree-sitter byte offsets for
   Java/TS/JS, Roslyn syntax rewriting for C#) and returning `originalContent` / `proposedContent`
-  through `POST /api/v1/dry-run`. The returned text is never written by Kodo.
-- Serving cached in-memory analysis results to the UI.
+  through `POST /api/v1/dry-run`. The returned text is never written by the dry-run itself.
+- Inspecting Git status read-only through `app/services/git_safety.py` (`GIT_OPTIONAL_LOCKS=0`, no
+  mutating subcommands).
+- Writing reviewed patches through `app/services/apply_service.py` only (§3c).
+- Serving cached in-memory analysis results and rollback snapshots to the UI.
 
 ## 3a. Audit engine rules
 
@@ -80,6 +85,36 @@ Allowed:
 - Patching is bounded like inspection: strict path containment, 2 MB per file, and a bounded number
   of operations per request.
 
+## 3c. Safe-write rules (apply to disk)
+
+- **Every disk write goes through `services/api-python/app/services/apply_service.py`.** No route,
+  service, analyzer or patcher may call `open(..., "w")`, `Path.write_text`, `Path.write_bytes`,
+  `shutil` or `os.replace` on workspace files. The only writer is `_atomic_write()`.
+- Entry point is `POST /api/v1/apply` (and `POST /api/v1/apply/rollback`). Both are synchronous
+  FastAPI handlers so blocking Git/file I/O runs on the threadpool, and both take a module lock so
+  applies and rollbacks never interleave.
+- Pre-flight happens **before any byte is written**, in this order:
+  1. Resolve each `filePath` and reject absolute paths, `..`, symlink escapes, non-files and files
+     over the 2 MB cap (`PATH_REJECTED`, `FILE_TOO_LARGE`, `NOT_UTF8`).
+  2. Inspect Git status read-only. Dirty tree without `allowDirty` → HTTP 409 `GIT_DIRTY` (with
+     `dirtyFiles`). Not a repo / no `git` binary without `allowNonGit` → HTTP 409 `NOT_A_GIT_REPO`.
+  3. Verify every file's current SHA-256 against the `expectedSha256` the dry-run returned. Any
+     mismatch aborts the **entire** batch with HTTP 409 `STALE_FILE` (with `paths`). Partial applies
+     are forbidden.
+- Dry-run responses must include `originalSha256` (SHA-256 of the exact bytes read from disk), and the
+  UI must echo it back untouched. Never re-hash a stale string client-side.
+- Writes are atomic: sibling temp file → `fsync` → `os.replace`, bytes written as UTF-8 **without**
+  newline translation (the patchers preserve the file's own CRLF/LF style). A failure mid-batch
+  restores every file already written in that batch.
+- Keep an in-memory rollback snapshot (`applyId`, `rootPath`, timestamp, `{filePath, previousContent,
+  writtenSha256}`) bounded to the last 10 batches. `apply/rollback` verifies the files still match
+  `writtenSha256` before restoring and aborts the whole rollback on a mismatch unless `force: true`.
+  Batches are single-use and lost on restart; the UI must say so before a non-Git apply.
+- Whenever a file is applied or rolled back, the UI clears the draft and re-runs `POST /api/v1/scan`
+  so the graph, UML and health score reflect disk state immediately.
+- Never add "apply on save", auto-apply or watch-mode writes. A human must press the Apply button and
+  acknowledge any dirty/non-Git override explicitly.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -88,8 +123,8 @@ Allowed:
   scanned `rootPath` the user supplied.
 - Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv` when walking.
 - Enforce file count / file size limits and report them as `WorkspaceIR.warnings`, not exceptions.
-- Dry-run patching repeats the containment check per operation, rejects absolute paths and `..`,
-  enforces the 2 MB cap, and reads each file once into memory. No phase through 3b writes to disk.
+- Dry-run patching and apply repeat the containment check per file, reject absolute paths and `..`,
+  and enforce the 2 MB cap. Apply additionally re-checks containment on every rollback target.
 
 ## 5. Degradation, never crashing
 
@@ -118,4 +153,9 @@ Allowed:
   read-only.
 - For patching changes: `docker compose up -d --build analyzer-csharp`, verify `GET /health` and
   `POST /patch`, then scan -> edit a field -> **Preview Diff (Dry-Run)** and confirm the proposed
-  content preserves hand-written methods/comments **and** the source file's bytes/mtime are unchanged.
+  content preserves hand-written methods/comments.
+- For apply changes: run the flow against a **git-initialised** temp project and confirm, in order,
+  dry-run -> apply changes the file on disk and preserves business methods, the re-scan reflects the
+  new health score, a dirty tree or a non-Git folder is rejected with 409 until overridden, an
+  externally modified file yields 409 `STALE_FILE` with **no** file written, and rollback restores the
+  original bytes exactly (`git status` clean again).

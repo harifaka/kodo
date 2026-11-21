@@ -6,17 +6,35 @@ import type {
   HealthResponse,
   WorkspaceIR,
 } from '../types/core-ir';
-import type { DryRunResponse, PatchOperation } from '../types/patching';
+import type {
+  ApplyRequest,
+  ApplyResponse,
+  DryRunResponse,
+  GitStatus,
+  PatchOperation,
+  RollbackResponse,
+} from '../types/patching';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
 
 export class ApiError extends Error {
   readonly status: number;
+  /** Structured error code for apply/rollback rejections (e.g. `STALE_FILE`). */
+  readonly code?: string;
+  /** Raw structured `detail` payload returned by the API, when it is an object. */
+  readonly detail?: Record<string, unknown>;
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    detail?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -32,11 +50,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const detail = await response.json().catch(() => null);
-    const message =
-      typeof detail?.detail === 'string'
-        ? detail.detail
-        : `Request failed with status ${response.status}`;
+    const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail = body?.detail;
+
+    if (detail && typeof detail === 'object') {
+      const record = detail as Record<string, unknown>;
+      const message =
+        typeof record.message === 'string' ? record.message : `Request failed with status ${response.status}`;
+      const code = typeof record.code === 'string' ? record.code : undefined;
+      throw new ApiError(message, response.status, code, record);
+    }
+
+    const message = typeof detail === 'string' ? detail : `Request failed with status ${response.status}`;
     throw new ApiError(message, response.status);
   }
 
@@ -79,6 +104,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ rootPath, operations }),
       signal,
+    });
+  },
+
+  gitStatus(root: string, signal?: AbortSignal): Promise<GitStatus> {
+    const params = new URLSearchParams({ root });
+    return request<GitStatus>(`/api/v1/git/status?${params.toString()}`, { signal });
+  },
+
+  apply(payload: ApplyRequest): Promise<ApplyResponse> {
+    return request<ApplyResponse>('/api/v1/apply', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  rollback(applyId: string, force = false): Promise<RollbackResponse> {
+    return request<RollbackResponse>('/api/v1/apply/rollback', {
+      method: 'POST',
+      body: JSON.stringify({ applyId, force }),
     });
   },
 };

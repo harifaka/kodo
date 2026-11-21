@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
@@ -50,6 +51,8 @@ class PatchResult(PatchModel):
     file_path: str
     language: str
     original_content: str
+    # Optimistic-concurrency token: the client must echo this back on apply.
+    original_sha256: str
     proposed_content: str
     summary: str
     warnings: list[str] = Field(default_factory=list)
@@ -67,6 +70,11 @@ class PatchOutcome:
     content: str
     applied: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+def sha256_hex(payload: bytes) -> str:
+    """SHA-256 hex digest of the exact bytes read from / written to disk."""
+    return hashlib.sha256(payload).hexdigest()
 
 
 def summarize(outcome: PatchOutcome) -> str:

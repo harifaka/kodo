@@ -7,10 +7,10 @@ import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { TopBar } from './components/TopBar';
 import { UmlDiagram } from './components/UmlDiagram';
 import { WarningsBar } from './components/WarningsBar';
-import { AlertIcon, CodeIcon, DiffIcon, GraphIcon, UmlIcon } from './components/icons';
+import { AlertIcon, CheckIcon, CodeIcon, DiffIcon, GraphIcon, Spinner, UmlIcon } from './components/icons';
 import { useDraftAudit } from './hooks/useDraftAudit';
 import { useHealth } from './hooks/useHealth';
-import { api } from './lib/api';
+import { ApiError, api } from './lib/api';
 import {
   addField,
   addNodeAnnotation,
@@ -51,6 +51,14 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('graph');
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lastApply, setLastApply] = useState<{
+    applyId: string;
+    appliedFiles: string[];
+    rootPath: string;
+  } | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rollbackConflict, setRollbackConflict] = useState<string[] | null>(null);
   const [previewRequest, setPreviewRequest] = useState(0);
   const health = useHealth();
 
@@ -151,6 +159,26 @@ export default function App() {
     [view],
   );
 
+  const scanWorkspace = useCallback(
+    async (target: string, options: { resetView: boolean }): Promise<WorkspaceIR> => {
+      const result = await api.scan(target);
+      setWorkspace(result);
+      setDraft(emptyDraft());
+      if (options.resetView) {
+        setSelectedId(null);
+        setTab('graph');
+      } else {
+        setSelectedId((current) =>
+          current && result.nodes.some((node) => node.id === current) ? current : null,
+        );
+      }
+      window.localStorage.setItem(LAST_PATH_KEY, target);
+      health.refresh();
+      return result;
+    },
+    [health.refresh],
+  );
+
   const handleScan = useCallback(async () => {
     const target = path.trim();
     if (!target || scanning) {
@@ -160,19 +188,84 @@ export default function App() {
     setScanning(true);
     setError(null);
     try {
-      const result = await api.scan(target);
-      setWorkspace(result);
-      setDraft(emptyDraft());
-      setSelectedId(null);
-      setTab('graph');
-      window.localStorage.setItem(LAST_PATH_KEY, target);
-      health.refresh();
+      const result = await scanWorkspace(target, { resetView: true });
+      // A manual scan of a different folder makes the previous rollback banner meaningless.
+      if (lastApply && lastApply.rootPath !== result.rootPath) {
+        setLastApply(null);
+        setRollbackConflict(null);
+        setNotice(null);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setScanning(false);
     }
-  }, [path, scanning, health.refresh]);
+  }, [path, scanning, scanWorkspace, lastApply]);
+
+  const handleApplied = useCallback(
+    async (applyId: string, appliedFiles: string[]) => {
+      const target = workspace?.rootPath ?? path.trim();
+      setLastApply({ applyId, appliedFiles, rootPath: target });
+      setRollbackConflict(null);
+      setNotice(null);
+      setError(null);
+      if (!target) {
+        return;
+      }
+      try {
+        await scanWorkspace(target, { resetView: false });
+      } catch (reason) {
+        setError(
+          `Applied ${appliedFiles.length} file(s) to disk, but the automatic re-scan failed: ${
+            reason instanceof Error ? reason.message : String(reason)
+          }`,
+        );
+      }
+    },
+    [path, scanWorkspace, workspace],
+  );
+
+  const handleRollback = useCallback(
+    async (force: boolean) => {
+      const target = workspace?.rootPath ?? path.trim();
+      if (!lastApply || rollingBack) {
+        return;
+      }
+
+      setRollingBack(true);
+      setRollbackConflict(null);
+      setError(null);
+      try {
+        const result = await api.rollback(lastApply.applyId, force);
+        setLastApply(null);
+        setNotice(
+          `Rolled back ${result.restoredFiles.length} file(s); the original bytes are back on disk and the workspace was re-scanned.`,
+        );
+        if (target) {
+          await scanWorkspace(target, { resetView: false });
+        }
+      } catch (reason) {
+        if (reason instanceof ApiError && reason.code === 'STALE_FILE') {
+          const paths = Array.isArray(reason.detail?.paths)
+            ? (reason.detail?.paths as unknown[]).map(String)
+            : [];
+          setRollbackConflict(paths.length > 0 ? paths : ['(changed on disk)']);
+        } else {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      } finally {
+        setRollingBack(false);
+      }
+    },
+    [lastApply, path, rollingBack, scanWorkspace, workspace],
+  );
+
+  const handleAppliedChange = useCallback(
+    (applyId: string, appliedFiles: string[]) => {
+      void handleApplied(applyId, appliedFiles);
+    },
+    [handleApplied],
+  );
 
   const openInspector = useCallback(() => setTab('code'), []);
 
@@ -198,6 +291,68 @@ export default function App() {
           >
             dismiss
           </button>
+        </div>
+      )}
+
+      {notice && (
+        <div className="flex items-start gap-2 border-b border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-1.5">
+          <CheckIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          <p className="text-[11px] leading-relaxed text-emerald-200">{notice}</p>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="ml-auto shrink-0 rounded px-1.5 text-[10px] text-emerald-300/70 transition hover:text-emerald-200"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
+      {lastApply && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-1.5">
+          <CheckIcon className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          <p className="text-[11px] leading-relaxed text-emerald-200">
+            Applied {lastApply.appliedFiles.length} file
+            {lastApply.appliedFiles.length === 1 ? '' : 's'} to disk · workspace re-scanned
+          </p>
+          {rollbackConflict && (
+            <span className="text-[10px] leading-relaxed text-amber-300">
+              Rollback blocked — {rollbackConflict.join(', ')} changed since the apply.
+            </span>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {rollbackConflict ? (
+              <button
+                type="button"
+                onClick={() => void handleRollback(true)}
+                disabled={rollingBack}
+                className="flex items-center gap-1 rounded-md border border-amber-400/40 px-2 py-0.5 text-[10px] text-amber-200 transition enabled:hover:bg-amber-400/10 disabled:opacity-50"
+              >
+                {rollingBack ? <Spinner className="h-3 w-3" /> : null}
+                Force rollback
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleRollback(false)}
+                disabled={rollingBack}
+                className="flex items-center gap-1 rounded-md border border-emerald-400/40 px-2 py-0.5 text-[10px] text-emerald-200 transition enabled:hover:bg-emerald-400/10 disabled:opacity-50"
+              >
+                {rollingBack ? <Spinner className="h-3 w-3" /> : null}
+                {rollingBack ? 'Rolling back…' : 'Undo / Rollback Last Apply'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setLastApply(null);
+                setRollbackConflict(null);
+              }}
+              className="rounded px-1.5 text-[10px] text-emerald-300/70 transition hover:text-emerald-200"
+            >
+              dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -246,7 +401,12 @@ export default function App() {
                 )}
                 {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}
                 {tab === 'diff' && workspace && (
-                  <DiffPreview workspace={workspace} draft={draft} requestId={previewRequest} />
+                  <DiffPreview
+                    workspace={workspace}
+                    draft={draft}
+                    requestId={previewRequest}
+                    onApplied={handleAppliedChange}
+                  />
                 )}
               </div>
             </>

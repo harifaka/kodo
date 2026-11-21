@@ -34,16 +34,17 @@ class PatchTarget:
     absolute_path: Path
     language: str
     content: str
+    raw: bytes
     operations: list[PatchOperation]
 
 
 def build_targets(root_path: str, operations: list[PatchOperation]) -> list[PatchTarget]:
-    root = _resolve_root(root_path)
+    root = resolve_root(root_path)
     grouped: dict[Path, list[PatchOperation]] = {}
     display: dict[Path, str] = {}
 
     for operation in operations:
-        target = _resolve_member(root, operation.file_path)
+        target = resolve_member(root, operation.file_path)
         if target not in grouped:
             grouped[target] = []
             display[target] = target.relative_to(root).as_posix()
@@ -60,27 +61,23 @@ def build_targets(root_path: str, operations: list[PatchOperation]) -> list[Patc
             )
 
         try:
-            size = target.stat().st_size
+            raw = target.read_bytes()
         except OSError as exc:
             raise PatchRejected(400, f"File is not readable: {display[target]}") from exc
 
-        if size > MAX_PATCH_BYTES:
+        if len(raw) > MAX_PATCH_BYTES:
             raise PatchRejected(
                 413,
                 f"{display[target]} is larger than the {MAX_PATCH_BYTES // 1_000_000} MB dry-run limit.",
             )
-
-        try:
-            content = target.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            raise PatchRejected(400, f"File is not readable: {display[target]}") from exc
 
         targets.append(
             PatchTarget(
                 file_path=display[target],
                 absolute_path=target,
                 language=language,
-                content=content,
+                content=raw.decode("utf-8", errors="replace"),
+                raw=raw,
                 operations=ops,
             )
         )
@@ -88,7 +85,7 @@ def build_targets(root_path: str, operations: list[PatchOperation]) -> list[Patc
     return targets
 
 
-def _resolve_root(raw_root: str) -> Path:
+def resolve_root(raw_root: str) -> Path:
     try:
         root = Path(raw_root).expanduser().resolve(strict=True)
     except OSError as exc:
@@ -98,7 +95,7 @@ def _resolve_root(raw_root: str) -> Path:
     return root
 
 
-def _resolve_member(root: Path, raw_path: str) -> Path:
+def resolve_member(root: Path, raw_path: str) -> Path:
     if not raw_path or "\x00" in raw_path:
         raise PatchRejected(400, "filePath is required for every operation.")
 
