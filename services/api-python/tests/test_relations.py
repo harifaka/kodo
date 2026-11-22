@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from app.analyzers.common import BASE_RELATION, ReferenceCandidate
-from app.models.ir import ComponentNode, ComponentRelation, Layer, NodeKind, RelationType, Stack
+from app.models.ir import (
+    ComponentNode,
+    ComponentRelation,
+    Layer,
+    NodeKind,
+    RelationType,
+    Stack,
+)
 from app.services.relations import merge_relations, resolve_relations
 
 

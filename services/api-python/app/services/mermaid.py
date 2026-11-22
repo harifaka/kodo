@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 
 from app.analyzers.common import strip_generics
-from app.models.ir import ComponentField, ComponentMethod, ComponentNode, ComponentRelation, Layer
+from app.models.ir import (
+    ComponentField,
+    ComponentMethod,
+    ComponentNode,
+    ComponentRelation,
+    Layer,
+)
 
 LAYER_ORDER: tuple[Layer, ...] = (
     Layer.CONTROLLER,

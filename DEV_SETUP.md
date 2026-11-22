@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–6: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio)
+# Kodo — Developer Setup (Phases 1–7: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -31,19 +31,27 @@ panel (`compose up --build`, container health, filterable logs), a Git clone/exp
 optional GitHub pull requests, and an append-only local audit log. Generated container files flow
 through the same dry-run → Monaco diff → guarded apply → rollback pipeline.
 
+Phase 7 makes Kodo **Docker-first**: the Tauri desktop wrapper is deleted, `apps/web` and
+`services/api-python` gain multi-stage non-root images, and one `docker compose up --build` runs the
+whole stack behind an Nginx reverse proxy (same-origin `/api/` + `/health`) with health-gated startup.
+GitHub Actions then tests everything (`pytest`, `ruff`, `dotnet build`, `npm run build`, Docker build
+matrix) and publishes semver/`latest`/sha images to GHCR.
+
 ```
-apps/web (Vite :5173, or Tauri desktop)
-        │  HTTP/JSON
-        ▼
-services/api-python (FastAPI :8088)      ← Core IR, audit, dry-run + scaffold orchestrator,
-        │  HTTP/JSON                         blueprint store, AI Copilot, Deploy Studio, guarded apply
-        │  HTTPS/JSON (OpenAI-compatible)    (the only writer)
-        ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
-        ├──▶ Docker CLI + daemon (compose up/down/ps/logs, list args, shell=False)
-        ├──▶ GitHub API (pull requests, only when you provide a session token)
-        ▼
-services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + trivia-preserving /patch
-                                            (also re-audits generated WPF slices)
+Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root nginx)
+                     │  same-origin: /api/ and /health
+                     ▼
+             services/api-python (FastAPI :8088)   ← Core IR, audit, dry-run + scaffold orchestrator,
+                     │  HTTP/JSON                    blueprint store, AI Copilot, Deploy Studio,
+                     │  HTTPS/JSON (OpenAI-compatible) guarded apply (the only writer)
+                     ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
+                     ├──▶ Docker CLI + daemon (compose up/down/ps/logs, list args, shell=False)
+                     ├──▶ GitHub API (pull requests, only when you provide a session token)
+                     ▼
+             services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + /patch
+                                                         (also re-audits generated WPF slices)
+
+Non-Docker dev: Vite :5173 ──HTTP/JSON──▶ FastAPI :8088 ──▶ Roslyn :5050 (the same three processes).
 ```
 
 ---
@@ -52,18 +60,58 @@ services/analyzer-csharp (Roslyn :5050)  ← stateless C# / .NET analysis + triv
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Docker Desktop | 4.x+ (Compose v2) | Roslyn analyzer container (recommended) and the Deploy Studio Docker control panel |
-| Python | 3.12+ | FastAPI orchestrator, tree-sitter analyzers |
+| Docker Desktop | 4.x+ (Compose v2.24+) | **Primary workflow:** the whole Kodo stack, plus the Deploy Studio control panel |
+| Python | 3.12+ | Non-Docker dev: FastAPI orchestrator, tree-sitter analyzers |
 | .NET SDK | 8.0+ | Building/testing the Roslyn analyzer (`net8.0`, rolls forward to newer runtimes) |
-| Node.js | 20+ | React / Vite frontend |
-| Rust | 1.77+ | **only** for the Tauri desktop build (`rustup`, platform toolchain) |
+| Node.js | 22 (20+ works) | Non-Docker dev: React / Vite frontend |
 | Git | any | cloning the repo, the guarded apply safety check and the Git clone/export adapter |
 
 Windows commands are shown; macOS/Linux equivalents are noted where they differ.
 
 ---
 
-## 2. Start the three processes
+## 2. Start the full stack (Docker, primary)
+
+```powershell
+docker compose up --build          # web + api-python + analyzer-csharp, health-gated
+```
+
+Open **<http://localhost:3000>**. Nginx serves the static Vite bundle and proxies `/api/…` and
+`/health` to FastAPI on the internal `kodo-net` network, so the browser only ever talks to one origin
+(no CORS, same behaviour on localhost and any SaaS domain).
+
+- `web` starts only after `api-python` is healthy, and `api-python` only after `analyzer-csharp` is
+  healthy (`depends_on: condition: service_healthy`).
+- `KODO_WEB_PORT` changes the published UI port (default `3000`).
+- Containers can only read mounted folders. Set `KODO_LOCAL_PROJECTS_DIR` in `.env` to expose a host
+  folder as `/projects` (default: the committed empty `./.kodo-empty`), then scan `/projects` or
+  `/projects/<subfolder>` in the UI.
+- Persistent state lives in the `kodo-data` volume (`/data/kodo`: audit log + cloned workspaces).
+  `docker compose down -v` deletes it.
+
+Check and inspect:
+
+```powershell
+docker compose ps                                  # all three "healthy"
+curl http://localhost:3000/health                   # FastAPI through Nginx, Roslyn reachable:true
+docker compose logs -f api-python
+```
+
+`docker-compose.override.yml.example` documents extra host mounts and publishing FastAPI on `:8088`
+for `/docs`.
+
+Production hosts pull prebuilt GHCR images instead of building:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d   # only :3000 is published
+```
+
+---
+
+## 3. Start the three processes (non-Docker developer workflow)
+
+This is the fastest edit/refresh loop and is fully supported — Docker is the primary workflow, not the
+only one.
 
 ### Terminal 1 — C# Roslyn analyzer (:5050, Docker)
 
@@ -123,10 +171,10 @@ Open <http://127.0.0.1:5173>.
 
 ---
 
-## 3. Run the first scan
+## 4. Run the first scan
 
-1. Paste an **absolute path** into the folder field, e.g. `C:\work\my-spring-shop` or
-   `C:\work\MyWpfApp`.
+1. Paste an **absolute path** into the folder field, e.g. `C:\work\my-spring-shop` (non-Docker) or
+   `/projects/my-spring-shop` (Docker with a bind mount), or `C:\work\MyWpfApp`.
 2. Click **Scan Project** (or press Enter).
 3. Explore:
    - **Macro Graph** — layer-grouped React Flow map. Click a node to inspect it in the right panel;
@@ -522,34 +570,64 @@ Generated files:
 
 ---
 
-## 4. Desktop app (Tauri v2)
+## 5. Docker packaging, Compose profiles & CI
 
-The desktop shell wraps the same frontend. The API and Roslyn services remain separate local
-processes through Phase 4.
+**Images** (all multi-stage, minimal, non-root):
+
+| Image | Build | Runtime |
+| --- | --- | --- |
+| `kodo-web` | `node:22-alpine`, `npm ci` + `npm run build` | `nginxinc/nginx-unprivileged:1.27-alpine`, user `nginx` (uid 101), :8080, SPA fallback + reverse proxy |
+| `kodo-api-python` | `python:3.12-slim` + `/opt/venv` | `python:3.12-slim`, user `kodo` (uid 10001), `git` + `curl`, writable `/data/kodo`, :8088 |
+| `kodo-analyzer-csharp` | `dotnet/sdk:8.0`, `dotnet publish` | `aspnet:8.0-alpine`, `$APP_UID`, :5050 |
+
+**Nginx proxy** ([apps/web/nginx.conf](/C:/source/kodo/apps/web/nginx.conf)): `try_files $uri $uri/ /index.html`
+for the SPA, `/api/` and `/health` proxied to `http://api-python:8088` with `proxy_read_timeout 120s`
+(slow DeepSeek/Ollama calls), `client_max_body_size 32m` and `X-Forwarded-*` headers.
+
+**API base URL** ([apps/web/src/lib/api.ts](/C:/source/kodo/apps/web/src/lib/api.ts)): production builds
+(`import.meta.env.PROD`) use same-origin relative paths unless `VITE_API_BASE_URL` is set at build
+time; `npm run dev` keeps `http://localhost:8088`.
+
+**Compose files**:
+
+| File | Purpose |
+| --- | --- |
+| `docker-compose.yml` | Local stack: builds all three images, publishes `5050` (analyzer, for host uvicorn) and `${KODO_WEB_PORT:-3000}` (web); `api-python` is internal |
+| `docker-compose.prod.yml` | Override that replaces builds with `ghcr.io/${KODO_IMAGE_OWNER}/kodo-*:${KODO_TAG}` (`!reset` needs Compose ≥ 2.24), unpublishes internal ports, `restart: unless-stopped` |
+| `docker-compose.override.yml.example` | Copy to `docker-compose.override.yml` (git-ignored) for extra mounts or a published `:8088` |
+
+**GitHub Actions** ([.github/workflows/](/C:/source/kodo/.github/workflows)):
+
+- `ci.yml` — on push to `main` and every PR: `python-test` (3.12, `ruff check app tests`, `pytest`),
+  `csharp-build` (.NET 8 Release), `web-build` (Node 22, `npm ci`, `npm run build`) and
+  `docker-build-verify` (matrix over all three Dockerfiles, `push: false`, GHA layer cache).
+- `docker-publish.yml` — on `v*` tags and `workflow_dispatch`: logs in to `ghcr.io` with
+  `secrets.GITHUB_TOKEN`, lowercases the owner, and pushes semver + `latest` + sha tags for all three
+  images (`linux/amd64`, GHA cache).
+
+Local equivalents:
 
 ```powershell
-cd apps/web
-npm run tauri dev      # opens a native window pointed at http://127.0.0.1:5173
-npm run tauri build    # produces platform installers/bundles
+docker compose config --quiet
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose build
+docker compose up -d --build ; docker compose ps      # all healthy
+docker compose down                                   # add -v to drop the kodo-data volume
 ```
-
-Install the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS first (Rust,
-WebView2 on Windows, `libwebkit2gtk` on Linux). Icons and bundle metadata are already checked in at
-[apps/web/src-tauri](/C:/source/kodo/apps/web/src-tauri), and the configuration is ready for
-GitHub Actions runners (`npm ci` → `npm run tauri build`).
-
-CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.localhost`,
-`http://tauri.localhost`.
 
 ---
 
-## 5. Configuration
+## 6. Configuration
 
 | Variable | Where | Default | Purpose |
 | --- | --- | --- | --- |
-| `VITE_API_BASE_URL` | `apps/web/.env.local` | `http://localhost:8088` | Orchestrator base URL |
-| `KODO_CSHARP_URL` | FastAPI process | `http://localhost:5050` | Roslyn analyzer base URL |
-| `KODO_CORS_ORIGINS` | FastAPI process | Vite + Tauri origins | Comma-separated allow-list |
+| `KODO_WEB_PORT` | `.env` / shell (Compose) | `3000` | Host port for the Nginx UI (`http://localhost:3000`) |
+| `KODO_LOCAL_PROJECTS_DIR` | `.env` / shell (Compose) | `./.kodo-empty` | Host folder bind-mounted as `/projects` for scanning |
+| `KODO_IMAGE_OWNER` | `.env` / shell (prod Compose) | `harifaka` | GHCR owner for `docker-compose.prod.yml` |
+| `KODO_TAG` | `.env` / shell (prod Compose) | `latest` | GHCR image tag |
+| `VITE_API_BASE_URL` | `apps/web/.env.local` or Docker build arg | dev `http://localhost:8088`; prod same-origin | Orchestrator base URL (only for split deployments) |
+| `KODO_CSHARP_URL` | FastAPI process | `http://localhost:5050` (`http://analyzer-csharp:5050` in Compose) | Roslyn analyzer base URL |
+| `KODO_CORS_ORIGINS` | FastAPI process | Vite dev origins (`:5173`) | Comma-separated allow-list (the Docker stack is same-origin) |
 | `KODO_LLM_BASE_URL` | FastAPI process | `https://api.deepseek.com/v1` | OpenAI-compatible endpoint (Ollama/vLLM) |
 | `KODO_LLM_API_KEY` | FastAPI process | *(empty)* | DeepSeek key; optional for local servers, never logged |
 | `KODO_LLM_CODE_MODEL` | FastAPI process | `deepseek-chat` | Code model for audit fixes / method implementation |
@@ -564,7 +642,7 @@ CORS already allows the Tauri origins: `tauri://localhost`, `https://tauri.local
 
 ---
 
-## 6. Tests & validation
+## 7. Tests & validation
 
 ```powershell
 # Python: parsers, relation resolver, Mermaid generator, audit rules, security,
@@ -583,12 +661,19 @@ dotnet build services/analyzer-csharp
 
 # Web: type-check + production bundle
 cd apps/web
+npm install
 npm run build
+
+# Docker: validate both compose files, then the full stack (all three healthy)
+docker compose config --quiet
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose up -d --build
+curl http://localhost:3000/health
 ```
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **Port 8000 was taken, so FastAPI moved to 8088.** Docker Desktop's backend commonly listens on
 `0.0.0.0:8000`, which is why Kodo now defaults to `:8088`. If `8088` is also busy, run the API on
@@ -684,25 +769,48 @@ SSO may require an authorized PAT. Kodo never writes the token to `.git/config`;
 outside your repository, and contains metadata only — no file contents, no tokens. If the folder is not
 writable, audit writes are skipped silently rather than failing an apply or a deploy.
 
-**Tauri build fails immediately.** Rust/toolchain prerequisites are missing; the browser workflow
-(`npm run dev`) does not require Rust.
+**`docker compose up` fails with "Bind for 0.0.0.0:3000 failed: port is already allocated".** Another
+process or container owns `:3000`. Set `KODO_WEB_PORT=13000` in `.env` and re-run
+`docker compose up -d`; the UI is then on <http://localhost:13000>.
+
+**Scans of a host folder return nothing inside Docker.** Containers only see mounted folders. Point
+`KODO_LOCAL_PROJECTS_DIR` at the host folder (see `.env.example`) and scan `/projects/...`; verify with
+`docker compose exec api-python ls /projects`.
+
+**`web` stays `health: starting` / unhealthy.** Its healthcheck calls `/health` through Nginx, so
+FastAPI has to be healthy first. Check `docker compose ps`, then
+`docker compose exec web wget -qO- http://api-python:8088/health` and `docker compose logs api-python`.
+
+**The prod override fails with `!reset` / unknown tag.** `docker-compose.prod.yml` needs Docker Compose
+2.24 or newer (Docker Desktop 4.25+).
+
+**Git status inside the container says "dubious ownership".** Host-mounted repos can be owned by a
+different uid; the image trusts `/projects` via `safe.directory`. Mount elsewhere and add your own
+`git config --system --add safe.directory /your/path` in a derived image.
 
 **Python 3.14 + tree-sitter.** Wheels exist for 3.12–3.14; on an unsupported interpreter pip may
 attempt a source build and require a C compiler.
 
 ---
 
-## 8. Repository layout
+## 9. Repository layout
 
 ```
-.cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators)
-docker-compose.yml                Local Docker stack (analyzer-csharp on :5050)
+.cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
+docker-compose.yml                Local Docker stack: web (Nginx :3000→8080), api-python, analyzer-csharp
+docker-compose.prod.yml           GHCR-image override (publishes only the web port)
+docker-compose.override.yml.example  Optional extra mounts / published FastAPI :8088
+.env.example                      KODO_WEB_PORT, KODO_LOCAL_PROJECTS_DIR, KODO_LLM_*, GHCR coordinates
+.kodo-empty/                      Placeholder bind-mount source so `docker compose up` works untouched
+.github/workflows/ci.yml          pytest + ruff, dotnet build, npm build, Docker build matrix
+.github/workflows/docker-publish.yml  semver/latest/sha images to GHCR on v* tags
 packages/core-ir/schema.json      Canonical JSON Schema contract
 packages/core-ir/blueprint.schema.json  Versioned kodo.blueprint.json contract (Phase 4)
-services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, Dockerfile)
+services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, multi-stage Dockerfile)
   Analysis/                       Roslyn Core IR extraction
   Patching/                       trivia-preserving /patch rewriter (dry-run only)
-services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088)
+services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088, multi-stage Dockerfile)
+  Dockerfile                      python:3.12-slim build → non-root kodo runtime with git/curl + /data/kodo
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
   app/generators/                 base.py (protocol + registry), spring_boot.py, csharp_wpf.py,
@@ -729,11 +837,12 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   AI Copilot (mocked httpx transport), Deploy Studio (mocked Docker CLI
                                   + GitHub API, real local git)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
+  Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
+  nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
                                   DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
                                   AiSettingsModal, MethodsSection
-  src-tauri/                      Minimal Tauri v2 desktop shell (icons, config, capabilities)
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,

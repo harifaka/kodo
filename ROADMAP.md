@@ -3,14 +3,16 @@
 This roadmap tracks the delivery of **Kodo** from a read-only architecture visualizer to a full
 Blueprint -> Audit -> Edit -> Deploy platform.
 
-- **Phases 1–6** are shipped as **v0.1.0 (MVP)** — the delivered, Tauri-era feature set.
-- **Phases 7–10** are the post-MVP direction: a **Docker-first** web application (unified local
-  self-hosting via `docker compose up` and cloud SaaS) with a System 1 + System 2 hybrid AI stack.
+- **Phases 1–6** are shipped as **v0.1.0 (MVP)** — the original, Tauri-era feature set.
+- **Phase 7** is shipped as **v0.2.0 (Docker-first)** — see below.
+- **Phases 8–10** are the remaining post-MVP direction: SaaS multi-tenancy/persistence, ephemeral
+  builder images, and a System 1 + System 2 hybrid AI stack.
 
-> **Architectural pivot (post-MVP).** Kodo is now officially a **Docker-first web application**.
-> The **Tauri desktop wrapper is deprecated** (`apps/web/src-tauri/` is scheduled for removal in
-> Phase 7) in favour of one unified container deployment shared by local and SaaS. Future
-> implementation sessions should follow Phases 7–10; Phases 1–6 stay below as delivered history.
+> **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
+> application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
+> `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
+> by local and SaaS. Future implementation sessions should follow Phases 8–10; Phases 1–7 stay below as
+> delivered history.
 
 ---
 
@@ -28,7 +30,7 @@ Blueprint -> Audit -> Edit -> Deploy platform.
   - [x] **React Flow** interactive Macro Graph (layer-grouped, color-coded).
   - [x] **Mermaid** (`classDiagram`) zoomable UML preview.
   - [x] **Monaco Editor** read-only Code Inspector.
-- [x] Configure minimal **Tauri v2** desktop wrapper for local builds and GitHub Actions CI/CD.
+- [x] Configure minimal **Tauri v2** desktop wrapper for local builds and GitHub Actions CI/CD. *(Removed in Phase 7 — Kodo is Docker-first.)*
 - **Definition of Done:** Point Kodo at a real Spring Boot, C#, or Node.js folder and render the interactive graph, UML diagram, and source code inspector in under 3 seconds.
 
 ---
@@ -194,22 +196,63 @@ and PRs, and records every action in an append-only local audit log.
 
 ---
 
-## Post-MVP Roadmap (v0.2+ — Docker-First, SaaS & System 1/2 AI)
+## Post-MVP Roadmap (v0.2+ — Docker-First ✅, SaaS & System 1/2 AI next)
 
 **Direction:** drop the desktop shell, ship one unified Docker stack for both local self-hosting and
 cloud SaaS, guarantee build correctness with sandboxed builder images, and add a fast local
 **System 1** decision layer (**Laya**) in front of the DeepSeek **System 2** reasoning model.
+Phase 7 (Docker-first packaging & CI/CD) is delivered; Phases 8–10 are next.
 
-## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD
+## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD ✅
 **Goal:** One command runs the whole Kodo stack locally, and CI builds/tests/publishes every image.
 
-- [ ] Deprecate/remove the Tauri wrapper (`apps/web/src-tauri/`).
-- [ ] Containerize `api-python` and `apps/web` (Nginx reverse proxy) alongside `analyzer-csharp` into a
+**Status:** Delivered — `docker compose up --build` starts the full stack behind Nginx on `kodo-net`,
+and GitHub Actions verifies every layer and publishes all three images to GHCR.
+
+- [x] Deprecate/remove the Tauri wrapper (`apps/web/src-tauri/`).
+  - [x] `apps/web/src-tauri/` deleted, `@tauri-apps/cli` and the `tauri` script removed from
+        `apps/web/package.json`, `package-lock.json` regenerated with zero Tauri entries.
+  - [x] Tauri origins dropped from `app/config.py` (`KODO_CORS_ORIGINS` still overrides; Vite dev
+        origins remain); `vite.config.ts` no longer declares `TAURI_` env prefixes.
+- [x] Containerize `api-python` and `apps/web` (Nginx reverse proxy) alongside `analyzer-csharp` into a
       unified `docker-compose.yml` (local & production profiles).
-- [ ] Add GitHub Actions workflows: CI verification (`pytest`, `ruff`, `dotnet build`, `npm run build`)
+  - [x] `services/api-python/Dockerfile`: `python:3.12-slim` build → non-root `kodo` (uid 10001)
+        runtime with `/opt/venv`, `git`, `curl` healthcheck, writable `/data/kodo` volume and
+        `KODO_CSHARP_URL` / `KODO_AUDIT_LOG_PATH` / `KODO_WORKSPACES_DIR` defaults; `:8088`.
+  - [x] `apps/web/Dockerfile`: `node:22-alpine` (`npm ci` + `npm run build`) →
+        `nginxinc/nginx-unprivileged:1.27-alpine` (user `nginx`, :8080) serving `dist/` with SPA
+        fallback and proxying `/api/` + `/health` to `api-python:8088` (120 s read timeout, 32 MB
+        body limit, `X-Forwarded-*`).
+  - [x] `apps/web/src/lib/api.ts` defaults to same-origin relative paths in production builds and keeps
+        `http://localhost:8088` for `npm run dev`.
+  - [x] `docker-compose.yml`: three services on `kodo-net`, health-gated `depends_on`, `kodo-data`
+        volume, `${KODO_LOCAL_PROJECTS_DIR:-./.kodo-empty}:/projects` bind mount and
+        `${KODO_WEB_PORT:-3000}`.
+  - [x] `docker-compose.prod.yml` pulls `ghcr.io/<owner>/kodo-{web,api-python,analyzer-csharp}:${KODO_TAG}`,
+        unpublishes internal ports and sets `restart: unless-stopped`; `docker-compose.override.yml.example`
+        and `.env.example` document the local knobs.
+- [x] Add GitHub Actions workflows: CI verification (`pytest`, `ruff`, `dotnet build`, `npm run build`)
       and multi-stage Docker builds pushing versioned images to GHCR.
+  - [x] `ci.yml`: `python-test` (3.12 + `ruff check app tests` + `pytest`), `csharp-build`,
+        `web-build` and a `docker-build-verify` matrix with GHA layer caching (`push: false`).
+  - [x] `docker-publish.yml`: `v*` tags + `workflow_dispatch`, `contents: read` / `packages: write`,
+        GHCR login with `secrets.GITHUB_TOKEN`, lowercase owner, `docker/metadata-action` semver +
+        `latest` + sha tags, `linux/amd64`.
+  - [x] Ruff made green: seven pre-existing violations fixed (`B033`, `UP041` ×2, `I001` ×4) and a
+        `services/api-python/ruff.toml` pins the lint surface so CI is deterministic.
 - **Definition of Done:** Single-command `docker compose up` launches the full Kodo stack locally, and
   GitHub Actions builds and publishes all 3 container images cleanly.
+  ✅ Verified on this machine: `pytest` → **153 passed** (the 4 Roslyn conformance tests ran against the
+  live analyzer container; they skip when it is offline), `ruff check app tests` → clean,
+  `dotnet build services/analyzer-csharp -c Release` → 0 warnings / 0 errors; `npm run build` →
+  type-check + bundle OK. `docker compose config` and the `docker-compose.prod.yml` merge validate with
+  zero errors; `docker compose up -d --build` built all three images and reported
+  `analyzer-csharp`, `api-python` and `web` **healthy** (non-root `app`/`kodo`/`nginx` verified).
+  `/health` through Nginx proxies to FastAPI with `csharp.reachable: true`, `/` serves the Kodo UI,
+  unknown client routes fall back to `index.html`, and a scan of a mounted Java sample returned the
+  expected 3 nodes / 1 relation / 1 `LAYER_VIOLATION` (90/100). *(On the verification host an unrelated
+  container already owned `:3000`, so the stack was exercised via `KODO_WEB_PORT=13000` — the default
+  remains `3000`.)*
 
 ---
 

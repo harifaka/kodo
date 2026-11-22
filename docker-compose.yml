@@ -1,14 +1,21 @@
+# Kodo local stack — `docker compose up --build` then open http://localhost:3000
+# Production images: see docker-compose.prod.yml. Optional host mounts: docker-compose.override.yml.example.
+name: kodo
+
 services:
   analyzer-csharp:
     build:
       context: ./services/analyzer-csharp
       dockerfile: Dockerfile
-    image: kodo-analyzer-csharp:latest
-    container_name: kodo-analyzer-csharp
+    image: kodo-analyzer-csharp:local
     environment:
       ASPNETCORE_URLS: http://+:5050
+      ASPNETCORE_ENVIRONMENT: Production
+    # Published so a non-Docker FastAPI/uvicorn on the host can reach the analyzer on :5050.
     ports:
       - "5050:5050"
+    networks:
+      - kodo-net
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "-O", "/dev/null", "http://127.0.0.1:5050/health"]
       interval: 15s
@@ -16,3 +23,66 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+
+  api-python:
+    build:
+      context: ./services/api-python
+      dockerfile: Dockerfile
+    image: kodo-api-python:local
+    environment:
+      KODO_CSHARP_URL: http://analyzer-csharp:5050
+      KODO_AUDIT_LOG_PATH: /data/kodo/audit.jsonl
+      KODO_WORKSPACES_DIR: /data/kodo/workspaces
+      # Empty => the built-in Vite dev origins; the Docker UI is same-origin through Nginx.
+      KODO_CORS_ORIGINS: ${KODO_CORS_ORIGINS:-}
+      KODO_LLM_BASE_URL: ${KODO_LLM_BASE_URL:-https://api.deepseek.com/v1}
+      KODO_LLM_API_KEY: ${KODO_LLM_API_KEY:-}
+      KODO_LLM_CODE_MODEL: ${KODO_LLM_CODE_MODEL:-deepseek-chat}
+      KODO_LLM_REASONING_MODEL: ${KODO_LLM_REASONING_MODEL:-deepseek-reasoner}
+      KODO_LLM_TIMEOUT_SECONDS: ${KODO_LLM_TIMEOUT_SECONDS:-90}
+    volumes:
+      - kodo-data:/data/kodo
+      # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.
+      - type: bind
+        source: ${KODO_LOCAL_PROJECTS_DIR:-./.kodo-empty}
+        target: /projects
+    depends_on:
+      analyzer-csharp:
+        condition: service_healthy
+    networks:
+      - kodo-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    image: kodo-web:local
+    ports:
+      - "${KODO_WEB_PORT:-3000}:8080"
+    depends_on:
+      api-python:
+        condition: service_healthy
+    networks:
+      - kodo-net
+    healthcheck:
+      # /health is proxied to FastAPI, so a green web container means the whole chain works.
+      test: ["CMD", "wget", "--spider", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  kodo-data:
+
+networks:
+  kodo-net:
+    driver: bridge

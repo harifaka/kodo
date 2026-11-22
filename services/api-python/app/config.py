@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 
+# Vite dev server origins only. The Docker stack serves the UI same-origin through Nginx, so it
+# never needs CORS; extend or replace this list with KODO_CORS_ORIGINS for custom deployments.
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "tauri://localhost",
-    "https://tauri.localhost",
-    "http://tauri.localhost",
 )
 
 DEFAULT_API_PORT = 8088

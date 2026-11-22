@@ -235,8 +235,8 @@ node_modules/
 [Bb]in/
 [Oo]bj/
 
-# Rust / Tauri
-apps/web/src-tauri/gen/
+# Docker (local overrides; see docker-compose.override.yml.example)
+docker-compose.override.yml
 
 # The Python template above ignores any `lib/` directory; the web app keeps real source there.
 !apps/web/src/lib/

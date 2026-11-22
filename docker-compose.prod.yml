@@ -1,0 +1,24 @@
+# Production override — pulls prebuilt GHCR images instead of building locally.
+# Usage (requires Docker Compose >= 2.24 for `!reset`):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+name: kodo
+
+services:
+  analyzer-csharp:
+    build: !reset null
+    image: ghcr.io/${KODO_IMAGE_OWNER:-harifaka}/kodo-analyzer-csharp:${KODO_TAG:-latest}
+    ports: !reset []
+    restart: unless-stopped
+
+  api-python:
+    build: !reset null
+    image: ghcr.io/${KODO_IMAGE_OWNER:-harifaka}/kodo-api-python:${KODO_TAG:-latest}
+    ports: !reset []
+    restart: unless-stopped
+
+  web:
+    build: !reset null
+    image: ghcr.io/${KODO_IMAGE_OWNER:-harifaka}/kodo-web:${KODO_TAG:-latest}
+    ports:
+      - "${KODO_WEB_PORT:-3000}:8080"
+    restart: unless-stopped

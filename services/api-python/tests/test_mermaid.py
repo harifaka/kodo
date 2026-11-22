@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from app.models.ir import ComponentField, ComponentNode, ComponentRelation, Layer, NodeKind, Stack
+from app.models.ir import (
+    ComponentField,
+    ComponentNode,
+    ComponentRelation,
+    Layer,
+    NodeKind,
+    Stack,
+)
 from app.services.mermaid import generate_class_diagram
 
 

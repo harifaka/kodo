@@ -116,8 +116,8 @@ export function TopBar({
             state={health.status}
             detail={
               health.status === 'online'
-                ? `${health.data?.service} v${health.data?.version} · ${api.baseUrl}`
-                : `Unreachable at ${api.baseUrl}`
+                ? `${health.data?.service} v${health.data?.version} · ${api.baseUrlLabel}`
+                : `Unreachable at ${api.baseUrlLabel}`
             }
           />
           <StatusPill

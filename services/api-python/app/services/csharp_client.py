@@ -33,7 +33,7 @@ async def check_health() -> bool:
         async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT) as client:
             response = await client.get(url)
             return response.status_code == 200 and response.json().get("status") == "ok"
-    except (httpx.HTTPError, ValueError, asyncio.TimeoutError):
+    except (TimeoutError, httpx.HTTPError, ValueError):
         return False
 
 
@@ -55,7 +55,7 @@ async def analyze_workspace(root: Path, files: list[str]) -> CSharpResult:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
-    except (httpx.HTTPError, ValueError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         result.warnings.append(
             f"C# analyzer unreachable at {csharp_analyzer_url()} ({type(exc).__name__}). "
             f"{len(payload_files)} .cs file(s) were skipped — start services/analyzer-csharp and rescan."

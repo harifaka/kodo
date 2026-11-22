@@ -1,0 +1,12 @@
+# Copy to docker-compose.override.yml (git-ignored) to extend the local stack.
+# `docker compose up` picks that file up automatically.
+services:
+  api-python:
+    # Expose FastAPI directly for /docs or for a host-run Vite dev server.
+    ports:
+      - "${KODO_API_PORT:-8088}:8088"
+    volumes:
+      # Additional read/write host folders; the first mount already comes from KODO_LOCAL_PROJECTS_DIR.
+      - type: bind
+        source: C:/work
+        target: /projects/work

@@ -36,7 +36,12 @@ import type {
   TestConnectionResponse,
 } from '../types/ai';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8088').replace(/\/+$/, '');
+// Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
+// paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
+const CONFIGURED_API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+const DEFAULT_DEV_API_BASE = 'http://localhost:8088';
+const API_BASE = CONFIGURED_API_BASE || (import.meta.env.PROD ? '' : DEFAULT_DEV_API_BASE);
+const API_BASE_LABEL = API_BASE || 'same origin';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -67,7 +72,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
     });
   } catch {
-    throw new ApiError(`Kodo API is unreachable at ${API_BASE}. Is the FastAPI service running?`, 0);
+    throw new ApiError(`Kodo API is unreachable at ${API_BASE_LABEL}. Is the FastAPI service running?`, 0);
   }
 
   if (!response.ok) {
@@ -91,6 +96,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   baseUrl: API_BASE,
+  baseUrlLabel: API_BASE_LABEL,
 
   health(signal?: AbortSignal): Promise<HealthResponse> {
     return request<HealthResponse>('/health', { signal });

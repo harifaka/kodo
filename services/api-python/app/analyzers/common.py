@@ -24,7 +24,7 @@ _NON_TYPE_IDENTIFIERS = frozenset(
         "super", "new", "return", "async", "await", "static", "public", "private", "protected",
         "readonly", "final", "extends", "implements", "interface", "class", "record", "enum",
         "module", "namespace", "import", "export", "default", "from", "of", "in", "as", "is",
-        "keys", "values", "entries", "map", "filter", "reduce", "string", "Integer", "Long",
+        "keys", "values", "entries", "map", "filter", "reduce", "Integer", "Long",
         "Boolean", "Double", "Float", "Object", "Void", "Character",
     }
 )

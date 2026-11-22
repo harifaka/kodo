@@ -1,10 +1,10 @@
 # Kodo
 
 **Architecture Control Center for the Vibe-Coding Era.**
-Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up` or as a cloud SaaS. Kodo is **Docker-first**: the former Tauri desktop wrapper is deprecated.
+Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator and one Roslyn analyzer image.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: MVP Complete](https://img.shields.io/badge/Status-MVP%20Complete%20%C2%B7%20Phases%201--6%20delivered-brightgreen.svg)
+![Status: Docker-First](https://img.shields.io/badge/Status%20v0.2%20%C2%B7%20Phases%201--7%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -14,7 +14,7 @@ Visualize, audit, safely edit, and containerize modern multi-stack codebases (Sp
 AI-assisted ("vibe") coding makes generating code trivial, but keeping architectures clean, understandable, and production-ready is harder than ever. Kodo sits between your codebase and deployment as a **Blueprint -> Audit -> Edit -> Deploy** platform:
 
 - **Single Source of Truth (Core IR):** Stack-agnostic Intermediate Representation of services, classes, business fields, relations, and annotations.
-- **Docker-First (Local & SaaS):** One shared React + TypeScript UI served by Nginx alongside the FastAPI orchestrator and the Roslyn analyzer on a single Docker network — the same stack for local self-hosting (`docker compose up`) and cloud SaaS. The Tauri desktop wrapper is deprecated.
+- **Docker-First (Local & SaaS):** One shared React + TypeScript UI served by Nginx alongside the FastAPI orchestrator and the Roslyn analyzer on a single Docker network — the same stack for local self-hosting (`docker compose up --build`) and cloud SaaS. The desktop shell was removed in Phase 7 and versioned images are published to GHCR.
 - **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
 - **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
 - **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
@@ -26,19 +26,21 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 ## Architecture Overview
 
 Kodo is **Docker-first**: one unified container stack serves both local self-hosting and cloud SaaS.
-The Tauri desktop wrapper is deprecated and slated for removal (Phase 7).
 
-    Shared Frontend (React + TypeScript + Vite)
+    Browser  ->  http://localhost:3000  (or your SaaS domain)
+            |
+            v
+    Web image: Nginx + static React/TypeScript bundle (non-root nginx, :8080)
     React Flow (Macro) | Mermaid (UML) | Monaco (Code/Diff)
             |
-            | HTTPS (Nginx-served web image; same for local & SaaS)
+            | same-origin proxy: /api/ and /health
             v
-    Orchestrator API (Python FastAPI)
+    Orchestrator API (Python FastAPI, :8088)
     Core IR | Tree-sitter (Java/TS/JS) | DeepSeek / Ollama (OpenAI-compatible) | Docker
             |
             | Internal HTTP (JSON)
             v
-    C# Semantic Analyzer (ASP.NET Core + Roslyn)
+    C# Semantic Analyzer (ASP.NET Core + Roslyn, :5050)
     Deep C# / .NET AST extraction + stateless dry-run patching
 
     All three images (web + Nginx, api-python, analyzer-csharp) run on one Compose network —
@@ -46,7 +48,35 @@ The Tauri desktop wrapper is deprecated and slated for removal (Phase 7).
 
 ---
 
-## Quick Start (Phases 1–6)
+## Quick Start (Phases 1–7, Docker-first)
+
+```powershell
+# One command: builds and starts web (Nginx) + api-python + analyzer-csharp
+docker compose up --build
+```
+
+Open **<http://localhost:3000>** — the Nginx image serves the UI and proxies `/api/` and `/health` to
+FastAPI on the internal `kodo-net` network, so there is no CORS setup and the same stack works on any
+SaaS domain. A green **FastAPI** pill with *Roslyn reachable* confirms the whole chain.
+
+To scan code that lives on the host, point the optional bind mount at it (the container can only see
+mounted folders) and restart:
+
+```powershell
+# .env next to docker-compose.yml
+KODO_LOCAL_PROJECTS_DIR=C:/work
+KODO_WEB_PORT=3000
+```
+
+Scan `/projects` (or `/projects/<subfolder>`) in the UI. `docker-compose.override.yml.example` shows
+the extra host mounts and how to expose FastAPI on `:8088` for `/docs`. Production hosts pull the
+prebuilt GHCR images instead of building:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### Non-Docker developer workflow (still supported)
 
 ```powershell
 # 1. C# Roslyn analyzer (stateless container) -> http://localhost:5050
@@ -62,17 +92,17 @@ uvicorn app.main:app --reload --port 8088
 cd apps/web ; npm install ; npm run dev
 ```
 
-Docker Desktop is only needed for the Roslyn container and the **Deploy** tab; scanning, auditing,
-editing and Git export all work without it.
+In dev the UI defaults to `http://localhost:8088` (override with `VITE_API_BASE_URL`); production
+bundles default to same-origin relative paths behind Nginx. Docker Desktop is only needed for the
+Roslyn container, the whole-stack mode and the **Deploy** tab; scanning, auditing, editing and Git
+export all work against a local uvicorn too.
 
 Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
 read-only Code Inspector. Select a component to draft business-field and annotation edits, then click
 **Preview Diff (Dry-Run)** to review the surgical AST patch in a Monaco side-by-side diff. The
 **Git Safety & Apply** bar shows whether the working tree is clean, lets you pick which files to write,
 and applies them atomically after a SHA-256 freshness check — with a one-click **Undo / Rollback** and
-an automatic re-scan. Dirty or non-Git workspaces require an explicit risk confirmation. (The legacy
-`npm run tauri dev` desktop mode is **deprecated** — Kodo is Docker-first; see
-[What's Next](#whats-next-v02-roadmap-phases-710).)
+an automatic re-scan. Dirty or non-Git workspaces require an explicit risk confirmation.
 
 The **Builder** tab scaffolds whole projects: pick a stack, describe slices and business fields (or load
 the *Order + Customer + Payment* demo), then **Preview Generated Files (Dry-Run)**. Every generated file
@@ -105,16 +135,16 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## 6-Phase MVP Roadmap (v0.1.0 — Delivered)
+## Delivered Roadmap (v0.1.0 MVP + Phase 7)
 
-**All six phases are delivered** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Deploy**
-loop end to end.
+**Phases 1–6 are the v0.1.0 MVP and Phase 7 is the Docker-first delivery** — Kodo now covers the full
+**Blueprint → Audit → Safe Edit → Deploy** loop and ships as one container stack.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
 - Directory scanner with **Tree-sitter** (Java/Spring Boot, TS/JS/Node.js) and **Roslyn** (C#/.NET) microservice.
 - Interactive **React Flow** service/layer map, **Mermaid** (`classDiagram`) zoomable UML view, and read-only **Monaco Editor** file inspector.
-- Tauri v2 desktop wrapper + local dev orchestration.
+- Tauri v2 desktop wrapper + local dev orchestration. *(Removed in Phase 7 — Kodo is Docker-first.)*
 
 ### Phase 2: Pattern & Vibe-Audit Engine - Delivered
 - Deterministic rule engine running on the Core IR (zero LLM required).
@@ -145,17 +175,23 @@ loop end to end.
 - **Local audit log:** append-only JSONL at `~/.kodo/audit.jsonl` (configurable) recording `apply`, `rollback`, `deploy_up`, `deploy_down`, `git_clone` and `git_export` with redacted summaries — no file contents, no tokens.
 - All generated container artifacts ride the Phase 3c pipeline: **Dry-Run → Monaco Diff → guarded Apply → atomic Rollback**.
 
+### Phase 7: Docker-First Packaging & CI/CD - Delivered
+- **Tauri wrapper removed** — `apps/web/src-tauri/` and every `@tauri-apps/*` dependency are gone; the browser build is the only frontend.
+- **Three multi-stage, non-root images:** `web` (`node:22-alpine` build → `nginxinc/nginx-unprivileged` on :8080 serving the SPA and reverse-proxying `/api/` + `/health`), `api-python` (`python:3.12-slim` build → `/opt/venv` runtime as user `kodo`, with `git`, `curl` and the writable `/data/kodo` volume) and `analyzer-csharp` (`dotnet/sdk:8.0` → `aspnet:8.0-alpine`, non-root).
+- **One-command local stack:** `docker compose up --build` starts all three services on `kodo-net` with healthchecks and `depends_on: condition: service_healthy`; `docker-compose.prod.yml` pulls the same images from GHCR and publishes only the web port. `docker-compose.override.yml.example` documents extra host mounts.
+- **Same-origin by default:** production bundles use relative `/api/v1/...` paths through Nginx (no CORS, works on any SaaS domain), while `npm run dev` still defaults to `http://localhost:8088`.
+- **GitHub Actions:** `ci.yml` runs `pytest` + `ruff`, `dotnet build`, `npm run build` and a matrix Docker build (GHA layer cache) on every push/PR; `docker-publish.yml` publishes semver + `latest` + sha tags for all three images to GHCR on `v*` tags.
+
 ---
 
-## What's Next (v0.2+ Roadmap: Phases 7–10)
+## What's Next (v0.2+ Roadmap: Phases 8–10)
 
-Phases 1–6 are the delivered v0.1.0 MVP. The next chapter is the post-MVP pivot to a **Docker-first,
-multi-tenant platform** with a hybrid System 1 + System 2 AI stack. Full detail and definitions of done:
-[ROADMAP.md](ROADMAP.md).
+Phases 1–7 are delivered. The next chapter is the **multi-tenant, sandbox-verified, hybrid System 1 +
+System 2** platform. Phase 7 shipped the Docker-first packaging that everything else builds on. Full
+detail and definitions of done: [ROADMAP.md](ROADMAP.md).
 
 | Phase | Focus | Headline |
 |---|---|---|
-| **7** | Docker-First Packaging & CI/CD | Drop the Tauri wrapper; one `docker compose up` runs the full stack (web + Nginx, api-python, analyzer-csharp); GitHub Actions runs `pytest`, `ruff`, `dotnet build`, `npm run build` and publishes versioned multi-stage images to GHCR. |
 | **8** | SaaS Foundation | GitHub OAuth + JWT sessions, persistent SQLite (local) / PostgreSQL (SaaS) for rollback history, blueprints and user settings, per-user isolated workspaces and audit logs, and a `KODO_MODE=saas` flag that disables arbitrary host-path scanning. |
 | **9** | Ephemeral Builder Images | Network-restricted, disposable builder containers (Maven/JDK 21, .NET 8 SDK, Node 22) that compile and unit-test AI-proposed patches before apply or PR export — zero host toolchains. |
 | **10** | Laya Decision Layer (System 1 + System 2) | **Laya** — Convai Innovations' Apache-2.0 421M non-autoregressive decision model — runs locally (`/v1/systemone`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek, and pre-screen AI diffs; every decision becomes an inspectable ADR. Falls back cleanly to deterministic rules when Laya is offline. |

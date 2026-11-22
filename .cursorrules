@@ -33,15 +33,16 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   returns Core IR or proposed text.
 - No shared code between services via file imports. Only the JSON contract crosses process boundaries.
 
-### Post-MVP direction (recorded, NOT yet active)
+### Docker-first packaging (Phase 7 — active)
 
-- Kodo is now **Docker-first**. One unified Compose stack (web + Nginx, `api-python`, `analyzer-csharp`)
-  is the target topology for both local self-hosting and SaaS. The **Tauri desktop wrapper is
-  deprecated** — do **not** invest further effort in `apps/web/src-tauri/`; it is scheduled for removal.
-- **Phases 7–10** (Docker-first CI/CD, SaaS multi-tenancy/persistence, ephemeral builder images, and the
-  **Laya** System 1 decision layer served at `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT
-  active for implementation**. Do not add Phase 7–10 code, workflows, services, or compose profiles
-  unless a task explicitly asks for them; treat Phases 1–6 as the current contract.
+- Kodo is **Docker-first**. One unified Compose stack (web + Nginx, `api-python`, `analyzer-csharp`)
+  is the topology for both local self-hosting and SaaS; local and production differ only in
+  configuration. The **Tauri desktop wrapper has been removed** — do not reintroduce desktop shells,
+  `@tauri-apps/*` dependencies or desktop-only origins.
+- **Phases 8–10** (SaaS multi-tenancy/persistence, ephemeral builder images, and the **Laya** System 1
+  decision layer served at `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT active for
+  implementation**. Do not add Phase 8–10 code, workflows, services or compose profiles unless a task
+  explicitly asks for them; treat Phases 1–7 as the current contract.
 
 ## 3. Write policy (hard rule)
 
@@ -244,6 +245,32 @@ Allowed:
   GitHub API (`httpx.MockTransport` via `set_transport_override`); pytest must never need a Docker
   daemon or internet access. The audit log is redirected to `tmp_path` by `tests/conftest.py`.
 
+## 3g. Docker-first packaging & CI rules (Phase 7)
+
+- **One stack, two profiles.** `docker-compose.yml` runs `web` (Nginx on 8080), `api-python` (8088)
+  and `analyzer-csharp` (5050) on the `kodo-net` bridge with healthchecks and
+  `depends_on: condition: service_healthy`. `docker-compose.prod.yml` only swaps local builds for
+  GHCR images and stops publishing internal ports. Never fork a second production topology.
+- **Images are multi-stage, minimal and non-root.** `api-python` builds into `/opt/venv` on
+  `python:3.12-slim` and runs as `kodo` (uid 10001) with `/data/kodo` writable and `git` available;
+  `web` builds with `node:22-alpine` and serves from `nginxinc/nginx-unprivileged` as `nginx`;
+  `analyzer-csharp` keeps the `aspnet:8.0-alpine` non-root runtime. No SDKs, build tools or root
+  runtime in the final stage.
+- **Same-origin by default.** Production bundles call the API through relative paths (`/api/v1/...`,
+  `/health`) proxied by Nginx; `VITE_API_BASE_URL` exists only for split deployments. Do not
+  reintroduce desktop-shell origins or wildcard CORS.
+- **Explicit state only.** The single persistent volume is `kodo-data:/data/kodo`; host scanning is
+  the opt-in `${KODO_LOCAL_PROJECTS_DIR:-./.kodo-empty}` → `/projects` bind mount. Never bake host
+  paths, credentials or `.env` values into an image.
+- **Secrets stay runtime-only.** `KODO_LLM_*` values come from `.env`/environment; `.env.example`
+  stays placeholder-only and `.env` stays git-ignored.
+- **CI is the merge gate.** `.github/workflows/ci.yml` must stay green for `pytest`, `ruff check`,
+  `dotnet build` and `npm run build`, and build all three Dockerfiles on every PR.
+  `.github/workflows/docker-publish.yml` publishes semver + `latest` + sha tags to GHCR on `v*` tags
+  only, from `linux/amd64`, with lowercase owner names and `secrets.GITHUB_TOKEN`.
+- **Local dev stays supported.** `uvicorn app.main:app --reload` + `npm run dev` against the published
+  `:5050` analyzer must keep working; Docker is the primary workflow, not the only one.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -315,3 +342,9 @@ Allowed:
   files are gone. With Docker running, press **Compose Up (--build)**, verify the container health
   badges and filtered logs, then **Compose Down**. Confirm `~/.kodo/audit.jsonl` gained entries with
   no token or file content in them.
+- For Docker/CI changes: `docker compose config` and
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must validate, then
+  `docker compose up --build` must report `web`, `api-python` and `analyzer-csharp` healthy with
+  `http://localhost:3000` serving the UI and `/health` proxying to FastAPI (Roslyn reachable). Every
+  workflow in `.github/workflows/` must be valid YAML with the documented jobs, and all three images
+  must build locally (`docker compose build`) as non-root, multi-stage images.

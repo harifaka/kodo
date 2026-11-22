@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Kodo runs as a plain Vite app in the browser and inside Tauri (devUrl http://localhost:5173).
+// Kodo runs as a plain Vite dev server locally and as static files behind Nginx in Docker.
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
@@ -10,7 +10,7 @@ export default defineConfig({
     strictPort: true,
     host: '127.0.0.1',
   },
-  envPrefix: ['VITE_', 'TAURI_'],
+  envPrefix: ['VITE_'],
   build: {
     outDir: 'dist',
     sourcemap: false,

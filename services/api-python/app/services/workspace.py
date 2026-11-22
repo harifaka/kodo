@@ -13,7 +13,11 @@ from app.audit import run_audit
 from app.models.ir import ComponentNode, ComponentRelation, WorkspaceIR
 from app.services.csharp_client import analyze_workspace
 from app.services.mermaid import generate_class_diagram
-from app.services.relations import drop_dangling_relations, merge_relations, resolve_relations
+from app.services.relations import (
+    drop_dangling_relations,
+    merge_relations,
+    resolve_relations,
+)
 
 
 class WorkspaceNotFoundError(ValueError):
