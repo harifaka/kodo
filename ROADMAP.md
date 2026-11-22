@@ -1,8 +1,20 @@
-# Kodo - 6-Phase MVP Roadmap
+# Kodo - Roadmap
 
-This roadmap tracks the iterative delivery of **Kodo** from a read-only architecture visualizer to a full Blueprint -> Audit -> Edit -> Deploy platform (Local Desktop via Tauri + Self-Hosted/SaaS via Docker).
+This roadmap tracks the delivery of **Kodo** from a read-only architecture visualizer to a full
+Blueprint -> Audit -> Edit -> Deploy platform.
+
+- **Phases 1–6** are shipped as **v0.1.0 (MVP)** — the delivered, Tauri-era feature set.
+- **Phases 7–10** are the post-MVP direction: a **Docker-first** web application (unified local
+  self-hosting via `docker compose up` and cloud SaaS) with a System 1 + System 2 hybrid AI stack.
+
+> **Architectural pivot (post-MVP).** Kodo is now officially a **Docker-first web application**.
+> The **Tauri desktop wrapper is deprecated** (`apps/web/src-tauri/` is scheduled for removal in
+> Phase 7) in favour of one unified container deployment shared by local and SaaS. Future
+> implementation sessions should follow Phases 7–10; Phases 1–6 stay below as delivered history.
 
 ---
+
+## Delivered — v0.1.0 MVP (Phases 1–6)
 
 ## Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) ✅
 **Goal:** Open any existing multi-stack repository and immediately visualize its architecture with zero risk of modifying source files.
@@ -179,3 +191,79 @@ and PRs, and records every action in an append-only local audit log.
   and verify green healthchecks across all services. ✅ Generated stacks validate with
   `docker compose config` (zero syntax errors) on this machine; the Deploy tab previews the files in
   the Monaco diff, applies them atomically and shows live container health/logs with one click.
+
+---
+
+## Post-MVP Roadmap (v0.2+ — Docker-First, SaaS & System 1/2 AI)
+
+**Direction:** drop the desktop shell, ship one unified Docker stack for both local self-hosting and
+cloud SaaS, guarantee build correctness with sandboxed builder images, and add a fast local
+**System 1** decision layer (**Laya**) in front of the DeepSeek **System 2** reasoning model.
+
+## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD
+**Goal:** One command runs the whole Kodo stack locally, and CI builds/tests/publishes every image.
+
+- [ ] Deprecate/remove the Tauri wrapper (`apps/web/src-tauri/`).
+- [ ] Containerize `api-python` and `apps/web` (Nginx reverse proxy) alongside `analyzer-csharp` into a
+      unified `docker-compose.yml` (local & production profiles).
+- [ ] Add GitHub Actions workflows: CI verification (`pytest`, `ruff`, `dotnet build`, `npm run build`)
+      and multi-stage Docker builds pushing versioned images to GHCR.
+- **Definition of Done:** Single-command `docker compose up` launches the full Kodo stack locally, and
+  GitHub Actions builds and publishes all 3 container images cleanly.
+
+---
+
+## Phase 8: SaaS Foundation (GitHub OAuth, Multi-Tenancy & Persistence)
+**Goal:** Real users, real isolation, persistent history — the SaaS foundation.
+
+- [ ] Implement GitHub OAuth authentication and session/JWT handling.
+- [ ] Add persistent database storage (SQLite for local / PostgreSQL for SaaS) for rollback history,
+      saved blueprints, workspace metadata, and user settings (replacing the in-memory rollback deque).
+- [ ] Add per-user isolated audit logs (replacing the single shared `~/.kodo/audit.jsonl`) and isolated
+      per-user workspace sandboxes.
+- [ ] Enforce `KODO_MODE=saas` vs `local` flag: in SaaS mode, disable arbitrary host-filesystem path
+      scanning and allow Git-cloned workspaces only.
+- **Definition of Done:** Multiple real users can log in with GitHub, scan/edit their own repos in
+  strict isolation, and keep rollback/audit history across restarts.
+
+---
+
+## Phase 9: Ephemeral Builder Images (Sandboxed Compile & Test Verification)
+**Goal:** Never hand a user code that does not compile — verify inside disposable, network-restricted
+containers instead of the host toolchain.
+
+- [ ] Add isolated, network-restricted builder container definitions for Spring Boot (Maven/JDK 21),
+      C# (.NET 8 SDK), and Node.js (Node 22/tsc).
+- [ ] Add a **"Verify Build"** step in Dry-Run / Builder / Deploy flows that compiles and runs unit
+      tests on proposed patches inside an ephemeral builder container before disk apply or PR creation.
+- [ ] Stream compiler output and errors back into the UI (and optionally feed compiler diagnostics into
+      the AI fix loop).
+- **Definition of Done:** Generated and patched Spring Boot, C#, and Node.js projects are
+  compile-verified inside sandboxed builder containers with zero host toolchain dependencies.
+
+---
+
+## Phase 10: Laya Decision Layer (System 1 Triage + System 2 DeepSeek Routing)
+**Goal:** Cheap local intuition (System 1) decides **what** to do and **how risky** it is; DeepSeek
+(System 2) is spent only where real reasoning is required.
+
+- [ ] Integrate **Laya** (Convai Innovations, Apache-2.0, 421M non-autoregressive decision model,
+      RLCD-calibrated probabilities, zero text generation) via Ollama (`laya`, `/v1/systemone`) or the
+      `laya` Python/Ollaya runtime as an optional `docker compose --profile ai-local` service.
+- [ ] Design strict typed decision schemas (`choice` <= 20 options, `yes/no`, `score` rubrics) operating
+      on compact Core IR + Audit state in a single forward pass (~10–33 ms):
+  - [ ] **Audit Triage & Risk Scoring:** rank findings by real architectural risk vs. benign boilerplate.
+  - [ ] **System 1 -> System 2 Router:** use Laya's calibrated probabilities and confidence thresholds to
+        route tasks between deterministic AST/Builder paths (zero cloud tokens) vs. escalating complex
+        refactors to DeepSeek (System 2) or human review.
+  - [ ] **Pre-Diff Safety Gate:** fast multi-question check on AI-proposed patches (layer boundary check,
+        business-logic deletion risk, pattern conformance) before presenting to the user — always
+        advisory alongside deterministic audit and Monaco Diff, never the sole gate.
+- [ ] Record decisions as inspectable **Architecture Decision Records (ADRs)** in the Phase 8 DB, with
+      user accept/override feedback to support Laya's local continuous learning on team architectural
+      preferences.
+- [ ] Graceful degradation: if local Laya/Ollama is offline, Kodo falls back cleanly to deterministic
+      rules + manual DeepSeek triggers.
+- **Definition of Done:** Local Laya container runs alongside Kodo via `/v1/systemone`, triages real repo
+  scans in milliseconds with calibrated confidence scores, routes tasks between deterministic tools and
+  DeepSeek, and logs explainable ADRs.

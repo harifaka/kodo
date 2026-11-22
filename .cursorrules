@@ -33,6 +33,16 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   returns Core IR or proposed text.
 - No shared code between services via file imports. Only the JSON contract crosses process boundaries.
 
+### Post-MVP direction (recorded, NOT yet active)
+
+- Kodo is now **Docker-first**. One unified Compose stack (web + Nginx, `api-python`, `analyzer-csharp`)
+  is the target topology for both local self-hosting and SaaS. The **Tauri desktop wrapper is
+  deprecated** — do **not** invest further effort in `apps/web/src-tauri/`; it is scheduled for removal.
+- **Phases 7–10** (Docker-first CI/CD, SaaS multi-tenancy/persistence, ephemeral builder images, and the
+  **Laya** System 1 decision layer served at `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT
+  active for implementation**. Do not add Phase 7–10 code, workflows, services, or compose profiles
+  unless a task explicitly asks for them; treat Phases 1–6 as the current contract.
+
 ## 3. Write policy (hard rule)
 
 Phases 1 (visualizer), 2 (pattern audit), 3a (draft editing), 3b (dry-run AST patching) and the
