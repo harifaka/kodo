@@ -39,10 +39,10 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   is the topology for both local self-hosting and SaaS; local and production differ only in
   configuration. The **Tauri desktop wrapper has been removed** — do not reintroduce desktop shells,
   `@tauri-apps/*` dependencies or desktop-only origins.
-- **Phases 8–10** (SaaS multi-tenancy/persistence, ephemeral builder images, and the **Laya** System 1
-  decision layer served at `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT active for
-  implementation**. Do not add Phase 8–10 code, workflows, services or compose profiles unless a task
-  explicitly asks for them; treat Phases 1–7 as the current contract.
+- **Phase 8 (SaaS foundation) is active** — multi-tenancy, persistence and auth rules live in §3h.
+- **Phases 9–10** (ephemeral builder images and the **Laya** System 1 decision layer served at
+  `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT active for implementation**. Do not add
+  Phase 9–10 code, workflows, services or compose profiles unless a task explicitly asks for them.
 
 ## 3. Write policy (hard rule)
 
@@ -236,14 +236,15 @@ Allowed:
   `refs/`, trailing dot/slash/`.lock`) before any Git call. Branch + commit are allowed; push and PR
   creation only happen with `createPr`, a GitHub `origin` and a session token. Never force-push,
   reset, clean or rewrite history.
-- **Local audit log.** `app/services/audit_log.py` appends one JSONL line per `apply`, `rollback`,
-  `deploy_up`, `deploy_down`, `git_clone` and `git_export` to `~/.kodo/audit.jsonl`
-  (`KODO_AUDIT_LOG_PATH`), outside the repository. Metadata only — never file contents, never tokens,
-  with credential-shaped fragments redacted. Auditing is best-effort and must never break the action
-  it is recording.
+- **Audit trail.** `app/services/audit_log.py` records every `apply`, `rollback`, `deploy_up`,
+  `deploy_down`, `git_clone` and `git_export` in the per-user `audit_events` table (local mode also
+  mirrors one JSONL line to `~/.kodo/audit.jsonl` / `KODO_AUDIT_LOG_PATH`), outside the repository.
+  Metadata only — never file contents, never tokens, with credential-shaped fragments redacted.
+  Auditing is best-effort and must never break the action it is recording.
 - **Deterministic tests.** `tests/test_deploy_studio.py` mocks the Docker CLI (`_run_cli`) and the
-  GitHub API (`httpx.MockTransport` via `set_transport_override`); pytest must never need a Docker
-  daemon or internet access. The audit log is redirected to `tmp_path` by `tests/conftest.py`.
+  GitHub API (`httpx.MockTransport` via `set_transport_override`); `tests/test_saas_foundation.py`
+  mocks GitHub OAuth the same way. pytest must never need a Docker daemon, database server or
+  internet access; `tests/conftest.py` redirects the audit log and database to `tmp_path`.
 
 ## 3g. Docker-first packaging & CI rules (Phase 7)
 
@@ -271,10 +272,40 @@ Allowed:
 - **Local dev stays supported.** `uvicorn app.main:app --reload` + `npm run dev` against the published
   `:5050` analyzer must keep working; Docker is the primary workflow, not the only one.
 
+## 3h. Multi-tenancy, persistence & auth rules (Phase 8 — active)
+
+- **Two modes, one codebase.** `KODO_MODE=local` must stay zero-friction: no GitHub credentials, a
+  seeded `local` user, SQLite under `KODO_DATA_DIR`/`~/.kodo` (or `/data/kodo` in Docker) and all
+  pre-Phase-8 behaviour (including the JSONL audit mirror) intact. `KODO_MODE=saas` is fail-closed.
+- **Database is configuration, not code.** `KODO_DATABASE_URL` accepts SQLite and any PostgreSQL URL
+  (bundled `--profile saas` service or a managed third party). Never hard-code a DSN, never require a
+  specific provider, and never commit credentials. Schema bootstrap is `create_all` in
+  `app/db/engine.py`; add migrations only if a task explicitly asks for them.
+- **Every workspace path is gated.** Routes that accept a root path must call
+  `enforce_workspace_access(root, user)`: local mode resolves the folder, SaaS mode additionally
+  requires it to resolve inside `<KODO_WORKSPACES_DIR>/<user_id>/` (403 `SAAS_PATH_FORBIDDEN`).
+  Clones land in the user sandbox; deletion may only remove a directory inside it.
+- **Sessions are JWTs in HttpOnly cookies.** HS256 via `app/auth/jwt_utils.py`; `KODO_JWT_SECRET`
+  (≥32 chars) is mandatory in SaaS mode and validated at startup. Also accept
+  `Authorization: Bearer <token>` for API clients. Never log or echo tokens, OAuth secrets or codes.
+- **Tenant data is always scoped.** Rollback snapshots, audit events, workspaces, blueprints and
+  settings are read/written with the authenticated `user_id`. Returning another tenant's `applyId`
+  must be indistinguishable from an unknown one (`404 UNKNOWN_APPLY`).
+- **Secrets never persist.** `user_settings` stores provider/model preferences only; any
+  credential-shaped key (`apiKey`, `token`, `secret`, `password`) is rejected with
+  `400 SECRET_NOT_ALLOWED`. LLM API keys and GitHub tokens stay in the request/browser.
+- **SaaS disables host control.** `/api/v1/deploy/docker/*` returns
+  `403 DOCKER_CONTROL_DISABLED_IN_SAAS`; `/deploy/dry-run` and Git export remain enabled.
+- **Hermetic tests.** `tests/conftest.py` points `KODO_DATABASE_URL` at a per-test temp SQLite file and
+  resets the engine; GitHub OAuth uses `httpx.MockTransport`. No test may need a real database server,
+  Docker daemon, or network access.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
-  (`Path.resolve()` + `is_relative_to`) before opening. Reject traversal with HTTP 400.
+  (`Path.resolve()` + `is_relative_to`) before opening. Reject traversal with HTTP 400. In SaaS mode the
+  requested root must additionally resolve inside the caller's `KODO_WORKSPACES_DIR/<user_id>/` sandbox
+  (403 `SAAS_PATH_FORBIDDEN`) — see §3h.
 - Never follow symlinks out of the root. Never expose absolute filesystem paths to the UI except the
   scanned `rootPath` the user supplied.
 - Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv` when walking.
@@ -314,7 +345,8 @@ Allowed:
 
 - `dotnet build services/analyzer-csharp` succeeds.
 - `python -m pytest services/api-python/tests` succeeds (including the Phase 4 generator suite, which
-  re-scans generated projects and asserts a 100/100 self-audit).
+  re-scans generated projects and asserts a 100/100 self-audit, and the Phase 8 suite covering
+  restart-safe rollback, tenant isolation, SaaS 401/403 gates and mocked GitHub OAuth).
 - `python -m ruff check` on changed Python files succeeds.
 - `npm run build` in `apps/web` succeeds (type-check + bundle).
 - The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens

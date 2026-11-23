@@ -1,8 +1,35 @@
-"""Runtime configuration (environment driven, no external settings dependency)."""
+"""Runtime configuration (environment driven, no external settings dependency).
+
+Kodo runs in two modes:
+
+* ``KODO_MODE=local`` (default) — zero-friction self-hosting: SQLite on the ``kodo-data`` volume (or
+  ``~/.kodo/kodo.db`` outside Docker), a seeded ``local`` user and no OAuth credentials required.
+* ``KODO_MODE=saas`` — fail-closed multi-tenancy: a strong ``KODO_JWT_SECRET`` is mandatory, every
+  API call needs a session JWT, workspaces are confined to per-user sandboxes and host Docker
+  control is disabled.
+
+The database is fully configurable through ``KODO_DATABASE_URL``: SQLite stays the zero-setup
+default while any SQLAlchemy URL (for example a managed PostgreSQL such as Supabase, Neon, RDS or
+Railway) can be supplied later in ``.env`` without code changes.
+"""
 
 from __future__ import annotations
 
 import os
+import secrets
+from dataclasses import dataclass
+from pathlib import Path
+
+from sqlalchemy.engine import make_url
+
+MODE_LOCAL = "local"
+MODE_SAAS = "saas"
+VALID_MODES = (MODE_LOCAL, MODE_SAAS)
+MIN_JWT_SECRET_LENGTH = 32
+
+DEFAULT_PUBLIC_URL = "http://localhost:3000"
+DEFAULT_JWT_TTL_HOURS = 24
+DEFAULT_GITHUB_SCOPES = "read:user user:email"
 
 # Vite dev server origins only. The Docker stack serves the UI same-origin through Nginx, so it
 # never needs CORS; extend or replace this list with KODO_CORS_ORIGINS for custom deployments.
@@ -21,6 +48,10 @@ MAX_PATCH_BYTES = 2_000_000
 MAX_APPLY_FILES = 200
 
 
+class ConfigurationError(RuntimeError):
+    """Raised when the process is configured in a way that cannot be served safely."""
+
+
 def csharp_analyzer_url() -> str:
     return os.getenv("KODO_CSHARP_URL", "http://localhost:5050").rstrip("/")
 
@@ -30,3 +61,128 @@ def cors_origins() -> list[str]:
     if not configured:
         return list(DEFAULT_CORS_ORIGINS)
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
+def data_dir() -> Path:
+    """Directory that holds the database outside Docker (inside Docker it is ``/data/kodo``)."""
+    configured = os.getenv("KODO_DATA_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    docker_volume = Path("/data/kodo")
+    if docker_volume.is_dir():
+        return docker_volume
+    return Path.home() / ".kodo"
+
+
+def _default_database_url() -> str:
+    database = data_dir() / "kodo.db"
+    # ``sqlite:///`` + absolute POSIX path yields the required four slashes; Windows drive paths
+    # (``C:/...``) work with three.
+    return f"sqlite:///{database.as_posix()}"
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def _mode() -> str:
+    raw = os.getenv("KODO_MODE", MODE_LOCAL).strip().lower()
+    return raw if raw in VALID_MODES else MODE_LOCAL
+
+
+_ephemeral_jwt_secret: str | None = None
+
+
+def _ephemeral_secret() -> str:
+    """Local mode runs without configuration; the generated secret only lives in this process."""
+    global _ephemeral_jwt_secret
+    if _ephemeral_jwt_secret is None:
+        _ephemeral_jwt_secret = secrets.token_urlsafe(48)
+    return _ephemeral_jwt_secret
+
+
+@dataclass(frozen=True)
+class Settings:
+    mode: str
+    database_url: str
+    jwt_secret: str
+    jwt_ttl_hours: int
+    cookie_secure: bool
+    public_url: str
+    github_client_id: str
+    github_client_secret: str
+    github_scopes: str
+
+    @property
+    def is_saas(self) -> bool:
+        return self.mode == MODE_SAAS
+
+    @property
+    def github_oauth_configured(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
+
+    @property
+    def session_cookie_max_age(self) -> int:
+        return self.jwt_ttl_hours * 3600
+
+    @property
+    def oauth_redirect_uri(self) -> str:
+        return f"{self.public_url}/api/v1/auth/github/callback"
+
+
+def get_settings() -> Settings:
+    """Read the environment on every call so tests and restarts can flip modes without a cache."""
+    mode = _mode()
+    configured_secret = os.getenv("KODO_JWT_SECRET", "").strip()
+    if configured_secret:
+        jwt_secret = configured_secret
+    elif mode == MODE_SAAS:
+        raise ConfigurationError(
+            f"KODO_MODE=saas requires KODO_JWT_SECRET with at least {MIN_JWT_SECRET_LENGTH} characters."
+        )
+    else:
+        jwt_secret = _ephemeral_secret()
+
+    public_url = os.getenv("KODO_PUBLIC_URL", DEFAULT_PUBLIC_URL).strip().rstrip("/") or DEFAULT_PUBLIC_URL
+    cookie_secure_setting = os.getenv("KODO_COOKIE_SECURE", "auto").strip().lower()
+    if cookie_secure_setting in {"true", "1", "yes", "on"}:
+        cookie_secure = True
+    elif cookie_secure_setting in {"false", "0", "no", "off"}:
+        cookie_secure = False
+    else:
+        cookie_secure = public_url.startswith("https://")
+
+    return Settings(
+        mode=mode,
+        database_url=os.getenv("KODO_DATABASE_URL", "").strip() or _default_database_url(),
+        jwt_secret=jwt_secret,
+        jwt_ttl_hours=_env_int("KODO_JWT_TTL_HOURS", DEFAULT_JWT_TTL_HOURS),
+        cookie_secure=cookie_secure,
+        public_url=public_url,
+        github_client_id=os.getenv("KODO_GITHUB_CLIENT_ID", "").strip(),
+        github_client_secret=os.getenv("KODO_GITHUB_CLIENT_SECRET", "").strip(),
+        github_scopes=os.getenv("KODO_GITHUB_SCOPES", DEFAULT_GITHUB_SCOPES).strip() or DEFAULT_GITHUB_SCOPES,
+    )
+
+
+def validate_startup() -> Settings:
+    """Fail fast on unsafe SaaS configuration before the first request is served."""
+    settings = get_settings()
+    if settings.is_saas and len(settings.jwt_secret) < MIN_JWT_SECRET_LENGTH:
+        raise ConfigurationError(
+            f"KODO_MODE=saas requires KODO_JWT_SECRET with at least {MIN_JWT_SECRET_LENGTH} characters."
+        )
+    if not settings.database_url:
+        raise ConfigurationError("KODO_DATABASE_URL must not be empty.")
+    try:
+        make_url(settings.database_url)
+    except Exception as exc:
+        raise ConfigurationError(f"KODO_DATABASE_URL is not a valid SQLAlchemy URL: {exc}") from exc
+    return settings

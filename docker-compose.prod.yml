@@ -14,6 +14,16 @@ services:
     build: !reset null
     image: ghcr.io/${KODO_IMAGE_OWNER:-harifaka}/kodo-api-python:${KODO_TAG:-latest}
     ports: !reset []
+    # Production defaults to SaaS. Set a >=32 character KODO_JWT_SECRET and point
+    # KODO_DATABASE_URL at PostgreSQL (bundled `--profile saas` or a managed provider).
+    environment:
+      KODO_MODE: ${KODO_MODE:-saas}
+      KODO_DATABASE_URL: ${KODO_DATABASE_URL:-sqlite:////data/kodo/kodo.db}
+      KODO_JWT_SECRET: ${KODO_JWT_SECRET:-}
+      KODO_PUBLIC_URL: ${KODO_PUBLIC_URL:-http://localhost:3000}
+      KODO_COOKIE_SECURE: ${KODO_COOKIE_SECURE:-auto}
+      KODO_GITHUB_CLIENT_ID: ${KODO_GITHUB_CLIENT_ID:-}
+      KODO_GITHUB_CLIENT_SECRET: ${KODO_GITHUB_CLIENT_SECRET:-}
     restart: unless-stopped
 
   web:

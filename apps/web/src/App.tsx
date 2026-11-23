@@ -5,6 +5,7 @@ import { CodeInspector } from './components/CodeInspector';
 import { DeployStudio } from './components/DeployStudio';
 import { DiffPreview } from './components/DiffPreview';
 import { EmptyState } from './components/EmptyState';
+import { LoginScreen } from './components/LoginScreen';
 import { MacroGraph } from './components/MacroGraph';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { TopBar } from './components/TopBar';
@@ -41,6 +42,7 @@ import {
   type Draft,
 } from './lib/draft';
 import { buildGraph } from './lib/layout';
+import type { AuthMeResponse, WorkspaceSummary } from './types/account';
 import type { PlanPreview } from './types/ai';
 import type {
   AuditFinding,
@@ -81,6 +83,8 @@ export default function App() {
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiServerConfigured, setAiServerConfigured] = useState(false);
   const [aiFixingId, setAiFixingId] = useState<string | null>(null);
+  const [auth, setAuth] = useState<AuthMeResponse | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const health = useHealth();
   const aiSettings = useAiSettings();
 
@@ -104,6 +108,36 @@ export default function App() {
       .catch(() => setAiServerConfigured(false));
     return () => controller.abort();
   }, [aiSettings]);
+
+  const refreshAuth = useCallback(async () => {
+    try {
+      setAuth(await api.fetchAuthMe());
+    } catch {
+      // Local mode remains usable even if /auth/me is unreachable during startup.
+      setAuth({ mode: 'local', authenticated: true, user: null, githubOAuthConfigured: false });
+    }
+  }, []);
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const result = await api.fetchWorkspaces();
+      setWorkspaces(result.workspaces);
+    } catch {
+      setWorkspaces([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAuth();
+  }, [refreshAuth]);
+
+  useEffect(() => {
+    if (!auth?.authenticated) {
+      setWorkspaces([]);
+      return;
+    }
+    void refreshWorkspaces();
+  }, [auth?.authenticated, auth?.user?.id, refreshWorkspaces, workspaceRevision]);
 
   const draftView = useMemo(() => (workspace ? applyDraft(workspace, draft) : null), [workspace, draft]);
   const nodes = draftView?.nodes ?? NO_NODES;
@@ -343,6 +377,61 @@ export default function App() {
     [scanWorkspace],
   );
 
+  const handleSelectWorkspace = useCallback(
+    async (target: WorkspaceSummary) => {
+      setPath(target.localPath);
+      setError(null);
+      setLastApply(null);
+      setRollbackConflict(null);
+      try {
+        const result = await scanWorkspace(target.localPath, { resetView: true });
+        setNotice(
+          `Switched to ${result.name} — ${result.nodes.length} component(s) scanned.`,
+        );
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    },
+    [scanWorkspace],
+  );
+
+  const currentRoot = workspace?.rootPath ?? '';
+
+  const handleDeleteWorkspace = useCallback(
+    async (target: WorkspaceSummary) => {
+      setError(null);
+      try {
+        await api.deleteWorkspace(target.id);
+        await refreshWorkspaces();
+        if (path.trim() === target.localPath || currentRoot === target.localPath) {
+          setWorkspace(null);
+          setPath('');
+          setLastApply(null);
+          setRollbackConflict(null);
+          setNotice(null);
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    },
+    [currentRoot, path, refreshWorkspaces],
+  );
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // Clearing local state is still the right outcome if the call fails.
+    }
+    setWorkspace(null);
+    setPath('');
+    setPlan(null);
+    setLastApply(null);
+    setRollbackConflict(null);
+    setNotice(null);
+    await refreshAuth();
+  }, [refreshAuth]);
+
   const handleAiAuditFix = useCallback(
     async (finding: AuditFinding) => {
       if (!workspace || aiFixingId) {
@@ -402,6 +491,10 @@ export default function App() {
 
   const openInspector = useCallback(() => setTab('code'), []);
 
+  if (auth?.mode === 'saas' && !auth.authenticated) {
+    return <LoginScreen auth={auth} />;
+  }
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-ink-950 text-slate-200">
       <TopBar
@@ -414,6 +507,16 @@ export default function App() {
         aiLabel={aiLabel}
         aiConfigured={aiConfigured}
         onOpenAiSettings={() => setAiModalOpen(true)}
+        mode={auth?.mode ?? 'local'}
+        authenticated={auth?.authenticated ?? true}
+        authUser={auth?.user ?? null}
+        githubOAuthConfigured={auth?.githubOAuthConfigured ?? false}
+        onSignOut={() => void handleSignOut()}
+        workspaces={workspaces}
+        onSelectWorkspace={handleSelectWorkspace}
+        onDeleteWorkspace={(workspace) => void handleDeleteWorkspace(workspace)}
+        onWorkspaceCloned={(localPath) => void handleWorkspaceCloned(localPath)}
+        onRefreshWorkspaces={() => void refreshWorkspaces()}
       />
 
       {error && (
@@ -556,6 +659,7 @@ export default function App() {
                     rootPath={view.rootPath}
                     workspaceName={view.name}
                     detectedStacks={view.detectedStacks}
+                    mode={auth?.mode ?? 'local'}
                     revision={workspaceRevision}
                     onPreviewReady={(preview) => {
                       setPlan(preview);

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from app.auth.dependencies import CurrentUser
 from app.services.git_remote import (
     CloneResult,
     ExportResult,
@@ -19,6 +20,7 @@ from app.services.git_remote import (
     clone_repository,
     export_branch,
 )
+from app.services.paths import enforce_workspace_access
 
 router = APIRouter()
 
@@ -44,20 +46,32 @@ class ExportRequest(GitModel):
 
 
 @router.post("/api/v1/git/clone", response_model=CloneResult, tags=["git"])
-def git_clone(request: CloneRequest) -> CloneResult:
-    """Shallow-clone a remote repository into ``KODO_WORKSPACES_DIR`` for immediate scanning."""
+def git_clone(
+    request: CloneRequest,
+    user: CurrentUser,
+) -> CloneResult:
+    """Shallow-clone a remote repository into the user's workspace directory for scanning."""
     try:
-        return clone_repository(request.repo_url, branch=request.branch, token=request.token)
+        return clone_repository(
+            request.repo_url,
+            branch=request.branch,
+            token=request.token,
+            user_id=user.id,
+        )
     except GitRemoteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
 
 
 @router.post("/api/v1/git/export", response_model=ExportResult, tags=["git"])
-def git_export(request: ExportRequest) -> ExportResult:
+def git_export(
+    request: ExportRequest,
+    user: CurrentUser,
+) -> ExportResult:
     """Branch + commit the workspace, and optionally push and open a GitHub pull request."""
+    root = enforce_workspace_access(request.root_path, user)
     try:
         return export_branch(
-            request.root_path,
+            str(root),
             branch_name=request.branch_name,
             commit_message=request.commit_message,
             create_pr=request.create_pr,

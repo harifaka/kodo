@@ -2,20 +2,46 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.api.account_routes import router as account_router
 from app.api.git_routes import router as git_router
 from app.api.routes import router
-from app.config import DEFAULT_API_PORT, cors_origins
+from app.auth.context import reset_current_user_id, set_current_user_id
+from app.auth.dependencies import authenticate_request
+from app.auth.github_oauth import router as auth_router
+from app.config import (
+    DEFAULT_API_PORT,
+    ConfigurationError,
+    cors_origins,
+    get_settings,
+    validate_startup,
+)
+from app.db import init_db
+from app.db.repository import LOCAL_USER_ID
 from app.deploy.routes import router as deploy_router
 from app.llm.routes import router as ai_router
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Fail fast on unsafe SaaS configuration, then create tables and seed the local user.
+    validate_startup()
+    init_db()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–6. "
+        "Kodo Architecture Control Center — Phases 1–8. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
         "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
@@ -34,10 +60,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """SaaS fail-closed gate: session auth for every API call, no host Docker control."""
+    path = request.url.path
+    if not path.startswith("/api/v1"):
+        return await call_next(request)
+
+    try:
+        settings = get_settings()
+    except ConfigurationError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": {"code": "CONFIGURATION_ERROR", "message": str(exc)}},
+        )
+
+    if settings.is_saas and path.startswith("/api/v1/deploy/docker/"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": {
+                    "code": "DOCKER_CONTROL_DISABLED_IN_SAAS",
+                    "message": (
+                        "Host Docker control is disabled in SaaS mode. Dockerfile/Compose generation, "
+                        "the diff review and Git export remain fully available."
+                    ),
+                }
+            },
+        )
+
+    is_auth_route = path.startswith("/api/v1/auth/")
+    user = None if is_auth_route else authenticate_request(request)
+    if settings.is_saas and not is_auth_route and user is None:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Sign in with GitHub to use this Kodo instance.",
+                }
+            },
+        )
+    if user is not None:
+        request.state.user = user
+    token = set_current_user_id(user.id if user is not None else LOCAL_USER_ID)
+
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_user_id(token)
+
+
 app.include_router(router)
 app.include_router(ai_router)
 app.include_router(deploy_router)
 app.include_router(git_router)
+app.include_router(auth_router)
+app.include_router(account_router)
 
 
 @app.get("/", tags=["system"])
@@ -66,6 +146,10 @@ async def root() -> dict[str, str]:
         "auditLog": "GET /api/v1/audit-log",
         "gitClone": "POST /api/v1/git/clone",
         "gitExport": "POST /api/v1/git/export",
+        "authMe": "GET /api/v1/auth/me",
+        "workspaces": "GET /api/v1/workspaces",
+        "blueprints": "GET /api/v1/blueprints",
+        "userSettings": "GET /api/v1/user/settings",
     }
 
 

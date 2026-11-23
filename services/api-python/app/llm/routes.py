@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from app.auth.dependencies import CurrentUser
 from app.llm.client import LlmClient
 from app.llm.config import LlmOverride, is_local_base_url, resolve_config
 from app.llm.errors import LlmError
@@ -24,6 +25,7 @@ from app.models.blueprint import Blueprint, BlueprintStack
 from app.models.ir import AuditFinding, WorkspaceIR
 from app.patching.models import DryRunResponse
 from app.patching.paths import PatchRejected
+from app.services.paths import enforce_workspace_access
 
 router = APIRouter()
 
@@ -126,11 +128,15 @@ async def spec_to_blueprint_route(request: SpecToBlueprintRequest) -> SpecToBlue
 
 
 @router.post("/api/v1/ai/audit-fix", response_model=AiPatchResponse, tags=["ai"])
-async def audit_fix_route(request: AuditFixRequest) -> AiPatchResponse:
+async def audit_fix_route(
+    request: AuditFixRequest,
+    user: CurrentUser,
+) -> AiPatchResponse:
     """Propose a fix for one audit finding. Read-only: the response is a normal dry-run plan."""
+    root = enforce_workspace_access(request.root_path, user)
     try:
         result = await audit_fix(
-            root_path=request.root_path,
+            root_path=str(root),
             finding=request.finding,
             workspace_ir=request.workspace_ir,
             client=_client(request.llm_config),
@@ -144,11 +150,15 @@ async def audit_fix_route(request: AuditFixRequest) -> AiPatchResponse:
 
 
 @router.post("/api/v1/ai/implement-method", response_model=AiPatchResponse, tags=["ai"])
-async def implement_method_route(request: ImplementMethodRequest) -> AiPatchResponse:
+async def implement_method_route(
+    request: ImplementMethodRequest,
+    user: CurrentUser,
+) -> AiPatchResponse:
     """Implement one method inside a known file. Read-only: the result opens in the diff preview."""
+    root = enforce_workspace_access(request.root_path, user)
     try:
         result = await implement_method(
-            root_path=request.root_path,
+            root_path=str(root),
             file_path=request.file_path,
             node_id=request.node_id,
             method_name=request.method_name,

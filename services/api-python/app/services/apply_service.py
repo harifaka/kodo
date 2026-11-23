@@ -3,7 +3,7 @@
 Every write goes through this module. It refuses to touch anything outside ``rootPath``, refuses
 to overwrite files that changed since the dry-run (SHA-256 optimistic concurrency), inspects the
 Git working tree before writing, writes atomically through a sibling temp file + ``os.replace``,
-and keeps a bounded in-memory rollback snapshot of the last few applies.
+and persists a rollback snapshot per user so undo survives container restarts.
 
 Phase 4 adds create-only patches (``isNewFile: true``): a new file may never overwrite an existing
 one (409 ``FILE_EXISTS`` aborts the whole batch), missing parent folders are created inside the
@@ -17,15 +17,15 @@ import stat
 import tempfile
 import threading
 import uuid
-from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from app.config import MAX_APPLY_FILES, MAX_PATCH_BYTES
+from app.db import repository
+from app.db.repository import LOCAL_USER_ID, MAX_ROLLBACK_BATCHES
 from app.patching.models import sha256_hex
 from app.patching.paths import (
     PatchRejected,
@@ -39,8 +39,6 @@ from app.services.audit_log import (
     record_event,
 )
 from app.services.git_safety import GitStatus, inspect_git_status
-
-MAX_ROLLBACK_BATCHES = 10
 
 
 class ApplyModel(BaseModel):
@@ -115,23 +113,6 @@ class _Prepared:
 
 
 @dataclass(frozen=True)
-class _SnapshotFile:
-    file_path: str
-    previous_content: str | None
-    written_sha256: str
-    is_new_file: bool
-
-
-@dataclass(frozen=True)
-class _RollbackBatch:
-    apply_id: str
-    root_path: str
-    created_at: datetime
-    files: tuple[_SnapshotFile, ...]
-    created_dirs: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class _RollbackAction:
     path: Path
     display: str
@@ -139,14 +120,13 @@ class _RollbackAction:
     is_new_file: bool
 
 
-_batches: deque[_RollbackBatch] = deque(maxlen=MAX_ROLLBACK_BATCHES)
 _lock = threading.Lock()
 
 
-def apply_patches(request: ApplyRequest) -> ApplyResponse:
+def apply_patches(request: ApplyRequest, *, user_id: str = LOCAL_USER_ID) -> ApplyResponse:
     """Validate the whole batch, then write every file. Nothing is written on any rejection."""
     try:
-        response = _apply_locked(request)
+        response = _apply_locked(request, user_id)
     except ApplyRejected as exc:
         record_event(
             AUDIT_ACTION_APPLY,
@@ -165,13 +145,13 @@ def apply_patches(request: ApplyRequest) -> ApplyResponse:
     return response
 
 
-def _apply_locked(request: ApplyRequest) -> ApplyResponse:
+def _apply_locked(request: ApplyRequest, user_id: str) -> ApplyResponse:
     with _lock:
         root = _root(request.root_path)
         prepared, warnings = _preflight(root, request)
 
         apply_id = uuid.uuid4().hex
-        written: list[_SnapshotFile] = []
+        entries: list[dict[str, object]] = []
         restore_plan: list[tuple[Path, bytes | None]] = []
         created_dirs: list[str] = []
         applied: list[str] = []
@@ -179,19 +159,22 @@ def _apply_locked(request: ApplyRequest) -> ApplyResponse:
 
         try:
             for item in prepared:
+                file_created_dirs: list[str] = []
                 if item.is_new_file:
                     for directory in _ensure_parent(item.path, root):
                         relative = directory.relative_to(root).as_posix()
+                        file_created_dirs.append(relative)
                         if relative not in created_dirs:
                             created_dirs.append(relative)
                 _atomic_write(item.path, item.proposed_bytes)
-                written.append(
-                    _SnapshotFile(
-                        file_path=item.display,
-                        previous_content=item.previous_content,
-                        written_sha256=sha256_hex(item.proposed_bytes),
-                        is_new_file=item.is_new_file,
-                    )
+                entries.append(
+                    {
+                        "filePath": item.display,
+                        "previousContent": item.previous_content,
+                        "writtenSha256": sha256_hex(item.proposed_bytes),
+                        "isNewFile": item.is_new_file,
+                        "createdDirs": file_created_dirs,
+                    }
                 )
                 restore_plan.append(
                     (
@@ -212,15 +195,13 @@ def _apply_locked(request: ApplyRequest) -> ApplyResponse:
                 f"Writing failed ({exc}); every file from this batch was restored.",
             ) from exc
 
-        _batches.append(
-            _RollbackBatch(
-                apply_id=apply_id,
-                root_path=str(root),
-                created_at=datetime.now(UTC),
-                files=tuple(written),
-                created_dirs=tuple(created_dirs),
+        try:
+            repository.save_rollback_batch(user_id, apply_id, str(root), entries)
+        except Exception:
+            warnings.append(
+                "The rollback snapshot could not be saved to the database, so this apply cannot be "
+                "undone after the process restarts. Git remains the source of truth."
             )
-        )
 
         return ApplyResponse(
             apply_id=apply_id,
@@ -231,14 +212,15 @@ def _apply_locked(request: ApplyRequest) -> ApplyResponse:
         )
 
 
-def rollback(request: RollbackRequest) -> RollbackResponse:
+def rollback(request: RollbackRequest, *, user_id: str = LOCAL_USER_ID) -> RollbackResponse:
     """Undo a batch: restore overwritten bytes and delete created files (``force`` overrides drift)."""
+    batch = repository.load_rollback_batch(user_id, request.apply_id)
     try:
-        response, root_path = _rollback_locked(request)
+        response = _rollback_locked(request, batch)
     except ApplyRejected as exc:
         record_event(
             AUDIT_ACTION_ROLLBACK,
-            _batch_root(request.apply_id),
+            batch.root_path if batch is not None else "",
             f"Rejected ({exc.code}): {exc}",
             status="failed",
         )
@@ -247,7 +229,7 @@ def rollback(request: RollbackRequest) -> RollbackResponse:
     count = len(response.restored_files) + len(response.deleted_files)
     record_event(
         AUDIT_ACTION_ROLLBACK,
-        root_path,
+        batch.root_path if batch is not None else "",
         f"Rolled back {count} file(s): {len(response.restored_files)} restored, "
         f"{len(response.deleted_files)} deleted",
         files_count=count,
@@ -255,25 +237,25 @@ def rollback(request: RollbackRequest) -> RollbackResponse:
     return response
 
 
-def _batch_root(apply_id: str, fallback: str = "") -> str:
-    for batch in _batches:
-        if batch.apply_id == apply_id:
-            return batch.root_path
-    return fallback
-
-
-def _rollback_locked(request: RollbackRequest) -> tuple[RollbackResponse, str]:
+def _rollback_locked(
+    request: RollbackRequest,
+    batch: repository.RollbackBatchRecord | None,
+) -> RollbackResponse:
     with _lock:
-        batch = next((item for item in reversed(_batches) if item.apply_id == request.apply_id), None)
         if batch is None:
             raise ApplyRejected(
                 404,
                 "UNKNOWN_APPLY",
-                "No rollback snapshot exists for this applyId. Kodo keeps only the last "
-                f"{MAX_ROLLBACK_BATCHES} applies (server memory, lost on restart).",
+                "No rollback snapshot exists for this applyId in your account. Kodo keeps the last "
+                f"{MAX_ROLLBACK_BATCHES} applies per user.",
             )
 
         root = _root(batch.root_path)
+        batch_created_dirs = tuple(
+            dict.fromkeys(
+                directory for item in batch.files for directory in item.created_dirs
+            )
+        )
         plans: list[_RollbackAction] = []
         conflicts: list[str] = []
 
@@ -329,9 +311,9 @@ def _rollback_locked(request: RollbackRequest) -> tuple[RollbackResponse, str]:
         except OSError as exc:
             raise ApplyRejected(500, "WRITE_FAILED", f"Rollback failed while writing: {exc}") from exc
 
-        _prune_directories(root, batch.created_dirs)
-        _batches.remove(batch)
-        return RollbackResponse(restored_files=restored, deleted_files=deleted), batch.root_path
+        _prune_directories(root, batch_created_dirs)
+        repository.delete_rollback_batch(batch.apply_id)
+        return RollbackResponse(restored_files=restored, deleted_files=deleted)
 
 
 def _matches(path: Path, written_sha256: str, force: bool) -> bool:

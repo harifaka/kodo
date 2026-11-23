@@ -1,8 +1,9 @@
-"""Append-only local audit log (Phase 6).
+"""Audit trail: per-user rows in the database plus a local JSONL mirror.
 
-Every guarded write, Docker lifecycle action and Git export appends one JSON line to
-``~/.kodo/audit.jsonl`` (or ``KODO_AUDIT_LOG_PATH``). The log lives outside the analysed
-repository on purpose: auditing never pollutes the user's workspace or Git history.
+Every guarded write, Docker lifecycle action and Git export is recorded for the authenticated user.
+The database is the system of record (per-user isolation, survives restarts); in local mode the same
+event is also mirrored to ``~/.kodo/audit.jsonl`` (or ``KODO_AUDIT_LOG_PATH``) so existing
+self-hosted tooling keeps working.
 
 Only structured metadata is stored — never file contents, environment values or tokens. Summaries
 are additionally redacted for credential-shaped strings, and every write is best-effort so an
@@ -20,6 +21,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+from app.auth.context import current_user_id
+from app.config import get_settings
+from app.db import repository
 
 AUDIT_ACTION_APPLY = "apply"
 AUDIT_ACTION_ROLLBACK = "rollback"
@@ -89,13 +94,38 @@ def record_event(
     files_count: int = 0,
     status: str = "success",
     timestamp: str | None = None,
+    user_id: str | None = None,
 ) -> None:
-    """Append one event. Never raises: audit logging must not break the caller's operation."""
+    """Record one event. Never raises: audit logging must not break the caller's operation."""
+    owner = user_id or current_user_id()
+    clean_summary = redact(summary)
+    moment = _parse_timestamp(timestamp)
+
+    try:
+        repository.record_audit_event(
+            owner,
+            action,
+            str(root_path),
+            clean_summary,
+            max(0, int(files_count)),
+            status,
+            moment,
+        )
+    except Exception:
+        pass
+
+    # Local mode keeps the append-only JSONL mirror for self-hosted tooling compatibility.
+    try:
+        if get_settings().is_saas:
+            return
+    except Exception:
+        return
+
     entry = {
         "timestamp": timestamp or _now(),
         "action": action,
         "rootPath": str(root_path),
-        "summary": redact(summary),
+        "summary": clean_summary,
         "filesCount": max(0, int(files_count)),
         "status": status,
     }
@@ -107,6 +137,36 @@ def record_event(
             handle.write(payload + "\n")
     except (OSError, ValueError):
         return
+
+
+def read_user_events(user_id: str, limit: int = DEFAULT_AUDIT_LIMIT) -> list[AuditEntry]:
+    """Newest-first audit rows belonging strictly to ``user_id``."""
+    clamped = max(1, min(int(limit), MAX_AUDIT_ENTRIES))
+    try:
+        rows = repository.read_audit_events(user_id, clamped)
+    except Exception:
+        return []
+    return [
+        AuditEntry(
+            timestamp=row.timestamp,
+            action=row.action,
+            rootPath=row.root_path,
+            summary=row.summary,
+            filesCount=row.files_count,
+            status=row.status,
+        )
+        for row in rows
+    ]
+
+
+def _parse_timestamp(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def read_events(limit: int = DEFAULT_AUDIT_LIMIT) -> list[AuditEntry]:
@@ -164,6 +224,7 @@ __all__ = [
     "AuditEntry",
     "audit_log_path",
     "read_events",
+    "read_user_events",
     "record_event",
     "redact",
 ]

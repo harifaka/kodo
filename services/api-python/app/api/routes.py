@@ -11,14 +11,16 @@ from pydantic.alias_generators import to_camel
 
 from app import __version__
 from app.audit import run_audit
+from app.auth.dependencies import CurrentUser
 from app.config import (
     MAX_AUDIT_NODES,
     MAX_AUDIT_RELATIONS,
     MAX_INSPECT_BYTES,
     csharp_analyzer_url,
 )
+from app.db import repository
 from app.generators import GeneratorError
-from app.models.blueprint import Blueprint, load_blueprint
+from app.models.blueprint import BLUEPRINT_FILE_NAME, Blueprint, load_blueprint
 from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
 from app.patching.csharp_patcher import patch_csharp
 from app.patching.java_patcher import patch_java
@@ -42,6 +44,7 @@ from app.services.apply_service import (
 )
 from app.services.csharp_client import check_health
 from app.services.git_safety import GitStatus, inspect_git_status
+from app.services.paths import enforce_workspace_access
 from app.services.scaffold_service import build_scaffold_plan
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
 
@@ -145,11 +148,31 @@ async def health() -> HealthResponse:
 
 
 @router.post("/api/v1/scan", response_model=WorkspaceIR, tags=["analysis"])
-async def scan(request: ScanRequest) -> WorkspaceIR:
+async def scan(
+    request: ScanRequest,
+    user: CurrentUser,
+) -> WorkspaceIR:
+    root = enforce_workspace_access(request.path, user)
     try:
-        return await build_workspace(request.path)
+        workspace = await build_workspace(str(root))
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _remember_scan(user.id, workspace)
+    return workspace
+
+
+def _remember_scan(user_id: str, workspace: WorkspaceIR) -> None:
+    try:
+        repository.record_workspace_scan(
+            user_id,
+            name=workspace.name,
+            local_path=workspace.root_path,
+            health_score=workspace.audit.score,
+        )
+    except Exception:
+        # Workspace metadata is a convenience; a failed write must not fail the scan.
+        pass
 
 
 @router.post("/api/v1/audit", response_model=AuditReport, tags=["analysis"])
@@ -169,10 +192,14 @@ async def audit_preview(request: AuditRequest) -> AuditReport:
 
 
 @router.post("/api/v1/dry-run", response_model=DryRunResponse, tags=["patching"])
-async def dry_run(request: DryRunRequest) -> DryRunResponse:
+async def dry_run(
+    request: DryRunRequest,
+    user: CurrentUser,
+) -> DryRunResponse:
     """Compute proposed file contents in memory. No file is created, modified or deleted."""
     try:
-        targets = build_targets(request.root_path, request.operations)
+        root = enforce_workspace_access(request.root_path, user)
+        targets = build_targets(str(root), request.operations)
     except PatchRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -202,27 +229,41 @@ async def dry_run(request: DryRunRequest) -> DryRunResponse:
 
 @router.get("/api/v1/blueprint", response_model=BlueprintResponse, tags=["builder"])
 def get_blueprint(
+    user: CurrentUser,
     root: str = Query(..., description="Workspace root exactly as returned by /api/v1/scan."),
 ) -> BlueprintResponse:
     """Load ``kodo.blueprint.json`` from the workspace root, if present."""
-    try:
-        root_path = Path(root).expanduser().resolve(strict=True)
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail="Workspace root does not exist.") from exc
-
-    if not root_path.is_dir():
-        raise HTTPException(status_code=400, detail="Workspace root is not a directory.")
-
+    root_path = enforce_workspace_access(root, user)
     exists, blueprint, warnings = load_blueprint(root_path)
+    if blueprint is not None:
+        _persist_blueprint(user.id, root_path, blueprint)
     return BlueprintResponse(exists=exists, blueprint=blueprint, warnings=warnings)
 
 
+def _persist_blueprint(user_id: str, root: Path, blueprint: Blueprint) -> None:
+    try:
+        repository.save_blueprint(
+            user_id,
+            workspace_path=str(root),
+            name=blueprint.project_name,
+            stack=str(blueprint.stack),
+            blueprint_json=blueprint.render(),
+        )
+    except Exception:
+        # Saved blueprints are a convenience index; never fail the blueprint read/apply.
+        pass
+
+
 @router.post("/api/v1/scaffold/dry-run", response_model=DryRunResponse, tags=["builder"])
-def scaffold_dry_run(request: ScaffoldRequest) -> DryRunResponse:
+def scaffold_dry_run(
+    request: ScaffoldRequest,
+    user: CurrentUser,
+) -> DryRunResponse:
     """Render a blueprint into a reviewable patch plan. Nothing is written to disk."""
+    root = enforce_workspace_access(request.root_path, user)
     try:
         return build_scaffold_plan(
-            request.root_path,
+            str(root),
             request.blueprint,
             include_project_skeleton=request.include_project_skeleton,
             save_blueprint=request.save_blueprint,
@@ -241,44 +282,61 @@ def scaffold_dry_run(request: ScaffoldRequest) -> DryRunResponse:
 
 @router.get("/api/v1/git/status", response_model=GitStatus, tags=["safety"])
 def git_status(
+    user: CurrentUser,
     root: str = Query(..., description="Workspace root exactly as returned by /api/v1/scan."),
 ) -> GitStatus:
     """Read-only Git inspection: Kodo never runs a mutating Git command."""
-    try:
-        root_path = Path(root).expanduser().resolve(strict=True)
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail="Workspace root does not exist.") from exc
-
-    if not root_path.is_dir():
-        raise HTTPException(status_code=400, detail="Workspace root is not a directory.")
-
+    root_path = enforce_workspace_access(root, user)
     return inspect_git_status(str(root_path))
 
 
 @router.post("/api/v1/apply", response_model=ApplyResponse, tags=["patching"])
-def apply_to_disk(request: ApplyRequest) -> ApplyResponse:
+def apply_to_disk(
+    request: ApplyRequest,
+    user: CurrentUser,
+) -> ApplyResponse:
     """Write reviewed dry-run patches to disk behind Git + SHA-256 + path-containment guards."""
+    root = enforce_workspace_access(request.root_path, user)
     try:
-        return apply_patches(request)
+        response = apply_patches(request, user_id=user.id)
     except ApplyRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
 
+    for patch in request.patches:
+        if patch.file_path.replace("\\", "/").endswith(BLUEPRINT_FILE_NAME):
+            blueprint = _parse_blueprint(patch.proposed_content)
+            if blueprint is not None:
+                _persist_blueprint(user.id, root, blueprint)
+    return response
+
+
+def _parse_blueprint(content: str) -> Blueprint | None:
+    try:
+        return Blueprint.model_validate_json(content)
+    except ValueError:
+        return None
+
 
 @router.post("/api/v1/apply/rollback", response_model=RollbackResponse, tags=["patching"])
-def rollback_apply(request: RollbackRequest) -> RollbackResponse:
+def rollback_apply(
+    request: RollbackRequest,
+    user: CurrentUser,
+) -> RollbackResponse:
     """Restore the previous bytes of an apply batch (aborts if a file changed, unless forced)."""
     try:
-        return rollback(request)
+        return rollback(request, user_id=user.id)
     except ApplyRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
 
 
 @router.get("/api/v1/file", response_model=FileContent, tags=["inspection"])
 async def read_file(
+    user: CurrentUser,
     root: str = Query(..., description="Workspace root exactly as returned by /api/v1/scan."),
     rel_path: str = Query(..., alias="relPath", description="File path relative to the workspace root."),
 ) -> FileContent:
-    target = _resolve_inside_root(root, rel_path)
+    root_path = enforce_workspace_access(root, user)
+    target = _resolve_inside_root(str(root_path), rel_path)
 
     try:
         size = target.stat().st_size

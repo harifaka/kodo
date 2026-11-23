@@ -1,7 +1,7 @@
 {
   "name": "kodo-web",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Kodo — Architecture Control Center (scan, audit, guarded apply, multi-stack builder)",
   "scripts": {

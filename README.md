@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator and one Roslyn analyzer image.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Docker-First](https://img.shields.io/badge/Status%20v0.2%20%C2%B7%20Phases%201--7%20delivered-brightgreen.svg)
+![Status: SaaS Foundation](https://img.shields.io/badge/Status%20v0.3%20%C2%B7%20Phases%201--8%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -37,6 +37,7 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
             v
     Orchestrator API (Python FastAPI, :8088)
     Core IR | Tree-sitter (Java/TS/JS) | DeepSeek / Ollama (OpenAI-compatible) | Docker
+    SQLAlchemy (SQLite / PostgreSQL) | GitHub OAuth + JWT sessions (KODO_MODE=saas)
             |
             | Internal HTTP (JSON)
             v
@@ -48,7 +49,7 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
 
 ---
 
-## Quick Start (Phases 1–7, Docker-first)
+## Quick Start (Phases 1–8, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -129,16 +130,25 @@ optional sidecar/API compose template instead of an unusable Linux image). **Con
 drives `docker compose up -d --build` / `down` with live health badges and a filterable log viewer, and
 **Git Export** clones HTTPS GitHub/GitLab repositories into Kodo's own workspaces folder, or branches,
 commits and (optionally) opens a pull request with a session-only token. Every action is recorded in
-`~/.kodo/audit.jsonl` and shown in the audit table.
+the per-user audit trail (SQLite/PostgreSQL; local mode also mirrors `~/.kodo/audit.jsonl`) and shown
+in the audit table.
+
+**Two modes, one stack.** `KODO_MODE=local` (default) is zero-configuration: SQLite on the
+`kodo-data` volume and a seeded local user, no OAuth needed. `KODO_MODE=saas` is fail-closed: set a
+≥32-character `KODO_JWT_SECRET`, sign in with GitHub, and every workspace is confined to
+`KODO_WORKSPACES_DIR/<user_id>/` while host Docker control is disabled. The database is just an env
+var — `KODO_DATABASE_URL` accepts SQLite or any PostgreSQL URL (bundled profile or a managed service
+such as Supabase/Neon/RDS) so you can choose local or third-party storage later in `.env`.
 
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phase 7)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–8)
 
-**Phases 1–6 are the v0.1.0 MVP and Phase 7 is the Docker-first delivery** — Kodo now covers the full
-**Blueprint → Audit → Safe Edit → Deploy** loop and ships as one container stack.
+**Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery and Phase 8 is the SaaS
+foundation (v0.3.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Deploy** loop and
+ships as one container stack for both local self-hosting and multi-tenant SaaS.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -184,15 +194,22 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## What's Next (v0.2+ Roadmap: Phases 8–10)
+### Phase 8: SaaS Foundation (GitHub OAuth, Multi-Tenancy & Persistence) - Delivered (v0.3.0)
+- **GitHub OAuth + JWT sessions:** `/api/v1/auth/{me,github/login,github/callback,logout}` with signed OAuth `state`, HttpOnly `kodo_session` cookies, and startup rejection of a missing/short `KODO_JWT_SECRET` in SaaS mode.
+- **Persistent, configurable database:** SQLAlchemy 2.0 with SQLite (WAL, local default) or PostgreSQL. `KODO_DATABASE_URL` lets you point Kodo at the bundled `--profile saas` Postgres or any managed third-party PostgreSQL later in `.env`.
+- **Durable state:** rollback snapshots now persist per user (and survive restarts), plus `workspaces`, `saved_blueprints`, `audit_events` (per-user isolation) and non-secret `user_settings` (API keys are rejected server-side).
+- **Fail-closed multi-tenancy:** every workspace route resolves strictly inside `KODO_WORKSPACES_DIR/<user_id>/` (`403 SAAS_PATH_FORBIDDEN` otherwise); Git clones land in the user sandbox; `GET /api/v1/workspaces` + a Workspace Switcher/Clone Repo replace raw host paths; `/deploy/docker/*` returns `403 DOCKER_CONTROL_DISABLED_IN_SAAS` while Docker artifact generation and Git PR export stay active.
+- **Tests:** `tests/test_saas_foundation.py` (15 hermetic tests) covers restart-safe rollback, tenant isolation, sandbox deletion, SaaS 401/403 gates and a fully mocked OAuth round-trip.
 
-Phases 1–7 are delivered. The next chapter is the **multi-tenant, sandbox-verified, hybrid System 1 +
-System 2** platform. Phase 7 shipped the Docker-first packaging that everything else builds on. Full
-detail and definitions of done: [ROADMAP.md](ROADMAP.md).
+---
+
+## What's Next (Roadmap: Phases 9–10)
+
+Phases 1–8 are delivered. The next chapter is the **sandbox-verified, hybrid System 1 + System 2**
+platform. Full detail and definitions of done: [ROADMAP.md](ROADMAP.md).
 
 | Phase | Focus | Headline |
 |---|---|---|
-| **8** | SaaS Foundation | GitHub OAuth + JWT sessions, persistent SQLite (local) / PostgreSQL (SaaS) for rollback history, blueprints and user settings, per-user isolated workspaces and audit logs, and a `KODO_MODE=saas` flag that disables arbitrary host-path scanning. |
 | **9** | Ephemeral Builder Images | Network-restricted, disposable builder containers (Maven/JDK 21, .NET 8 SDK, Node 22) that compile and unit-test AI-proposed patches before apply or PR export — zero host toolchains. |
 | **10** | Laya Decision Layer (System 1 + System 2) | **Laya** — Convai Innovations' Apache-2.0 421M non-autoregressive decision model — runs locally (`/v1/systemone`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek, and pre-screen AI diffs; every decision becomes an inspectable ADR. Falls back cleanly to deterministic rules when Laya is offline. |
 

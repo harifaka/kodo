@@ -18,6 +18,8 @@ interface DeployStudioProps {
   /** Workspace name from the Core IR, used as the default project/compose name. */
   workspaceName: string;
   detectedStacks: string[];
+  /** `saas` hides host Docker control; generation and Git export stay available. */
+  mode?: string;
   /** Bumped after an apply/rollback so the Docker panel re-reads container state. */
   revision?: number;
   onPreviewReady: (preview: PlanPreview) => void;
@@ -31,6 +33,7 @@ export function DeployStudio({
   rootPath,
   workspaceName,
   detectedStacks,
+  mode = 'local',
   revision = 0,
   onPreviewReady,
   onWorkspaceCloned,
@@ -240,11 +243,25 @@ export function DeployStudio({
             </div>
           </section>
 
-          <DockerControlPanel
-            rootPath={rootPath}
-            revision={revision}
-            onChanged={bumpAudit}
-          />
+          {mode === 'saas' ? (
+            <section className="rounded-lg border border-sky-400/25 bg-sky-400/[0.05] px-3 py-2.5">
+              <p className="flex items-center gap-2 text-[11.5px] font-semibold text-sky-100">
+                <DeployIcon className="h-4 w-4 text-sky-300" />
+                Container Control
+              </p>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-slate-300">
+                Host Docker control is disabled in SaaS mode, so Kodo never reaches a shared Docker
+                daemon. Dockerfile/Compose generation, the Monaco diff review, guarded apply and Git
+                PR export remain fully active — deploy the generated artifacts in your own CI/CD.
+              </p>
+            </section>
+          ) : (
+            <DockerControlPanel
+              rootPath={rootPath}
+              revision={revision}
+              onChanged={bumpAudit}
+            />
+          )}
         </div>
 
         <div className="space-y-3">

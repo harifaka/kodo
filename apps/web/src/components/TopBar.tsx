@@ -1,10 +1,12 @@
 import type { FormEvent } from 'react';
 import { api } from '../lib/api';
 import { STACK_META } from '../lib/layers';
+import type { AuthUser, WorkspaceSummary } from '../types/account';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
 import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner } from './icons';
 import { HealthChip } from './HealthScore';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 interface TopBarProps {
   path: string;
@@ -17,6 +19,16 @@ interface TopBarProps {
   aiLabel: string;
   aiConfigured: boolean;
   onOpenAiSettings: () => void;
+  mode: string;
+  authenticated: boolean;
+  authUser: AuthUser | null;
+  githubOAuthConfigured: boolean;
+  onSignOut: () => void;
+  workspaces: WorkspaceSummary[];
+  onSelectWorkspace: (workspace: WorkspaceSummary) => void;
+  onDeleteWorkspace: (workspace: WorkspaceSummary) => void;
+  onWorkspaceCloned: (localPath: string) => void;
+  onRefreshWorkspaces: () => void;
 }
 
 export function TopBar({
@@ -29,6 +41,16 @@ export function TopBar({
   aiLabel,
   aiConfigured,
   onOpenAiSettings,
+  mode,
+  authenticated,
+  authUser,
+  githubOAuthConfigured,
+  onSignOut,
+  workspaces,
+  onSelectWorkspace,
+  onDeleteWorkspace,
+  onWorkspaceCloned,
+  onRefreshWorkspaces,
 }: TopBarProps) {
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -53,29 +75,56 @@ export function TopBar({
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="flex min-w-[320px] flex-1 items-center gap-2">
-        <div className="relative max-w-2xl flex-1">
-          <FolderIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input
-            value={path}
-            onChange={(event) => onPathChange(event.target.value)}
-            spellCheck={false}
-            placeholder="C:\path\to\your\project"
-            aria-label="Workspace folder path"
-            className="w-full rounded-lg border border-ink-600 bg-ink-950/80 py-2 pl-9 pr-3 font-mono text-[12px] text-slate-200 shadow-inner outline-none transition placeholder:text-slate-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/15"
+      {mode === 'saas' ? (
+        <div className="flex min-w-[320px] flex-1 items-center gap-3">
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            activePath={path}
+            onSelect={onSelectWorkspace}
+            onDelete={onDeleteWorkspace}
+            onCloned={onWorkspaceCloned}
+            onRefresh={onRefreshWorkspaces}
           />
+          <span
+            className="truncate font-mono text-[10px] text-slate-600"
+            title={path || undefined}
+          >
+            {path || 'No workspace selected — clone a repo or pick one above'}
+          </span>
+          {scanning && <Spinner className="h-4 w-4 shrink-0 text-sky-300" />}
         </div>
-        <button
-          type="submit"
-          disabled={scanning || !path.trim()}
-          className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-3.5 py-2 text-[12px] font-semibold text-ink-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-ink-600 disabled:text-slate-400"
-        >
-          {scanning ? <Spinner className="h-4 w-4" /> : <ScanIcon className="h-4 w-4" />}
-          {scanning ? 'Scanning…' : 'Scan Project'}
-        </button>
-      </form>
+      ) : (
+        <form onSubmit={handleSubmit} className="flex min-w-[320px] flex-1 items-center gap-2">
+          <div className="relative max-w-2xl flex-1">
+            <FolderIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <input
+              value={path}
+              onChange={(event) => onPathChange(event.target.value)}
+              spellCheck={false}
+              placeholder="C:\path\to\your\project"
+              aria-label="Workspace folder path"
+              className="w-full rounded-lg border border-ink-600 bg-ink-950/80 py-2 pl-9 pr-3 font-mono text-[12px] text-slate-200 shadow-inner outline-none transition placeholder:text-slate-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/15"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={scanning || !path.trim()}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-3.5 py-2 text-[12px] font-semibold text-ink-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-ink-600 disabled:text-slate-400"
+          >
+            {scanning ? <Spinner className="h-4 w-4" /> : <ScanIcon className="h-4 w-4" />}
+            {scanning ? 'Scanning…' : 'Scan Project'}
+          </button>
+        </form>
+      )}
 
       <div className="flex items-center gap-3">
+        {mode === 'saas' ? (
+          authenticated && authUser ? (
+            <UserPill user={authUser} onSignOut={onSignOut} />
+          ) : null
+        ) : (
+          <LocalModeBadge showGithubLink={githubOAuthConfigured} />
+        )}
         {workspace && <HealthChip report={workspace.audit} />}
         {workspace && workspace.detectedStacks.length > 0 && (
           <div className="flex items-center gap-1.5">
@@ -132,6 +181,51 @@ export function TopBar({
         </div>
       </div>
     </header>
+  );
+}
+
+function UserPill({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-ink-600/70 bg-ink-850/70 py-0.5 pl-0.5 pr-1.5">
+      {user.avatarUrl ? (
+        <img
+          src={user.avatarUrl}
+          alt=""
+          className="h-5 w-5 rounded-full border border-ink-600 object-cover"
+        />
+      ) : (
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500/20 text-[9px] font-semibold uppercase text-sky-200">
+          {user.username.slice(0, 1)}
+        </span>
+      )}
+      <span className="max-w-[120px] truncate text-[11px] font-medium text-slate-200">
+        @{user.username}
+      </span>
+      <button
+        type="button"
+        onClick={onSignOut}
+        className="rounded px-1.5 py-0.5 text-[9.5px] text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-200"
+      >
+        Sign out
+      </button>
+    </div>
+  );
+}
+
+function LocalModeBadge({ showGithubLink }: { showGithubLink: boolean }) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/[0.06] px-2.5 py-1">
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      <span className="text-[10.5px] font-medium text-emerald-200">Local Mode</span>
+      {showGithubLink && (
+        <a
+          href={api.githubLoginUrl()}
+          className="rounded px-1 text-[9.5px] text-emerald-300/80 underline-offset-2 transition hover:text-emerald-100 hover:underline"
+        >
+          Sign in with GitHub
+        </a>
+      )}
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–7: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD)
+# Kodo — Developer Setup (Phases 1–8: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -86,8 +86,9 @@ Open **<http://localhost:3000>**. Nginx serves the static Vite bundle and proxie
 - Containers can only read mounted folders. Set `KODO_LOCAL_PROJECTS_DIR` in `.env` to expose a host
   folder as `/projects` (default: the committed empty `./.kodo-empty`), then scan `/projects` or
   `/projects/<subfolder>` in the UI.
-- Persistent state lives in the `kodo-data` volume (`/data/kodo`: audit log + cloned workspaces).
-  `docker compose down -v` deletes it.
+- Persistent state lives in the `kodo-data` volume (`/data/kodo`: SQLite database, local audit-log
+  mirror + cloned workspaces; PostgreSQL uses the separate `kodo-pgdata` volume under the `saas`
+  profile). `docker compose down -v` deletes it.
 
 Check and inspect:
 
@@ -105,6 +106,74 @@ Production hosts pull prebuilt GHCR images instead of building:
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d   # only :3000 is published
 ```
+
+---
+
+## 2a. SaaS mode, GitHub OAuth and the database (Phase 8)
+
+Kodo keeps **one stack** for both modes:
+
+| `KODO_MODE` | Auth | Workspaces | Database | Docker control |
+| --- | --- | --- | --- | --- |
+| `local` (default) | none — seeded `local` user | any accessible host folder | SQLite on `kodo-data` (or `~/.kodo/kodo.db`) | enabled |
+| `saas` | GitHub OAuth + JWT session | sandboxed under `KODO_WORKSPACES_DIR/<user_id>/` only | SQLite or PostgreSQL | disabled (`403`) |
+
+### Local mode (zero configuration)
+
+```powershell
+docker compose up --build
+```
+
+No OAuth credentials and no JWT secret are required. Rollback history, audit events, workspaces,
+saved blueprints and user settings persist in `kodo-data/kodo.db`.
+
+### Database: local SQLite or any third-party PostgreSQL
+
+`KODO_DATABASE_URL` is the only knob; no code change is needed to switch later:
+
+```dotenv
+# SQLite (default; path is inside the kodo-data volume in Docker)
+KODO_DATABASE_URL=sqlite:////data/kodo/kodo.db
+
+# Bundled PostgreSQL (docker compose --profile saas up)
+KODO_DATABASE_URL=postgresql+psycopg://kodo:kodo@postgres:5432/kodo
+
+# Managed PostgreSQL (Supabase / Neon / RDS / Azure / Railway)
+KODO_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require
+```
+
+Tables are created automatically at startup (`create_all`); there is no Alembic migration step yet,
+so start with a fresh database when upgrading an existing v0.2 deployment.
+
+### GitHub OAuth app
+
+1. GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Homepage URL: your `KODO_PUBLIC_URL` (e.g. `https://kodo.example.com`).
+3. Authorization callback URL: `<KODO_PUBLIC_URL>/api/v1/auth/github/callback`.
+4. Copy the client id/secret into `.env` (never commit them).
+
+```dotenv
+KODO_MODE=saas
+# >= 32 characters: python -c "import secrets; print(secrets.token_urlsafe(48))"
+KODO_JWT_SECRET=replace-with-a-long-random-secret
+KODO_PUBLIC_URL=https://kodo.example.com
+KODO_GITHUB_CLIENT_ID=...
+KODO_GITHUB_CLIENT_SECRET=...
+KODO_COOKIE_SECURE=auto
+```
+
+Then:
+
+```powershell
+docker compose --profile saas up --build      # adds PostgreSQL on kodo-net
+# or point KODO_DATABASE_URL at a managed PostgreSQL and run without the profile
+docker compose up --build -d
+```
+
+SaaS guarantees: every `/api/v1/*` call needs a valid session (except `/api/v1/auth/*`), workspace
+paths are rejected with `403 SAAS_PATH_FORBIDDEN` unless they resolve inside your sandbox, audit rows
+and rollback snapshots are scoped to the authenticated user, and `/api/v1/deploy/docker/*` is
+disabled while Dockerfile/Compose generation and Git export remain available.
 
 ---
 

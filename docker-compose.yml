@@ -33,6 +33,18 @@ services:
       KODO_CSHARP_URL: http://analyzer-csharp:5050
       KODO_AUDIT_LOG_PATH: /data/kodo/audit.jsonl
       KODO_WORKSPACES_DIR: /data/kodo/workspaces
+      # `local` is zero-configuration. `saas` requires KODO_JWT_SECRET and enables tenant isolation.
+      KODO_MODE: ${KODO_MODE:-local}
+      # Any SQLAlchemy URL works; default is SQLite on the kodo-data volume. For the bundled
+      # Postgres profile use: postgresql+psycopg://kodo:kodo@postgres:5432/kodo
+      KODO_DATABASE_URL: ${KODO_DATABASE_URL:-sqlite:////data/kodo/kodo.db}
+      KODO_JWT_SECRET: ${KODO_JWT_SECRET:-}
+      KODO_JWT_TTL_HOURS: ${KODO_JWT_TTL_HOURS:-24}
+      KODO_COOKIE_SECURE: ${KODO_COOKIE_SECURE:-auto}
+      KODO_PUBLIC_URL: ${KODO_PUBLIC_URL:-http://localhost:3000}
+      KODO_GITHUB_CLIENT_ID: ${KODO_GITHUB_CLIENT_ID:-}
+      KODO_GITHUB_CLIENT_SECRET: ${KODO_GITHUB_CLIENT_SECRET:-}
+      KODO_GITHUB_SCOPES: ${KODO_GITHUB_SCOPES:-read:user user:email}
       # Empty => the built-in Vite dev origins; the Docker UI is same-origin through Nginx.
       KODO_CORS_ORIGINS: ${KODO_CORS_ORIGINS:-}
       KODO_LLM_BASE_URL: ${KODO_LLM_BASE_URL:-https://api.deepseek.com/v1}
@@ -49,6 +61,10 @@ services:
     depends_on:
       analyzer-csharp:
         condition: service_healthy
+      # Started only with `docker compose --profile saas up`; set KODO_DATABASE_URL to this service.
+      postgres:
+        condition: service_healthy
+        required: false
     networks:
       - kodo-net
     healthcheck:
@@ -57,6 +73,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    restart: unless-stopped
+
+  # Optional SaaS database: `docker compose --profile saas up`.
+  # Point api-python at it with KODO_DATABASE_URL=postgresql+psycopg://kodo:kodo@postgres:5432/kodo
+  # (or any managed PostgreSQL URL such as Supabase/Neon/RDS).
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["saas"]
+    environment:
+      POSTGRES_DB: ${KODO_POSTGRES_DB:-kodo}
+      POSTGRES_USER: ${KODO_POSTGRES_USER:-kodo}
+      POSTGRES_PASSWORD: ${KODO_POSTGRES_PASSWORD:-kodo}
+    volumes:
+      - kodo-pgdata:/var/lib/postgresql/data
+    networks:
+      - kodo-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   web:
@@ -82,6 +120,7 @@ services:
 
 volumes:
   kodo-data:
+  kodo-pgdata:
 
 networks:
   kodo-net:

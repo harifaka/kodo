@@ -25,6 +25,9 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from app.config import get_settings
+from app.db import repository
+from app.db.repository import LOCAL_USER_ID
 from app.generators.base import kebab_case
 from app.patching.paths import PatchRejected, resolve_root
 from app.services.audit_log import (
@@ -39,6 +42,7 @@ from app.services.github_client import (
     parse_github_remote,
     set_transport_override,
 )
+from app.services.paths import user_sandbox_root, workspaces_dir
 
 GIT_TIMEOUT_SECONDS = 60
 CLONE_TIMEOUT_SECONDS = 300
@@ -145,19 +149,21 @@ def validate_branch_name(raw: str) -> str:
     return value
 
 
-def workspaces_dir() -> Path:
-    configured = os.getenv("KODO_WORKSPACES_DIR")
-    if configured and configured.strip():
-        return Path(configured.strip()).expanduser().resolve()
-    return (Path.home() / ".kodo" / "workspaces").resolve()
-
-
-def clone_repository(repo_url: str, *, branch: str | None = None, token: str | None = None) -> CloneResult:
-    """Shallow-clone a remote repository into a managed workspace directory."""
+def clone_repository(
+    repo_url: str,
+    *,
+    branch: str | None = None,
+    token: str | None = None,
+    user_id: str | None = None,
+) -> CloneResult:
+    """Shallow-clone a remote repository into the user's managed workspace directory."""
     url = validate_repo_url(repo_url)
     branch_name = validate_branch_name(branch) if branch and branch.strip() else None
 
-    base = workspaces_dir()
+    owner = user_id or LOCAL_USER_ID
+    # SaaS clones always land inside the per-user sandbox; local mode keeps the flat directory so
+    # existing self-hosted workspaces and scripts are unaffected.
+    base = user_sandbox_root(owner) if get_settings().is_saas else workspaces_dir()
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -193,6 +199,17 @@ def clone_repository(repo_url: str, *, branch: str | None = None, token: str | N
         f"Cloned {urlsplit(url).netloc}{urlsplit(url).path} "
         f"(branch {checked_out or 'default'})",
     )
+    try:
+        repository.remember_workspace(
+            owner,
+            name=slug,
+            local_path=str(target),
+            repo_url=url,
+            branch=checked_out,
+        )
+    except Exception:
+        # A metadata write failure must not undo a successful clone.
+        pass
     return CloneResult(local_path=str(target), repo_url=url, branch=checked_out)
 
 

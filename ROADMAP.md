@@ -4,15 +4,17 @@ This roadmap tracks the delivery of **Kodo** from a read-only architecture visua
 Blueprint -> Audit -> Edit -> Deploy platform.
 
 - **Phases 1–6** are shipped as **v0.1.0 (MVP)** — the original, Tauri-era feature set.
-- **Phase 7** is shipped as **v0.2.0 (Docker-first)** — see below.
-- **Phases 8–10** are the remaining post-MVP direction: SaaS multi-tenancy/persistence, ephemeral
-  builder images, and a System 1 + System 2 hybrid AI stack.
+- **Phase 7** is shipped as **v0.2.0 (Docker-first)** — one Compose stack for local and SaaS.
+- **Phase 8** is shipped as **v0.3.0 (SaaS Foundation)** — GitHub OAuth, multi-tenancy, persistent
+  SQLite/PostgreSQL storage and fail-closed `KODO_MODE=saas` isolation.
+- **Phases 9–10** are the remaining direction: ephemeral builder images and a System 1 + System 2
+  hybrid AI stack.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Future implementation sessions should follow Phases 8–10; Phases 1–7 stay below as
-> delivered history.
+> by local and SaaS. Phases 8 is delivered (v0.3.0); future implementation sessions should follow
+> Phases 9–10. Phases 1–8 stay below as delivered history.
 
 ---
 
@@ -196,12 +198,13 @@ and PRs, and records every action in an append-only local audit log.
 
 ---
 
-## Post-MVP Roadmap (v0.2+ — Docker-First ✅, SaaS & System 1/2 AI next)
+## Post-MVP Roadmap (Docker-First ✅, SaaS Foundation ✅, System 1/2 AI next)
 
 **Direction:** drop the desktop shell, ship one unified Docker stack for both local self-hosting and
 cloud SaaS, guarantee build correctness with sandboxed builder images, and add a fast local
 **System 1** decision layer (**Laya**) in front of the DeepSeek **System 2** reasoning model.
-Phase 7 (Docker-first packaging & CI/CD) is delivered; Phases 8–10 are next.
+Phase 7 (Docker-first packaging & CI/CD) and Phase 8 (SaaS foundation) are delivered; Phases 9–10
+are next.
 
 ## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD ✅
 **Goal:** One command runs the whole Kodo stack locally, and CI builds/tests/publishes every image.
@@ -256,18 +259,42 @@ and GitHub Actions verifies every layer and publishes all three images to GHCR.
 
 ---
 
-## Phase 8: SaaS Foundation (GitHub OAuth, Multi-Tenancy & Persistence)
+## Phase 8: SaaS Foundation (GitHub OAuth, Multi-Tenancy & Persistence) ✅
 **Goal:** Real users, real isolation, persistent history — the SaaS foundation.
 
-- [ ] Implement GitHub OAuth authentication and session/JWT handling.
-- [ ] Add persistent database storage (SQLite for local / PostgreSQL for SaaS) for rollback history,
+**Status:** Delivered as **v0.3.0**. `KODO_MODE=local` stays zero-configuration (SQLite + seeded
+local user); `KODO_MODE=saas` is fail-closed (JWT required, sandboxed workspaces, no host Docker).
+
+- [x] Implement GitHub OAuth authentication and session/JWT handling.
+  - [x] `GET /api/v1/auth/me`, `/auth/github/login` (signed `state` + HttpOnly cookie),
+        `/auth/github/callback` (async `httpx` code exchange + user upsert) and `/auth/logout`.
+  - [x] HS256 session JWT in an HttpOnly `kodo_session` cookie (or `Authorization: Bearer`);
+        `KODO_JWT_SECRET` mandatory (≥32 chars) and startup-rejected when missing in SaaS mode.
+  - [x] `LoginScreen` + TopBar user pill (`@username`, avatar, Sign out) and a Local Mode badge.
+- [x] Add persistent database storage (SQLite for local / PostgreSQL for SaaS) for rollback history,
       saved blueprints, workspace metadata, and user settings (replacing the in-memory rollback deque).
-- [ ] Add per-user isolated audit logs (replacing the single shared `~/.kodo/audit.jsonl`) and isolated
+  - [x] SQLAlchemy 2.0 `app/db/` package with `users`, `workspaces`, `rollback_batches`,
+        `audit_events`, `saved_blueprints` and `user_settings` tables; SQLite WAL + PostgreSQL.
+  - [x] `KODO_DATABASE_URL` is fully configurable in `.env` — bundled `postgres` Compose profile plus
+        any managed PostgreSQL URL (Supabase/Neon/RDS/Railway/Azure) without code changes.
+  - [x] Rollback snapshots persist per user (latest 20) and survive container restarts.
+  - [x] `GET /api/v1/blueprints`, `GET/PUT /api/v1/user/settings` (API keys rejected).
+- [x] Add per-user isolated audit logs (replacing the single shared `~/.kodo/audit.jsonl`) and isolated
       per-user workspace sandboxes.
-- [ ] Enforce `KODO_MODE=saas` vs `local` flag: in SaaS mode, disable arbitrary host-filesystem path
+  - [x] `audit_events` rows are read only by their owner (`GET /api/v1/audit-log`); local mode also
+        mirrors to JSONL for self-hosted tooling compatibility.
+  - [x] `user_sandbox_root()` + `enforce_workspace_access()` gate every workspace route; symlink/`..`
+        escapes and cross-tenant access return `403 SAAS_PATH_FORBIDDEN`.
+  - [x] `GET /api/v1/workspaces`, `DELETE /api/v1/workspaces/{id}`, workspace switcher + Clone Repo.
+- [x] Enforce `KODO_MODE=saas` vs `local` flag: in SaaS mode, disable arbitrary host-filesystem path
       scanning and allow Git-cloned workspaces only.
+  - [x] `/api/v1/deploy/docker/*` returns `403 DOCKER_CONTROL_DISABLED_IN_SAAS`; `/deploy/dry-run`
+        keeps generating Docker artifacts inside the user's sandbox.
 - **Definition of Done:** Multiple real users can log in with GitHub, scan/edit their own repos in
-  strict isolation, and keep rollback/audit history across restarts.
+  strict isolation, and keep rollback/audit history across restarts. ✅ Verified by
+  `tests/test_saas_foundation.py` (15 hermetic tests: restart-safe rollback, audit/rollback/workspace
+  isolation, sandbox deletion, startup rejection, 401/403 gates, mocked OAuth round-trip,
+  blueprint/settings round-trip) with `pytest` (168 passed) and `ruff check app tests` green.
 
 ---
 

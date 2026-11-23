@@ -35,6 +35,13 @@ import type {
   SpecToBlueprintResponse,
   TestConnectionResponse,
 } from '../types/ai';
+import type {
+  AuthMeResponse,
+  BlueprintListResponse,
+  DeleteWorkspaceResponse,
+  UserSettingsResponse,
+  WorkspaceListResponse,
+} from '../types/account';
 
 // Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
 // paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
@@ -68,8 +75,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
       ...init,
+      // GitHub OAuth session cookies are HttpOnly; every call must carry them.
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     });
   } catch {
     throw new ApiError(`Kodo API is unreachable at ${API_BASE_LABEL}. Is the FastAPI service running?`, 0);
@@ -100,6 +109,44 @@ export const api = {
 
   health(signal?: AbortSignal): Promise<HealthResponse> {
     return request<HealthResponse>('/health', { signal });
+  },
+
+  fetchAuthMe(signal?: AbortSignal): Promise<AuthMeResponse> {
+    return request<AuthMeResponse>('/api/v1/auth/me', { signal });
+  },
+
+  githubLoginUrl(): string {
+    return `${API_BASE}/api/v1/auth/github/login`;
+  },
+
+  logout(): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' });
+  },
+
+  fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceListResponse> {
+    return request<WorkspaceListResponse>('/api/v1/workspaces', { signal });
+  },
+
+  deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponse> {
+    return request<DeleteWorkspaceResponse>(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  blueprints(signal?: AbortSignal): Promise<BlueprintListResponse> {
+    return request<BlueprintListResponse>('/api/v1/blueprints', { signal });
+  },
+
+  fetchUserSettings(signal?: AbortSignal): Promise<UserSettingsResponse> {
+    return request<UserSettingsResponse>('/api/v1/user/settings', { signal });
+  },
+
+  saveUserSettings(settings: Record<string, unknown>): Promise<UserSettingsResponse> {
+    return request<UserSettingsResponse>('/api/v1/user/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings }),
+    });
   },
 
   scan(path: string): Promise<WorkspaceIR> {
