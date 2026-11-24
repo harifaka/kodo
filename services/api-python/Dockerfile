@@ -18,6 +18,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ---- docker cli --------------------------------------------------------------
+# The Phase 9 builder drives the host daemon through the CLI (mounted socket). Only the static
+# client binary is copied — no daemon, no root privileges, no socket by default.
+FROM docker:27-cli AS dockercli
+
 # ---- runtime -----------------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
@@ -43,6 +48,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=build --chown=kodo:kodo /opt/venv /opt/venv
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --chown=kodo:kodo app ./app
 
 # Nothing in the runtime reads packages/core-ir; the schema copies are only used by the test suite.

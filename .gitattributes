@@ -1,0 +1,3 @@
+# Shell scripts must stay LF: the builder images execute entrypoint.sh with /bin/sh, and a CRLF
+# shebang fails inside Linux containers. Python/source files keep the platform default.
+*.sh text eol=lf

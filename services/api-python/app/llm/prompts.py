@@ -94,6 +94,52 @@ Rules:
   entities stay inside the persistence boundary."""
 
 
+SYSTEM_FIX_BUILD_ERRORS = """You are Kodo's build doctor. A sandboxed compiler/test run rejected code that a
+developer is about to apply. Fix ONLY the reported compile/test errors.
+Return JSON only:
+{
+  "explanation": "One short paragraph: the root cause and the minimal fix.",
+  "files": [
+    {"filePath": "src/path/As/Given.cs", "proposedContent": "the COMPLETE corrected file text", "summary": ["short bullet"]}
+  ]
+}
+Rules:
+- Only edit files present in the prompt; use their filePath verbatim (forward slashes).
+- proposedContent must be the complete file, never a diff, snippet or placeholder.
+- Preserve all business logic, public APIs, comments, formatting and line endings outside the fix.
+- Fix missing imports/usings, type mismatches, nullability, signatures and test expectations first.
+- Do not silence errors by deleting code or disabling tests unless the diagnostic proves the code is
+  dead; never add new third-party dependencies.
+- If the diagnostics cannot be fixed without violating these rules, return an empty files array."""
+
+
+def fix_build_prompt(
+    stack: str,
+    diagnostics: list[dict],
+    compiler_output: str,
+    sources: list[tuple[str, str]],
+    *,
+    packed_ir: str = "",
+) -> str:
+    lines = [
+        f"## Build stack\n{stack}",
+        "",
+        "## Compiler / test diagnostics",
+        json.dumps(diagnostics[:60], indent=2, ensure_ascii=False),
+        "",
+        "## Build log excerpt (truncated, ANSI-free)",
+        "```",
+        compiler_output.strip(),
+        "```",
+    ]
+    if packed_ir:
+        lines += ["", "## Compact workspace IR", packed_ir]
+    lines += ["", "## Files you may edit (complete content)"]
+    for file_path, content in sources:
+        lines += [f"### {file_path}", "```", content, "```", ""]
+    return "\n".join(lines)
+
+
 def spec_prompt(spec: str, stack: BlueprintStack, project_name: str | None, base_package: str | None) -> str:
     lines = [f"Target stack: {stack}", _STACK_GUIDANCE[str(stack)]]
     if project_name:
@@ -148,8 +194,10 @@ def implement_prompt(
 __all__ = [
     "SYSTEM_AUDIT_FIX",
     "SYSTEM_BLUEPRINT",
+    "SYSTEM_FIX_BUILD_ERRORS",
     "SYSTEM_IMPLEMENT",
     "audit_fix_prompt",
+    "fix_build_prompt",
     "implement_prompt",
     "spec_prompt",
 ]

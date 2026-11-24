@@ -16,6 +16,7 @@ Railway) can be supplied later in ``.env`` without code changes.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,22 @@ MAX_AUDIT_RELATIONS = 50_000
 MAX_PATCH_BYTES = 2_000_000
 # Guarded apply writes at most this many files per atomic batch.
 MAX_APPLY_FILES = 200
+
+# Phase 9 ephemeral builders. The images are pre-warmed, non-root and only ever consume a staged
+# tar stream: the host workspace is never mounted and the container never sees the real files.
+BUILDER_STACKS = ("java", "csharp", "nodejs")
+BUILDER_NETWORK_MODES = ("none", "bridge", "host")
+DEFAULT_BUILDER_IMAGE_JAVA = "kodo-builder-java:local"
+DEFAULT_BUILDER_IMAGE_CSHARP = "kodo-builder-csharp:local"
+DEFAULT_BUILDER_IMAGE_NODEJS = "kodo-builder-nodejs:local"
+DEFAULT_BUILDER_NETWORK_MODE = "none"
+DEFAULT_BUILDER_TIMEOUT_SECONDS = 120
+DEFAULT_BUILDER_MEMORY = "1g"
+DEFAULT_BUILDER_CPUS = "1"
+DEFAULT_BUILDER_PIDS_LIMIT = 256
+# Staged snapshot ceiling: a tar stream comfortably above any hand-written project, far below RAM.
+MAX_BUILDER_SNAPSHOT_BYTES = 50 * 1024 * 1024
+MAX_BUILDER_LOG_BYTES = 256 * 1024
 
 
 class ConfigurationError(RuntimeError):
@@ -95,6 +112,62 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 def _mode() -> str:
     raw = os.getenv("KODO_MODE", MODE_LOCAL).strip().lower()
     return raw if raw in VALID_MODES else MODE_LOCAL
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def builders_enabled() -> bool:
+    """Local self-hosting verifies builds by default; SaaS stays opt-in (builder daemon access)."""
+    return _env_flag("KODO_BUILDERS_ENABLED", _mode() != MODE_SAAS)
+
+
+_BUILDER_ENV = {
+    "java": ("KODO_BUILDER_IMAGE_JAVA", DEFAULT_BUILDER_IMAGE_JAVA),
+    "csharp": ("KODO_BUILDER_IMAGE_CSHARP", DEFAULT_BUILDER_IMAGE_CSHARP),
+    "nodejs": ("KODO_BUILDER_IMAGE_NODEJS", DEFAULT_BUILDER_IMAGE_NODEJS),
+}
+
+
+def builder_image(stack: str) -> str:
+    entry = _BUILDER_ENV.get(stack)
+    if entry is None:
+        return ""
+    env_name, default = entry
+    return os.getenv(env_name, "").strip() or default
+
+
+def builder_network_mode() -> str:
+    """Hardened default is ``none``; only an explicit environment override changes it."""
+    raw = os.getenv("KODO_BUILDER_NETWORK_MODE", "").strip().lower()
+    return raw if raw in BUILDER_NETWORK_MODES else DEFAULT_BUILDER_NETWORK_MODE
+
+
+def builder_timeout_seconds() -> int:
+    return _env_int("KODO_BUILDER_TIMEOUT_SECONDS", DEFAULT_BUILDER_TIMEOUT_SECONDS, minimum=5)
+
+
+def builder_memory() -> str:
+    """Docker memory limit; validated so a bad env value cannot break ``docker create``."""
+    raw = os.getenv("KODO_BUILDER_MEMORY", "").strip().lower()
+    return raw if re.fullmatch(r"\d+(?:\.\d+)?[bkmg]?", raw) else DEFAULT_BUILDER_MEMORY
+
+
+def builder_cpus() -> str:
+    raw = os.getenv("KODO_BUILDER_CPUS", "").strip()
+    return raw if re.fullmatch(r"\d+(?:\.\d+)?", raw) else DEFAULT_BUILDER_CPUS
+
+
+def builder_pids_limit() -> int:
+    return _env_int("KODO_BUILDER_PIDS_LIMIT", DEFAULT_BUILDER_PIDS_LIMIT, minimum=16)
 
 
 _ephemeral_jwt_secret: str | None = None

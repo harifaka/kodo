@@ -8,16 +8,21 @@ normal ``DryRunResponse`` patches. The only writer in Kodo remains the guarded a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from app.builders.models import BuildDiagnostic, BuildPatchInput
+from app.config import MAX_PATCH_BYTES
 from app.llm.client import ChatMessage, LlmClient, parse_llm_json
 from app.llm.context_packer import pack_node_focus, pack_workspace
 from app.llm.errors import LlmError
 from app.llm.prompts import (
     SYSTEM_AUDIT_FIX,
     SYSTEM_BLUEPRINT,
+    SYSTEM_FIX_BUILD_ERRORS,
     SYSTEM_IMPLEMENT,
     audit_fix_prompt,
+    fix_build_prompt,
     implement_prompt,
     spec_prompt,
 )
@@ -25,6 +30,15 @@ from app.llm.sources import MAX_PATCH_FILES, SourceFile, read_sources
 from app.models.blueprint import BLUEPRINT_SCHEMA_VERSION, Blueprint, BlueprintStack
 from app.models.ir import AuditFinding, WorkspaceIR
 from app.patching.models import DryRunResponse, PatchResult, sha256_hex
+from app.patching.paths import (
+    LANGUAGE_BY_SUFFIX,
+    PatchRejected,
+    resolve_member,
+    resolve_new_member,
+    resolve_root,
+)
+
+MAX_COMPILER_OUTPUT_CHARS = 12_000
 
 
 @dataclass(frozen=True)
@@ -215,6 +229,230 @@ async def implement_method(
     )
 
 
+@dataclass(frozen=True)
+class _FixTarget:
+    file_path: str
+    language: str
+    original_content: str
+    original_sha256: str | None
+    basis: str
+    is_new_file: bool
+
+
+async def fix_build_errors(
+    *,
+    root_path: str,
+    stack: str,
+    diagnostics: list[BuildDiagnostic],
+    compiler_output: str,
+    patches: list[BuildPatchInput] | None,
+    workspace_ir: WorkspaceIR | None,
+    client: LlmClient,
+) -> AiPatchResult:
+    """Propose a fix for sandbox compiler/test errors as a normal dry-run plan.
+
+    The model sees only the files named by the diagnostics (bounded to three). When a patch is
+    already in flight the proposed content is used as the basis, while ``originalContent`` and
+    ``originalSha256`` stay the disk truth so the guarded apply still verifies freshness.
+    """
+    warnings: list[str] = []
+    targets = _fix_targets(root_path, diagnostics, patches or [], warnings)
+    if not targets:
+        raise LlmError(
+            "NO_SOURCE_FILE",
+            "None of the files named by the build diagnostics could be read from the workspace.",
+            422,
+        )
+
+    packed_ir = ""
+    if workspace_ir is not None:
+        packed = pack_workspace(workspace_ir)
+        packed_ir = packed.text
+        warnings.extend(packed.warnings)
+
+    model = client.config.code_model
+    completion = await client.chat(
+        [
+            ChatMessage("system", SYSTEM_FIX_BUILD_ERRORS),
+            ChatMessage(
+                "user",
+                fix_build_prompt(
+                    stack,
+                    [item.model_dump(by_alias=True, mode="json") for item in diagnostics],
+                    (compiler_output or "")[:MAX_COMPILER_OUTPUT_CHARS],
+                    [(target.file_path, target.basis) for target in targets],
+                    packed_ir=packed_ir,
+                ),
+            ),
+        ],
+        model=model,
+        temperature=0.1,
+    )
+
+    data = parse_llm_json(completion.content)
+    explanation, edits = _edits_payload(data)
+    built, patch_warnings = _build_fix_patches(targets, edits)
+    warnings.extend(patch_warnings)
+
+    return AiPatchResult(
+        response=DryRunResponse(patches=built, warnings=warnings),
+        explanation=explanation,
+        model_used=model,
+    )
+
+
+def _fix_targets(
+    root_path: str,
+    diagnostics: list[BuildDiagnostic],
+    patches: list[BuildPatchInput],
+    warnings: list[str],
+) -> list[_FixTarget]:
+    root = resolve_root(root_path)
+    by_path = {_normalize(patch.file_path): patch for patch in patches}
+
+    ordered: list[str] = []
+    for diagnostic in diagnostics:
+        normalized = _normalize(diagnostic.file_path)
+        if normalized and normalized not in ordered:
+            ordered.append(normalized)
+    if not ordered:
+        ordered = list(by_path)
+
+    targets: list[_FixTarget] = []
+    seen: set[str] = set()
+    for normalized in ordered:
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        patch = by_path.get(normalized)
+        try:
+            target = _fix_target(root, normalized, patch)
+        except PatchRejected as exc:
+            # Path traversal and absolute paths stay fatal; a missing/oversized secondary file is
+            # skipped so the primary diagnostic can still be fixed.
+            if exc.status_code == 400:
+                raise
+            warnings.append(f"{normalized}: skipped ({exc})")
+            continue
+        if target is None:
+            continue
+        targets.append(target)
+        if len(targets) >= MAX_PATCH_FILES:
+            break
+    return targets
+
+
+def _fix_target(root: Path, relative: str, patch: BuildPatchInput | None) -> _FixTarget | None:
+    language = LANGUAGE_BY_SUFFIX.get(Path(relative).suffix.lower(), "plaintext")
+
+    if patch is not None and patch.is_new_file:
+        created = resolve_new_member(root, patch.file_path)
+        return _FixTarget(
+            file_path=created.relative_to(root).as_posix(),
+            language=language,
+            original_content="",
+            original_sha256=None,
+            basis=patch.proposed_content,
+            is_new_file=True,
+        )
+
+    try:
+        member = resolve_member(root, patch.file_path if patch is not None else relative)
+    except PatchRejected as exc:
+        if exc.status_code == 404 and patch is None:
+            return None
+        raise
+
+    raw = member.read_bytes()
+    if len(raw) > MAX_PATCH_BYTES:
+        raise PatchRejected(
+            413,
+            f"{relative} is larger than the {MAX_PATCH_BYTES // 1_000_000} MB AI context limit.",
+        )
+
+    return _FixTarget(
+        file_path=member.relative_to(root).as_posix(),
+        language=language,
+        original_content=raw.decode("utf-8", errors="replace"),
+        original_sha256=sha256_hex(raw),
+        basis=patch.proposed_content if patch is not None else raw.decode("utf-8", errors="replace"),
+        is_new_file=False,
+    )
+
+
+def _build_fix_patches(
+    targets: list[_FixTarget], edits: list[Any]
+) -> tuple[list[PatchResult], list[str]]:
+    by_path = {target.file_path: target for target in targets}
+    by_lower = {target.file_path.lower(): target for target in targets}
+    patches: list[PatchResult] = []
+    warnings: list[str] = []
+    seen: set[str] = set()
+
+    for edit in edits:
+        if not isinstance(edit, dict):
+            raise LlmError("INVALID_PATCH", "The model returned a malformed file edit.", 422)
+
+        requested = str(edit.get("filePath") or "").replace("\\", "/").strip()
+        while requested.startswith("./"):
+            requested = requested[2:]
+        proposed = edit.get("proposedContent")
+        if not isinstance(proposed, str):
+            raise LlmError("INVALID_PATCH", f"The edit for '{requested}' has no proposedContent string.", 422)
+
+        target = by_path.get(requested) or by_lower.get(requested.lower())
+        if target is None:
+            warnings.append(
+                f"The model also proposed edits to '{requested or '(no path)'}', which Kodo did not send; "
+                "those edits were dropped."
+            )
+            continue
+        if target.file_path in seen:
+            continue
+        seen.add(target.file_path)
+
+        if proposed == target.basis:
+            warnings.append(f"{target.file_path}: the model returned no change for this file.")
+
+        summary = edit.get("summary")
+        if isinstance(summary, str):
+            summary_text = summary
+        elif isinstance(summary, list):
+            summary_text = "; ".join(str(item) for item in summary if str(item).strip())
+        else:
+            summary_text = ""
+
+        patches.append(
+            PatchResult(
+                file_path=target.file_path,
+                language=target.language,
+                original_content=target.original_content,
+                original_sha256=target.original_sha256,
+                proposed_content=proposed,
+                summary=summary_text or "AI fixed build errors",
+                warnings=[],
+                is_new_file=target.is_new_file,
+            )
+        )
+
+    if not patches:
+        raise LlmError(
+            "INVALID_PATCH",
+            "The model did not propose any build fix for the files Kodo provided.",
+            422,
+        )
+    return patches, warnings
+
+
+def _normalize(raw: str) -> str:
+    normalized = (raw or "").replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("/workspace/"):
+        normalized = normalized[len("/workspace/") :]
+    return normalized
+
+
 def _blueprint_payload(content: str) -> tuple[dict[str, Any], str]:
     data = parse_llm_json(content)
     if isinstance(data, dict) and isinstance(data.get("blueprint"), dict):
@@ -361,6 +599,7 @@ __all__ = [
     "AiPatchResult",
     "SpecBlueprintResult",
     "audit_fix",
+    "fix_build_errors",
     "implement_method",
     "spec_to_blueprint",
 ]

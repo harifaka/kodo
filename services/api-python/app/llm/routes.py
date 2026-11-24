@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.auth.dependencies import CurrentUser
+from app.builders.models import BuildDiagnostic, BuildPatchInput
 from app.llm.client import LlmClient
 from app.llm.config import LlmOverride, is_local_base_url, resolve_config
 from app.llm.errors import LlmError
@@ -18,6 +19,7 @@ from app.llm.workflows import (
     AiPatchResult,
     SpecBlueprintResult,
     audit_fix,
+    fix_build_errors,
     implement_method,
     spec_to_blueprint,
 )
@@ -63,6 +65,16 @@ class ImplementMethodRequest(AiModel):
     method_name: str = Field(..., min_length=1, max_length=200)
     instruction: str = Field(..., min_length=1, max_length=4_000)
     workspace_ir: WorkspaceIR
+    llm_config: LlmOverride | None = None
+
+
+class FixBuildErrorsRequest(AiModel):
+    root_path: str = Field(..., min_length=1)
+    stack: str = Field(..., min_length=1, max_length=40)
+    diagnostics: list[BuildDiagnostic] = Field(default_factory=list, max_length=200)
+    compiler_output: str = Field(default="", max_length=60_000)
+    patches: list[BuildPatchInput] = Field(default_factory=list, max_length=200)
+    workspace_ir: WorkspaceIR | None = None
     llm_config: LlmOverride | None = None
 
 
@@ -163,6 +175,31 @@ async def implement_method_route(
             node_id=request.node_id,
             method_name=request.method_name,
             instruction=request.instruction,
+            workspace_ir=request.workspace_ir,
+            client=_client(request.llm_config),
+        )
+    except PatchRejected as exc:
+        raise _reject(exc) from exc
+    except LlmError as exc:
+        raise _fail(exc) from exc
+
+    return _patch_response(result)
+
+
+@router.post("/api/v1/ai/fix-build-errors", response_model=AiPatchResponse, tags=["ai"])
+async def fix_build_errors_route(
+    request: FixBuildErrorsRequest,
+    user: CurrentUser,
+) -> AiPatchResponse:
+    """Propose a fix for sandbox compiler/test errors. Read-only: the result opens in the diff preview."""
+    root = enforce_workspace_access(request.root_path, user)
+    try:
+        result = await fix_build_errors(
+            root_path=str(root),
+            stack=request.stack,
+            diagnostics=request.diagnostics,
+            compiler_output=request.compiler_output,
+            patches=request.patches,
             workspace_ir=request.workspace_ir,
             client=_client(request.llm_config),
         )

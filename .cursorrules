@@ -40,9 +40,10 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   configuration. The **Tauri desktop wrapper has been removed** — do not reintroduce desktop shells,
   `@tauri-apps/*` dependencies or desktop-only origins.
 - **Phase 8 (SaaS foundation) is active** — multi-tenancy, persistence and auth rules live in §3h.
-- **Phases 9–10** (ephemeral builder images and the **Laya** System 1 decision layer served at
-  `/v1/systemone`) are planned in `ROADMAP.md` but are **NOT active for implementation**. Do not add
-  Phase 9–10 code, workflows, services or compose profiles unless a task explicitly asks for them.
+- **Phase 9 (ephemeral builders) is active** — sandboxed compile/test verification rules live in §3i.
+- **Phase 10** (the **Laya** System 1 decision layer served at `/v1/systemone`) is planned in
+  `ROADMAP.md` but is **NOT active for implementation**. Do not add Phase 10 code, workflows, services
+  or compose profiles unless a task explicitly asks for them.
 
 ## 3. Write policy (hard rule)
 
@@ -86,6 +87,8 @@ Allowed:
 - Writing reviewed patches through `app/services/apply_service.py` only (§3c, §3d).
 - Running `docker compose` inspection/up/down through `app/deploy/runner.py` (§3f) and
   cloning/exporting through `app/services/git_remote.py` (§3f).
+- Streaming an **in-memory** tar snapshot into a disposable, non-root, network-isolated builder
+  container through `app/builders/runner.py` (§3i) — the workspace is never mounted or written.
 - Serving cached in-memory analysis results and rollback snapshots to the UI.
 
 ## 3a. Audit engine rules
@@ -300,6 +303,37 @@ Allowed:
   resets the engine; GitHub OAuth uses `httpx.MockTransport`. No test may need a real database server,
   Docker daemon, or network access.
 
+## 3i. Ephemeral builder sandbox rules (Phase 9 — active)
+
+- **Zero workspace mutation.** `Verify Build` never writes to the workspace. `app/builders/staging.py`
+  walks the root, skips `.git`, `node_modules`, `target`, `bin`, `obj`, `.venv`, `__pycache__`, drops
+  symlinks escaping the root, caps the snapshot at 50 MB and overlays proposed patches **in memory**
+  (`resolve_member` / `resolve_new_member`). The container receives a tar stream via `docker cp -`; the
+  host folder is never bind-mounted into a builder.
+- **Hardened flags are not optional.** Every builder container is created with `--network=<mode>`
+  (default `none`), `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--memory`, `--cpus`,
+  `--pids-limit=256`, `--user 10001:10001` and `-w /workspace`. Never add `--privileged`, host mounts,
+  environment passthrough or an interactive shell.
+- **Allow-listed stacks and images only.** `java`, `csharp` and `nodejs` map to `KODO_BUILDER_IMAGE_*`;
+  never accept an image, command or entrypoint from the client. Commands are fixed constants; the only
+  `sh -c` payloads (`tsc --noEmit[ && vitest run]`, the dotnet restore+build/test pair) are constants
+  executed inside the container, never interpolated user input, and every subprocess uses
+  `shell=False` on the host.
+- **Timeout + guaranteed cleanup.** `KODO_BUILDER_TIMEOUT_SECONDS` (default 120) bounds the run; the
+  client is killed and `docker rm -f <id>` always runs in a `finally` block, including create/copy
+  failures and timeouts. A missing daemon or image is a reported `status: "unavailable"`, never a 500.
+- **Tenant gate + audit.** Both verify routes call `enforce_workspace_access(root, user)` and record a
+  `verify_build` event through `app/services/audit_log.py` (metadata only, no logs or file contents).
+  SaaS keeps host Docker control disabled; builders also default to disabled there
+  (`KODO_BUILDERS_ENABLED=false`) unless an operator opts in.
+- **AI fix loop is proposal-only.** `/api/v1/ai/fix-build-errors` reads at most three files (in-flight
+  patch content preferred), sends bounded diagnostics plus an ANSI-free log excerpt, and returns a
+  standard `DryRunResponse` whose `originalContent`/`originalSha256` stay the disk truth. It never
+  writes; the fix still goes through the Monaco diff and the guarded apply.
+- **Deterministic tests.** `tests/test_builder_verify.py` mocks the Docker CLI (`runner._run_cli`,
+  `_stream_container`) and the LLM (`httpx.MockTransport`). pytest must never require a Docker daemon,
+  network access or a host compiler.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -374,6 +408,10 @@ Allowed:
   files are gone. With Docker running, press **Compose Up (--build)**, verify the container health
   badges and filtered logs, then **Compose Down**. Confirm `~/.kodo/audit.jsonl` gained entries with
   no token or file content in them.
+- For builder verification changes: `pytest services/api-python/tests/test_builder_verify.py` must pass
+  with no Docker daemon (CLI and LLM mocked), then `docker compose --profile builders build` and a live
+  **Verify Build (Sandbox)** run on a generated project must report the streamed log + parsed
+  diagnostics, with `--network=none`, while `git status` and every file mtime stay unchanged.
 - For Docker/CI changes: `docker compose config` and
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must validate, then
   `docker compose up --build` must report `web`, `api-python` and `analyzer-csharp` healthy with

@@ -1,5 +1,6 @@
 {% for dependency in dependencies %}
 import { {{ dependency.name }}Service } from '../{{ dependency.kebab }}/{{ dependency.kebab }}.service';
+import { {{ dependency.dto }} } from '../{{ dependency.kebab }}/{{ dependency.kebab }}.dto';
 {% endfor %}
 import { {{ context.dto }}, {{ name }}ResponseDto } from './{{ context.kebab }}.dto';
 import { {{ name }}Entity } from './{{ context.kebab }}.entity';

@@ -491,6 +491,18 @@ export default function App() {
 
   const openInspector = useCallback(() => setTab('code'), []);
 
+  const handleOpenFile = useCallback(
+    (filePath: string) => {
+      const normalized = filePath.replace(/\\/g, '/');
+      const node = view?.nodes.find((item) => item.filePath.replace(/\\/g, '/') === normalized);
+      if (node) {
+        setSelectedId(node.id);
+        setTab('code');
+      }
+    },
+    [view],
+  );
+
   if (auth?.mode === 'saas' && !auth.authenticated) {
     return <LoginScreen auth={auth} />;
   }
@@ -661,6 +673,13 @@ export default function App() {
                     detectedStacks={view.detectedStacks}
                     mode={auth?.mode ?? 'local'}
                     revision={workspaceRevision}
+                    aiConfigured={aiConfigured}
+                    llmConfig={toLlmOverride(aiSettings)}
+                    onPlanReady={(preview) => {
+                      setPlan(preview);
+                      setTab('diff');
+                    }}
+                    onOpenFile={handleOpenFile}
                     onPreviewReady={(preview) => {
                       setPlan(preview);
                       setTab('diff');
@@ -676,6 +695,10 @@ export default function App() {
                     plan={plan}
                     onPlanDismiss={() => setPlan(null)}
                     onApplied={handleAppliedChange}
+                    aiConfigured={aiConfigured}
+                    llmConfig={toLlmOverride(aiSettings)}
+                    onPlanReady={setPlan}
+                    onOpenFile={handleOpenFile}
                   />
                 )}
               </div>

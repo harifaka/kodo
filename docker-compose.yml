@@ -52,6 +52,18 @@ services:
       KODO_LLM_CODE_MODEL: ${KODO_LLM_CODE_MODEL:-deepseek-chat}
       KODO_LLM_REASONING_MODEL: ${KODO_LLM_REASONING_MODEL:-deepseek-reasoner}
       KODO_LLM_TIMEOUT_SECONDS: ${KODO_LLM_TIMEOUT_SECONDS:-90}
+      # Phase 9 ephemeral builders. Images are built with `docker compose --profile builders build`
+      # and the disposable containers are created through the mounted Docker socket (see
+      # docker-compose.override.yml.example). Verification stays a reported status when Docker is absent.
+      KODO_BUILDERS_ENABLED: ${KODO_BUILDERS_ENABLED:-true}
+      KODO_BUILDER_IMAGE_JAVA: ${KODO_BUILDER_IMAGE_JAVA:-kodo-builder-java:local}
+      KODO_BUILDER_IMAGE_CSHARP: ${KODO_BUILDER_IMAGE_CSHARP:-kodo-builder-csharp:local}
+      KODO_BUILDER_IMAGE_NODEJS: ${KODO_BUILDER_IMAGE_NODEJS:-kodo-builder-nodejs:local}
+      KODO_BUILDER_NETWORK_MODE: ${KODO_BUILDER_NETWORK_MODE:-none}
+      KODO_BUILDER_TIMEOUT_SECONDS: ${KODO_BUILDER_TIMEOUT_SECONDS:-120}
+      KODO_BUILDER_MEMORY: ${KODO_BUILDER_MEMORY:-1g}
+      KODO_BUILDER_CPUS: ${KODO_BUILDER_CPUS:-1}
+      KODO_BUILDER_PIDS_LIMIT: ${KODO_BUILDER_PIDS_LIMIT:-256}
     volumes:
       - kodo-data:/data/kodo
       # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.
@@ -74,6 +86,36 @@ services:
       retries: 10
       start_period: 20s
     restart: unless-stopped
+
+  # Optional ephemeral builder images (Phase 9). Build them once with
+  # `docker compose --profile builders build`; the API then creates disposable, network-isolated
+  # containers from these tags. They are build targets only and never part of a running stack.
+  kodo-builder-java:
+    profiles: ["builders"]
+    build:
+      context: ./services/builders/java
+      dockerfile: Dockerfile
+    image: ${KODO_BUILDER_IMAGE_JAVA:-kodo-builder-java:local}
+    command: ["true"]
+    restart: "no"
+
+  kodo-builder-csharp:
+    profiles: ["builders"]
+    build:
+      context: ./services/builders/csharp
+      dockerfile: Dockerfile
+    image: ${KODO_BUILDER_IMAGE_CSHARP:-kodo-builder-csharp:local}
+    command: ["true"]
+    restart: "no"
+
+  kodo-builder-nodejs:
+    profiles: ["builders"]
+    build:
+      context: ./services/builders/nodejs
+      dockerfile: Dockerfile
+    image: ${KODO_BUILDER_IMAGE_NODEJS:-kodo-builder-nodejs:local}
+    command: ["true"]
+    restart: "no"
 
   # Optional SaaS database: `docker compose --profile saas up`.
   # Point api-python at it with KODO_DATABASE_URL=postgresql+psycopg://kodo:kodo@postgres:5432/kodo

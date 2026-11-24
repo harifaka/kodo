@@ -7,14 +7,15 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 7** is shipped as **v0.2.0 (Docker-first)** — one Compose stack for local and SaaS.
 - **Phase 8** is shipped as **v0.3.0 (SaaS Foundation)** — GitHub OAuth, multi-tenancy, persistent
   SQLite/PostgreSQL storage and fail-closed `KODO_MODE=saas` isolation.
-- **Phases 9–10** are the remaining direction: ephemeral builder images and a System 1 + System 2
-  hybrid AI stack.
+- **Phase 9** is shipped as **v0.4.0 (Ephemeral Builder Images)** — network-isolated, disposable
+  builder containers verify proposed patches before they reach disk or a PR.
+- **Phase 10** is the remaining direction: the **Laya** System 1 + System 2 hybrid AI stack.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8 is delivered (v0.3.0); future implementation sessions should follow
-> Phases 9–10. Phases 1–8 stay below as delivered history.
+> by local and SaaS. Phases 8 and 9 are delivered (v0.3.0 and v0.4.0); the next implementation session
+> should follow Phase 10. Phases 1–9 stay below as delivered history.
 
 ---
 
@@ -198,13 +199,13 @@ and PRs, and records every action in an append-only local audit log.
 
 ---
 
-## Post-MVP Roadmap (Docker-First ✅, SaaS Foundation ✅, System 1/2 AI next)
+## Post-MVP Roadmap (Docker-First ✅, SaaS Foundation ✅, Ephemeral Builders ✅, System 1/2 AI next)
 
 **Direction:** drop the desktop shell, ship one unified Docker stack for both local self-hosting and
 cloud SaaS, guarantee build correctness with sandboxed builder images, and add a fast local
 **System 1** decision layer (**Laya**) in front of the DeepSeek **System 2** reasoning model.
-Phase 7 (Docker-first packaging & CI/CD) and Phase 8 (SaaS foundation) are delivered; Phases 9–10
-are next.
+Phase 7 (Docker-first packaging & CI/CD), Phase 8 (SaaS foundation) and Phase 9 (ephemeral builders)
+are delivered; Phase 10 is next.
 
 ## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD ✅
 **Goal:** One command runs the whole Kodo stack locally, and CI builds/tests/publishes every image.
@@ -298,18 +299,63 @@ local user); `KODO_MODE=saas` is fail-closed (JWT required, sandboxed workspaces
 
 ---
 
-## Phase 9: Ephemeral Builder Images (Sandboxed Compile & Test Verification)
+## Phase 9: Ephemeral Builder Images (Sandboxed Compile & Test Verification) ✅
 **Goal:** Never hand a user code that does not compile — verify inside disposable, network-restricted
 containers instead of the host toolchain.
 
-- [ ] Add isolated, network-restricted builder container definitions for Spring Boot (Maven/JDK 21),
-      C# (.NET 8 SDK), and Node.js (Node 22/tsc).
-- [ ] Add a **"Verify Build"** step in Dry-Run / Builder / Deploy flows that compiles and runs unit
-      tests on proposed patches inside an ephemeral builder container before disk apply or PR creation.
-- [ ] Stream compiler output and errors back into the UI (and optionally feed compiler diagnostics into
-      the AI fix loop).
-- **Definition of Done:** Generated and patched Spring Boot, C#, and Node.js projects are
-  compile-verified inside sandboxed builder containers with zero host toolchain dependencies.
+**Status:** Delivered as **v0.4.0**. `POST /api/v1/build/verify` (and the SSE variant) compiles and
+optionally unit-tests an in-memory snapshot of the workspace — with proposed patches overlaid — inside a
+disposable non-root container. The user's files are never mounted and never modified.
+
+- [x] Three non-root (uid 10001) builder images in `services/builders/` with pre-warmed offline caches:
+  - [x] `java/Dockerfile` — `maven:3.9-eclipse-temurin-21-alpine`; `/home/builder/.m2` warmed from a seed
+        `pom.xml` that mirrors the Phase 4 Spring Boot 3 template (web, data-jpa, validation, h2, test)
+        plus the compiler/surefire/spring-boot plugin artifacts.
+  - [x] `csharp/Dockerfile` — `mcr.microsoft.com/dotnet/sdk:8.0-alpine`; NuGet cache warmed with
+        `CommunityToolkit.Mvvm`, `xunit`, `Microsoft.NET.Test.Sdk`, `xunit.runner.visualstudio` and the
+        Windows desktop targeting pack WPF restore needs (`DOTNET_CLI_TELEMETRY_OPTOUT=1`).
+  - [x] `nodejs/Dockerfile` — `node:22-alpine`; `typescript`, `vitest`, `express`, `@types/*`,
+        `class-validator`, `class-transformer`, `reflect-metadata` in `/opt/kodo-node-cache`, with
+        `NODE_PATH`/`PATH` and an entrypoint that links the cache into a snapshot that has no
+        `node_modules`, so `tsc --noEmit` resolves types offline.
+  - [x] `docker compose --profile builders build` builds all three (build-only services, `restart: "no"`).
+- [x] Hardened sandbox runner (`app/builders/runner.py`): `--network=none` by default, `--cap-drop=ALL`,
+      `--security-opt=no-new-privileges:true`, `--memory=1g`, `--cpus=1`, `--pids-limit=256`,
+      `--user 10001:10001`, strict `KODO_BUILDER_TIMEOUT_SECONDS` enforcement, and a guaranteed
+      `docker rm -f` in a `finally` block. Only list-argument subprocesses (`shell=False`); the only
+      `sh -c` strings are fixed constants executed inside the container.
+- [x] Zero-mutation staging (`app/builders/staging.py`): deterministic tar of the workspace with
+      `node_modules`/`target`/`bin`/`obj`/`.git`/`.venv`/`__pycache__` skipped, escaping symlinks dropped,
+      50 MB cap, and patches overlaid in memory behind `resolve_member`/`resolve_new_member`.
+- [x] Diagnostic parsing (`app/builders/diagnostics.py`) for Maven (`[ERROR] /workspace/...:[l,c]`),
+      MSBuild (`...Foo.cs(l,c): error CS0103: ...`) and `tsc` (both `(l,c)` and `:l:c - error` shapes),
+      ANSI-stripped and normalized to workspace-relative paths.
+- [x] API surface behind the Phase 8 auth/tenant gate: `GET /api/v1/build/status`,
+      `POST /api/v1/build/verify`, `POST /api/v1/build/verify/stream` (SSE `event: log` / `event: result`),
+      with `verify_build` events in the per-user `audit_events` table.
+- [x] `POST /api/v1/ai/fix-build-errors` — reads at most three affected files (preferring in-flight patch
+      content), feeds bounded diagnostics + ANSI-free log excerpt to the configured code model, and
+      returns a standard `DryRunResponse` with accurate `originalSha256` and zero disk writes.
+- [x] UI: `BuildVerificationPanel` (sandbox verify button, Run-unit-tests toggle, live streaming terminal,
+      parsed diagnostics with file jump, AI fix button) embedded in the Diff preview (verify proposed
+      patches before Apply) and Deploy Studio (verify the workspace before Git export).
+- [x] Deterministic tests (`services/api-python/tests/test_builder_verify.py`, 39 cases): tar overlay with
+      unchanged bytes/mtime, traversal rejection, Maven/MSBuild/tsc parsers, hardened flags + tar
+      streaming + cleanup on failure/timeout, status/verify/SSE routes, `verify_build` audit rows, SaaS
+      403 isolation, and the mocked AI fix workflow.
+- **Definition of Done (evidence):** Generated/patched projects compile inside the sandbox with no host
+  toolchain. `pytest` 206 passed / 1 skipped and `ruff check app tests` are green, `npm run build` passes,
+  `docker compose config` and the prod overlay validate, and live smoke runs verify generated projects
+  with `--network=none` while leaving every workspace byte and mtime unchanged:
+  - `kodo-builder-nodejs`: Phase 4 TypeScript project → `tsc --noEmit` + `vitest run` (2 tests passed).
+  - `kodo-builder-java`: Phase 4 Spring Boot project → `mvn -o test` (2 tests passed).
+  - `kodo-builder-csharp`: Phase 4 WPF project → offline restore succeeds, XAML compilation fails on Linux
+    exactly as documented, and Kodo reports the explicit WPF/Windows warning instead of a false pass.
+  - Docker-first mode: the `api-python` image (shipped Docker CLI + mounted socket) runs the same
+    verification from inside Compose and streams a passing result while the mounted workspace stays
+    byte- and mtime-identical.
+  The live runs also exposed and fixed two real generator defects (missing cross-slice DTO imports in the
+  Spring Boot and Node.js service templates, and `strictPropertyInitialization` errors in the Node entity/DTO).
 
 ---
 

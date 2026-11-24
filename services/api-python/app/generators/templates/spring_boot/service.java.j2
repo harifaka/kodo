@@ -1,6 +1,7 @@
 package {{ base }}.service;
 
 {% for dependency in dependencies %}
+import {{ base }}.dto.{{ dependency.dto }};
 import {{ base }}.service.{{ dependency.name }}Service;
 {% endfor %}
 import {{ base }}.dto.{{ name }}Dto;

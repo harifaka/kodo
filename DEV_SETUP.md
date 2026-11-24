@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–8: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation)
+# Kodo — Developer Setup (Phases 1–9: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -648,6 +648,9 @@ Generated files:
 | `kodo-web` | `node:22-alpine`, `npm ci` + `npm run build` | `nginxinc/nginx-unprivileged:1.27-alpine`, user `nginx` (uid 101), :8080, SPA fallback + reverse proxy |
 | `kodo-api-python` | `python:3.12-slim` + `/opt/venv` | `python:3.12-slim`, user `kodo` (uid 10001), `git` + `curl`, writable `/data/kodo`, :8088 |
 | `kodo-analyzer-csharp` | `dotnet/sdk:8.0`, `dotnet publish` | `aspnet:8.0-alpine`, `$APP_UID`, :5050 |
+| `kodo-builder-java` | `maven:3.9-eclipse-temurin-21-alpine` + seed `pom.xml` | user `builder` (uid 10001), pre-warmed `.m2`, `/workspace`, build-only |
+| `kodo-builder-csharp` | `mcr.microsoft.com/dotnet/sdk:8.0-alpine` + seed projects | user `builder` (uid 10001), pre-warmed NuGet cache, `/workspace`, build-only |
+| `kodo-builder-nodejs` | `node:22-alpine` + `/opt/kodo-node-cache` | user `builder` (uid 10001), pre-warmed npm cache, `/workspace`, build-only |
 
 **Nginx proxy** ([apps/web/nginx.conf](/C:/source/kodo/apps/web/nginx.conf)): `try_files $uri $uri/ /index.html`
 for the SPA, `/api/` and `/health` proxied to `http://api-python:8088` with `proxy_read_timeout 120s`
@@ -663,7 +666,10 @@ time; `npm run dev` keeps `http://localhost:8088`.
 | --- | --- |
 | `docker-compose.yml` | Local stack: builds all three images, publishes `5050` (analyzer, for host uvicorn) and `${KODO_WEB_PORT:-3000}` (web); `api-python` is internal |
 | `docker-compose.prod.yml` | Override that replaces builds with `ghcr.io/${KODO_IMAGE_OWNER}/kodo-*:${KODO_TAG}` (`!reset` needs Compose ≥ 2.24), unpublishes internal ports, `restart: unless-stopped` |
-| `docker-compose.override.yml.example` | Copy to `docker-compose.override.yml` (git-ignored) for extra mounts or a published `:8088` |
+| `docker-compose.override.yml.example` | Copy to `docker-compose.override.yml` (git-ignored) for extra mounts, the Docker socket for Phase 9 or a published `:8088` |
+
+Compose profile `builders` (optional) adds the three build-only images: `docker compose --profile builders build`
+builds `kodo-builder-java`, `kodo-builder-csharp` and `kodo-builder-nodejs` without starting anything.
 
 **GitHub Actions** ([.github/workflows/](/C:/source/kodo/.github/workflows)):
 
@@ -708,6 +714,16 @@ docker compose down                                   # add -v to drop the kodo-
 | `KODO_GIT_ALLOWED_HOSTS` | FastAPI process | GitHub + GitLab only | Extra comma-separated hosts allowed for clone/export |
 | `KODO_CSHARP_URL` | Roslyn process | `http://localhost:5050` | Kestrel bind address (overrides `ASPNETCORE_URLS`) |
 | `ASPNETCORE_URLS` | Roslyn container | `http://+:5050` | Container bind address |
+| `KODO_BUILDERS_ENABLED` | FastAPI process | `true` in `local`, `false` in `saas` | Enable sandbox build verification |
+| `KODO_BUILDER_IMAGE_JAVA` | FastAPI process | `kodo-builder-java:local` | Java builder image tag |
+| `KODO_BUILDER_IMAGE_CSHARP` | FastAPI process | `kodo-builder-csharp:local` | C# builder image tag |
+| `KODO_BUILDER_IMAGE_NODEJS` | FastAPI process | `kodo-builder-nodejs:local` | Node.js builder image tag |
+| `KODO_BUILDER_NETWORK_MODE` | FastAPI process | `none` | Container network (`none`/`bridge`/`host`); anything else falls back to `none` |
+| `KODO_BUILDER_TIMEOUT_SECONDS` | FastAPI process | `120` | Hard build timeout; the container is killed and removed |
+| `KODO_BUILDER_MEMORY` | FastAPI process | `1g` | `--memory` limit (validated; bad values fall back to `1g`) |
+| `KODO_BUILDER_CPUS` | FastAPI process | `1` | `--cpus` limit (validated; bad values fall back to `1`) |
+| `KODO_BUILDER_PIDS_LIMIT` | FastAPI process | `256` | `--pids-limit` (minimum 16) |
+| `DOCKER_GID` | Compose override | `999` | Host Docker socket group id for `group_add` (Phase 9, Docker-first only) |
 
 ---
 
@@ -718,8 +734,9 @@ docker compose down                                   # add -v to drop the kodo-
 # Core IR schema conformance, dry-run patchers (Java/TS always; C# when the container is up),
 # the guarded apply/rollback suite (needs `git` on PATH), the Phase 4 generator suite
 # (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up),
-# the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed)
-# and the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs)
+# the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed),
+# the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs)
+# and the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -860,9 +877,108 @@ different uid; the image trusts `/projects` via `safe.directory`. Mount elsewher
 **Python 3.14 + tree-sitter.** Wheels exist for 3.12–3.14; on an unsupported interpreter pip may
 attempt a source build and require a C compiler.
 
+**Verify Build says "Builder Offline".** Either Docker is not reachable from the process serving the
+API, or the image for the detected stack is missing. Check `GET /api/v1/build/status`; build the images
+with `docker compose --profile builders build`. In Docker-first mode the `api-python` container also
+needs the host socket mounted (see below); without it the status is simply reported, never a 500.
+
+**Verify Build says "Image Missing".** The tag in `KODO_BUILDER_IMAGE_*` does not match a local image.
+Kodo never pulls at verify time (the sandbox is meant to run offline), so build or tag it first.
+
+**The build cannot resolve dependencies offline.** The pre-warmed caches cover Kodo's Phase 4 template
+set (Spring Boot 3.3 starters, CommunityToolkit.Mvvm/xunit/VSTest, express + typescript + vitest). A
+project with extra packages needs either a rebuilt builder image with those packages or
+`KODO_BUILDER_NETWORK_MODE=bridge` for that run (less hardened; local use only).
+
 ---
 
-## 9. Repository layout
+## 9. Ephemeral builders (Phase 9)
+
+`Verify Build (Sandbox)` compiles the current workspace — or the in-memory patches you are reviewing —
+inside a disposable container. Nothing is mounted and nothing is written: Kodo stages the workspace
+into a tar snapshot (with `.git`, `node_modules`, `target`, `bin`, `obj`, `.venv`, `__pycache__`
+skipped and proposed patches overlaid), streams it in with `docker cp -`, runs one fixed command and
+then always `docker rm -f`s the container.
+
+### Build the images
+
+```powershell
+# Build all three (Maven/JDK 21, .NET 8 SDK, Node 22), each pre-warmed for offline use
+docker compose --profile builders build
+
+# Or only one stack
+docker compose --profile builders build kodo-builder-nodejs
+
+docker images | Select-String kodo-builder
+```
+
+The images run as uid 10001 and write only under `/workspace` and the pre-warmed caches
+(`/home/builder/.m2`, `/home/builder/.nuget`, `/opt/kodo-node-cache`).
+
+### Hardened container contract
+
+| Control | Value |
+| --- | --- |
+| Network | `--network=${KODO_BUILDER_NETWORK_MODE:-none}` |
+| Privileges | `--cap-drop=ALL --security-opt=no-new-privileges:true` |
+| User | `--user 10001:10001`, workdir `/workspace` |
+| Resources | `--memory=${KODO_BUILDER_MEMORY:-1g} --cpus=${KODO_BUILDER_CPUS:-1} --pids-limit=${KODO_BUILDER_PIDS_LIMIT:-256}` |
+| Timeout | `KODO_BUILDER_TIMEOUT_SECONDS` (default 120); the process is killed and the container removed |
+| Cleanup | `docker rm -f <id>` in a `finally` block, even on timeout or an exception |
+
+Commands are fixed constants: `mvn -B -o test-compile|test` (the `-o` is dropped only for a non-`none`
+network mode), `dotnet restore --ignore-failed-sources -p:EnableWindowsTargeting=true && dotnet
+build|test --no-restore -p:EnableWindowsTargeting=true` (the staged snapshot has no `obj/`, so an
+offline restore from the pre-warmed cache always runs first), and `sh -c "tsc --noEmit[ && vitest run]"`.
+
+### Docker-first (api-python in Compose)
+
+The `api-python` image ships the Docker CLI. To let it create builder containers, mount the host socket
+and grant the socket's group id — copy [docker-compose.override.yml.example](/C:/source/kodo/docker-compose.override.yml.example)
+to `docker-compose.override.yml` and uncomment the two Phase 9 blocks:
+
+```yaml
+services:
+  api-python:
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
+```
+
+Never do this in SaaS mode: `KODO_MODE=saas` disables builders by default (`KODO_BUILDERS_ENABLED=false`)
+and host Docker control stays forbidden.
+
+### API
+
+```powershell
+# Availability + which images exist locally
+Invoke-RestMethod http://localhost:8088/api/v1/build/status
+
+# Compile, with proposed patches overlaid in memory
+Invoke-RestMethod -Method Post http://localhost:8088/api/v1/build/verify -ContentType application/json -Body (@{
+  rootPath = "C:/work/shop"
+  runTests = $false
+  patches  = @(@{ filePath = "src/main/java/com/acme/Foo.java"; proposedContent = "..." })
+} | ConvertTo-Json -Depth 5)
+
+# Same payload, streamed as SSE (`event: log` lines then `event: result`)
+curl.exe -N -X POST http://localhost:8088/api/v1/build/verify/stream -H "Content-Type: application/json" -d "{...}"
+```
+
+Both routes enforce the Phase 8 workspace gate (local containment / SaaS tenant sandbox) and record a
+`verify_build` row in the per-user audit trail. A failing result can be sent to
+`POST /api/v1/ai/fix-build-errors`, which returns a normal dry-run patch for the Monaco diff.
+
+**WPF note.** The C# builder can restore the Windows desktop targeting pack, but XAML compilation needs
+Windows. Kodo verifies the C# compile where the SDK allows it and reports a clear warning instead of
+pretending a desktop UI can be built on Linux.
+
+---
+
+## 10. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
@@ -878,6 +994,10 @@ packages/core-ir/blueprint.schema.json  Versioned kodo.blueprint.json contract (
 services/analyzer-csharp/         .NET 8 Minimal API + Roslyn, stateless (port 5050, multi-stage Dockerfile)
   Analysis/                       Roslyn Core IR extraction
   Patching/                       trivia-preserving /patch rewriter (dry-run only)
+services/builders/                Phase 9 ephemeral builder images (uid 10001, pre-warmed offline caches)
+  java/                           Maven 3.9/JDK 21 + seed pom.xml/junit sources warming .m2
+  csharp/                         .NET 8 SDK + WPF/xunit seed projects warming the NuGet cache
+  nodejs/                         node:22-alpine + /opt/kodo-node-cache and the entrypoint cache link
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088, multi-stage Dockerfile)
   Dockerfile                      python:3.12-slim build → non-root kodo runtime with git/curl + /data/kodo
   app/analyzers/                  java.py, typescript.py, scanner.py, common.py
@@ -895,6 +1015,9 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   .env.example), models.py (control-panel responses),
                                   studio_service.py (dry-run), runner.py (docker compose status/up/down/
                                   logs, shell=False), routes.py (/deploy/*, /audit-log)
+  app/builders/                   staging.py (in-memory tar + patch overlay), diagnostics.py
+                                  (Maven/MSBuild/tsc), runner.py (hardened docker create/cp/start/rm),
+                                  models.py, routes.py (/build/status, /build/verify[/stream])
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
                                   git_safety.py (read-only git), apply_service.py (the only writer),
                                   scaffold_service.py (blueprint → create-only dry-run),
@@ -904,14 +1027,15 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
   tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
                                   guarded apply/rollback, stack generators + 100/100 self-audit,
                                   AI Copilot (mocked httpx transport), Deploy Studio (mocked Docker CLI
-                                  + GitHub API, real local git)
+                                  + GitHub API, real local git), ephemeral builders (mocked Docker CLI
+                                  and LLM, in-memory tar staging)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
   nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
                                   DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
-                                  AiSettingsModal, MethodsSection
+                                  AiSettingsModal, MethodsSection, BuildVerificationPanel
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,

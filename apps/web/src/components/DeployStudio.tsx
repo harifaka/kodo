@@ -6,9 +6,10 @@ import {
   detectedDeployStack,
   stackOption,
 } from '../lib/deploy';
-import type { PlanPreview } from '../types/ai';
+import type { LlmOverride, PlanPreview } from '../types/ai';
 import type { BackingServiceId, DeployStackId } from '../types/deploy';
 import { AuditLogPanel } from './AuditLogPanel';
+import { BuildVerificationPanel } from './BuildVerificationPanel';
 import { DockerControlPanel } from './DockerControlPanel';
 import { GitExportPanel } from './GitExportPanel';
 import { AlertIcon, DeployIcon, DiffIcon, Spinner } from './icons';
@@ -22,7 +23,13 @@ interface DeployStudioProps {
   mode?: string;
   /** Bumped after an apply/rollback so the Docker panel re-reads container state. */
   revision?: number;
+  aiConfigured?: boolean;
+  llmConfig?: LlmOverride;
   onPreviewReady: (preview: PlanPreview) => void;
+  /** Phase 9: load an AI build fix into the Diff preview for review. */
+  onPlanReady?: (preview: PlanPreview) => void;
+  /** Jump from a build diagnostic to the file in the Code Inspector. */
+  onOpenFile?: (filePath: string, line?: number) => void;
   /** Receives the local path of a cloned remote repository so the app can scan it. */
   onWorkspaceCloned: (localPath: string) => void;
 }
@@ -35,7 +42,11 @@ export function DeployStudio({
   detectedStacks,
   mode = 'local',
   revision = 0,
+  aiConfigured = false,
+  llmConfig,
   onPreviewReady,
+  onPlanReady,
+  onOpenFile,
   onWorkspaceCloned,
 }: DeployStudioProps) {
   const detected = useMemo(() => detectedDeployStack(detectedStacks), [detectedStacks]);
@@ -265,6 +276,20 @@ export function DeployStudio({
         </div>
 
         <div className="space-y-3">
+          <div className="overflow-hidden rounded-lg border border-ink-700/70 bg-ink-900/40">
+            <BuildVerificationPanel
+              rootPath={rootPath}
+              onFixReady={onPlanReady}
+              onOpenFile={onOpenFile}
+              aiConfigured={aiConfigured}
+              llmConfig={llmConfig}
+              className="border-b-0"
+            />
+            <p className="px-3 py-2 text-[9px] leading-relaxed text-slate-500">
+              Compiles the current workspace in a disposable, network-isolated container before you export a
+              branch or open a PR. Nothing is written to disk and no host toolchain is required.
+            </p>
+          </div>
           <GitExportPanel rootPath={rootPath} onWorkspaceCloned={onWorkspaceCloned} onChanged={bumpAudit} />
           <AuditLogPanel refreshToken={auditNonce + revision} />
         </div>

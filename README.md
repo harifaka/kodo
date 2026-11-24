@@ -1,10 +1,10 @@
 # Kodo
 
 **Architecture Control Center for the Vibe-Coding Era.**
-Visualize, audit, safely edit, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator and one Roslyn analyzer image.
+Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and three optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: SaaS Foundation](https://img.shields.io/badge/Status%20v0.3%20%C2%B7%20Phases%201--8%20delivered-brightgreen.svg)
+![Status: Ephemeral Builders](https://img.shields.io/badge/Status%20v0.4%20%C2%B7%20Phases%201--9%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -20,6 +20,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
 - **DeepSeek Architecture Copilot:** OpenAI-compatible client for **DeepSeek Cloud** or air-gapped **Ollama / vLLM** that turns a business spec into a blueprint, proposes fixes for audit findings and implements single methods — always as IR-aware proposals reviewed in the Monaco diff. The LLM never writes to disk.
 - **Deploy Studio:** Generates non-root multi-stage `Dockerfile`s, a healthchecked `docker-compose.yml` (PostgreSQL / Redis / RabbitMQ on a `kodo-net` bridge) and a placeholder-only `.env.example` — then controls local Docker (compose up/down, live health, filterable logs), exports Git branches and GitHub PRs, and records every apply/rollback/deploy/Git action in a local append-only audit log.
+- **Ephemeral Build Verification (Phase 9):** **Verify Build (Sandbox)** compiles — and optionally unit-tests — the exact proposed patches before they reach disk, inside a disposable, non-root, `--network=none` container built from pre-warmed Maven 3.9/JDK 21, .NET 8 SDK or Node 22 images. The workspace is streamed in as an in-memory tar snapshot (never mounted), output streams live into the UI, diagnostics are parsed per compiler, and a failing build can hand its errors to the AI Copilot for a reviewed fix.
 
 ---
 
@@ -47,13 +48,20 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
     All three images (web + Nginx, api-python, analyzer-csharp) run on one Compose network —
     local and production profiles differ only in configuration, never in architecture.
 
+    Phase 9 adds three optional builder images (java, csharp, nodejs) that never join the stack:
+    the orchestrator creates a disposable, non-root, --network=none container per verification and
+    feeds it an in-memory tar snapshot, so the host workspace is never mounted.
+
 ---
 
-## Quick Start (Phases 1–8, local + SaaS)
+## Quick Start (Phases 1–9, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
 docker compose up --build
+
+# Optional: build the three ephemeral builder images (Verify Build)
+docker compose --profile builders build
 ```
 
 Open **<http://localhost:3000>** — the Nginx image serves the UI and proxies `/api/` and `/health` to
@@ -133,6 +141,17 @@ commits and (optionally) opens a pull request with a session-only token. Every a
 the per-user audit trail (SQLite/PostgreSQL; local mode also mirrors `~/.kodo/audit.jsonl`) and shown
 in the audit table.
 
+**Verify before you apply.** The Diff preview and Deploy Studio both carry a **Verify Build
+(Sandbox)** bar. It stages the workspace (plus every selected in-memory patch) into a tar stream,
+streams it into a disposable container and runs the stack's fixed build command — `mvn -o test-compile`,
+`dotnet build -p:EnableWindowsTargeting=true` or `tsc --noEmit` (add `Run unit tests` for
+`mvn test` / `dotnet test` / `vitest run`). Containers run as uid 10001 with every capability dropped,
+`--network=none`, `1g`/`1 CPU`/`256 PIDs` limits and a 120 s timeout, and are always removed afterwards.
+The host workspace is never mounted or modified; parsed diagnostics jump straight to the file, and a
+failing build can be sent to **Fix Build Errors with AI**, which returns a normal dry-run patch for the
+Monaco diff. Build them once with `docker compose --profile builders build`; see
+[DEV_SETUP.md](DEV_SETUP.md#9-ephemeral-builders-phase-9) for the Docker-outside-of-Docker setup.
+
 **Two modes, one stack.** `KODO_MODE=local` (default) is zero-configuration: SQLite on the
 `kodo-data` volume and a seeded local user, no OAuth needed. `KODO_MODE=saas` is fail-closed: set a
 ≥32-character `KODO_JWT_SECRET`, sign in with GitHub, and every workspace is confined to
@@ -144,11 +163,12 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–8)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–9)
 
-**Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery and Phase 8 is the SaaS
-foundation (v0.3.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Deploy** loop and
-ships as one container stack for both local self-hosting and multi-tenant SaaS.
+**Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
+(v0.3.0) and Phase 9 is the sandbox-verified build loop (v0.4.0)** — Kodo now covers the full
+**Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop and ships as one container stack for
+both local self-hosting and multi-tenant SaaS.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -203,14 +223,23 @@ ships as one container stack for both local self-hosting and multi-tenant SaaS.
 
 ---
 
-## What's Next (Roadmap: Phases 9–10)
+### Phase 9: Ephemeral Builder Images (Sandboxed Compile & Test Verification) - Delivered (v0.4.0)
+- **Three pre-warmed, non-root (uid 10001) builder images** in `services/builders/`: Maven 3.9/JDK 21 with a seeded `.m2`, .NET 8 SDK with the NuGet cache (incl. the Windows desktop targeting pack), and Node 22 with a shared `typescript`/`vitest`/`express` cache. Built with `docker compose --profile builders build`; they never run as part of the stack.
+- **Zero workspace mutation:** the workspace (plus every selected in-memory patch) is staged into a deterministic tar — `.git`, `node_modules`, `target`, `bin`, `obj`, `.venv`, `__pycache__` skipped, escaping symlinks dropped, 50 MB cap — and streamed into the container with `docker cp -`. The host folder is never mounted and its bytes/mtimes never change.
+- **Hardened sandbox:** `--network=none` by default (`KODO_BUILDER_NETWORK_MODE` opt-in), `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--memory=1g`, `--cpus=1`, `--pids-limit=256`, a strict timeout and a guaranteed `docker rm -f` in a `finally` block. Only list-argument subprocesses; the fixed stack commands are the only shell strings.
+- **API + streaming UI:** `GET /api/v1/build/status`, `POST /api/v1/build/verify` and an SSE `POST /api/v1/build/verify/stream`; parsed Maven/MSBuild/`tsc` diagnostics; a `verify_build` audit event per user; the `BuildVerificationPanel` in the Diff preview (verify patches before Apply) and Deploy Studio (verify before Git export).
+- **AI build-fix loop:** `POST /api/v1/ai/fix-build-errors` reads at most three affected files, sends bounded diagnostics plus an ANSI-free log excerpt, and returns a normal `DryRunResponse` for the Monaco diff — still zero disk writes.
+- **Tests + evidence:** `tests/test_builder_verify.py` (39 hermetic cases, Docker CLI and LLM mocked), `pytest` 206 passed / 1 skipped, `ruff`, `npm run build`, `docker compose config`, plus live smoke runs of generated Spring Boot and Node.js projects compiling and unit-testing inside `--network=none` (missing cross-slice DTO imports and strict-property errors in the Phase 4 templates were found and fixed), and the expected Linux-side WPF/XAML warning for the C# image.
 
-Phases 1–8 are delivered. The next chapter is the **sandbox-verified, hybrid System 1 + System 2**
-platform. Full detail and definitions of done: [ROADMAP.md](ROADMAP.md).
+---
+
+## What's Next (Roadmap: Phase 10)
+
+Phases 1–9 are delivered. The next chapter is the **hybrid System 1 + System 2** decision layer. Full
+detail and definitions of done: [ROADMAP.md](ROADMAP.md).
 
 | Phase | Focus | Headline |
 |---|---|---|
-| **9** | Ephemeral Builder Images | Network-restricted, disposable builder containers (Maven/JDK 21, .NET 8 SDK, Node 22) that compile and unit-test AI-proposed patches before apply or PR export — zero host toolchains. |
 | **10** | Laya Decision Layer (System 1 + System 2) | **Laya** — Convai Innovations' Apache-2.0 421M non-autoregressive decision model — runs locally (`/v1/systemone`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek, and pre-screen AI diffs; every decision becomes an inspectable ADR. Falls back cleanly to deterministic rules when Laya is offline. |
 
 ---

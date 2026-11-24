@@ -10,3 +10,12 @@ services:
       - type: bind
         source: C:/work
         target: /projects/work
+      # --- Phase 9 -------------------------------------------------------------
+      # Ephemeral build verification drives a Docker daemon (docker-outside-of-docker). Mount the
+      # host socket only for local self-hosting — never in SaaS — and grant the kodo user the
+      # socket's group id. Without this mount, Verify Build simply reports "Builder Offline".
+      # - type: bind
+      #   source: /var/run/docker.sock
+      #   target: /var/run/docker.sock
+    # group_add:
+    #   - "${DOCKER_GID:-999}"

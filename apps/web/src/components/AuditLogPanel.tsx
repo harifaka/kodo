@@ -15,6 +15,7 @@ const ACTION_CLASS: Record<string, string> = {
   deploy_down: 'border-rose-400/40 bg-rose-400/10 text-rose-200',
   git_clone: 'border-violet-400/40 bg-violet-400/10 text-violet-200',
   git_export: 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
+  verify_build: 'border-sky-400/40 bg-sky-400/10 text-sky-200',
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -24,6 +25,7 @@ const ACTION_LABEL: Record<string, string> = {
   deploy_down: 'deploy down',
   git_clone: 'git clone',
   git_export: 'git export',
+  verify_build: 'verify build',
 };
 
 export function AuditLogPanel({ refreshToken }: AuditLogPanelProps) {

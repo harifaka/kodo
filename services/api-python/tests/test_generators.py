@@ -196,6 +196,9 @@ def test_spring_boot_slice_and_project_skeleton(client: TestClient, tmp_path: Pa
     service = patches[f"{base}/service/OrderService.java"]["proposedContent"]
     assert "private final CustomerService customerService;" in service
     assert "public OrderDto create(OrderDto dto)" in service
+    # The cross-slice lookup returns CustomerDto, so the service must import that DTO.
+    assert "import com.acme.shop.dto.CustomerDto;" in service
+    assert "public CustomerDto findCustomer(Long id)" in service
 
     entity = patches[f"{base}/entity/OrderEntity.java"]["proposedContent"]
     assert "@Entity" in entity
@@ -281,6 +284,14 @@ def test_nodejs_slice_and_project_skeleton(client: TestClient, tmp_path: Path) -
 
     service = patches["src/modules/order/order.service.ts"]["proposedContent"]
     assert "private readonly customerService: CustomerService" in service
+    # The cross-slice lookup returns the dependency's response DTO, so it must be imported.
+    assert "import { CustomerResponseDto } from '../customer/customer.dto';" in service
+
+    # strictPropertyInitialization: required fields use the definite assignment assertion so the
+    # generated project passes `tsc --noEmit` in the Phase 9 builder.
+    entity = patches["src/modules/order/order.entity.ts"]["proposedContent"]
+    assert "number!: string;" in entity
+    assert "number!: string;" in dto
 
     assert '"express"' in patches["package.json"]["proposedContent"]
     assert "experimentalDecorators" in patches["tsconfig.json"]["proposedContent"]

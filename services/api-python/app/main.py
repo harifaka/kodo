@@ -16,6 +16,7 @@ from app.api.routes import router
 from app.auth.context import reset_current_user_id, set_current_user_id
 from app.auth.dependencies import authenticate_request
 from app.auth.github_oauth import router as auth_router
+from app.builders.routes import router as build_router
 from app.config import (
     DEFAULT_API_PORT,
     ConfigurationError,
@@ -41,13 +42,14 @@ app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–8. "
+        "Kodo Architecture Control Center — Phases 1–9. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
         "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
-        "generates production Docker artifacts (reviewed through the same diff), controls local Docker "
-        "Compose, and exports Git branches/pull requests — all applied to disk behind path-containment, "
-        "SHA-256 optimistic concurrency and Git working-tree guards."
+        "generates production Docker artifacts (reviewed through the same diff), verifies proposed code "
+        "in network-isolated ephemeral builder containers, controls local Docker Compose, and exports Git "
+        "branches/pull requests — all applied to disk behind path-containment, SHA-256 optimistic "
+        "concurrency and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -114,6 +116,7 @@ async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-
 
 app.include_router(router)
 app.include_router(ai_router)
+app.include_router(build_router)
 app.include_router(deploy_router)
 app.include_router(git_router)
 app.include_router(auth_router)
@@ -138,6 +141,10 @@ async def root() -> dict[str, str]:
         "aiSpecToBlueprint": "POST /api/v1/ai/spec-to-blueprint",
         "aiAuditFix": "POST /api/v1/ai/audit-fix",
         "aiImplementMethod": "POST /api/v1/ai/implement-method",
+        "aiFixBuildErrors": "POST /api/v1/ai/fix-build-errors",
+        "buildStatus": "GET /api/v1/build/status",
+        "buildVerify": "POST /api/v1/build/verify",
+        "buildVerifyStream": "POST /api/v1/build/verify/stream",
         "deployDryRun": "POST /api/v1/deploy/dry-run",
         "dockerStatus": "GET /api/v1/deploy/docker/status",
         "dockerUp": "POST /api/v1/deploy/docker/up",

@@ -42,6 +42,13 @@ import type {
   UserSettingsResponse,
   WorkspaceListResponse,
 } from '../types/account';
+import type {
+  BuildResult,
+  BuildVerifyRequest,
+  BuilderStatus,
+  FixBuildErrorsRequest,
+  FixBuildErrorsResponse,
+} from '../types/build';
 
 // Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
 // paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
@@ -71,6 +78,22 @@ export class ApiError extends Error {
   }
 }
 
+async function toApiError(response: Response): Promise<ApiError> {
+  const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  const detail = body?.detail;
+
+  if (detail && typeof detail === 'object') {
+    const record = detail as Record<string, unknown>;
+    const message =
+      typeof record.message === 'string' ? record.message : `Request failed with status ${response.status}`;
+    const code = typeof record.code === 'string' ? record.code : undefined;
+    return new ApiError(message, response.status, code, record);
+  }
+
+  const message = typeof detail === 'string' ? detail : `Request failed with status ${response.status}`;
+  return new ApiError(message, response.status);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -85,22 +108,91 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
-    const detail = body?.detail;
-
-    if (detail && typeof detail === 'object') {
-      const record = detail as Record<string, unknown>;
-      const message =
-        typeof record.message === 'string' ? record.message : `Request failed with status ${response.status}`;
-      const code = typeof record.code === 'string' ? record.code : undefined;
-      throw new ApiError(message, response.status, code, record);
-    }
-
-    const message = typeof detail === 'string' ? detail : `Request failed with status ${response.status}`;
-    throw new ApiError(message, response.status);
+    throw await toApiError(response);
   }
 
   return (await response.json()) as T;
+}
+
+/** Incremental Server-Sent Events reader for the streaming build route. */
+async function readEventStream(
+  response: Response,
+  handlers: { onLog: (line: string) => void },
+): Promise<BuildResult> {
+  if (!response.body) {
+    throw new ApiError('The build stream is unavailable in this browser.', 0);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: BuildResult | null = null;
+  let streamError: ApiError | null = null;
+
+  const handleFrame = (frame: string) => {
+    let event = 'message';
+    const data: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        data.push(line.slice(5).trimStart());
+      }
+    }
+    if (data.length === 0) {
+      return;
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(data.join('\n')) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    if (event === 'log') {
+      handlers.onLog(typeof payload.line === 'string' ? payload.line : String(payload.line ?? ''));
+    } else if (event === 'result') {
+      result = payload as unknown as BuildResult;
+    } else if (event === 'error') {
+      streamError = new ApiError(
+        typeof payload.message === 'string' ? payload.message : 'Build verification failed.',
+        0,
+        typeof payload.code === 'string' ? payload.code : 'BUILD_FAILED',
+        payload,
+      );
+    }
+  };
+
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        handleFrame(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+    }
+    if (buffer.trim()) {
+      handleFrame(buffer);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (streamError) {
+    throw streamError;
+  }
+  if (!result) {
+    throw new ApiError('The build stream ended before a result arrived.', 0);
+  }
+  return result;
 }
 
 export const api = {
@@ -300,6 +392,53 @@ export const api = {
 
   gitExport(payload: ExportRequest, signal?: AbortSignal): Promise<ExportResponse> {
     return request<ExportResponse>('/api/v1/git/export', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  buildStatus(signal?: AbortSignal): Promise<BuilderStatus> {
+    return request<BuilderStatus>('/api/v1/build/status', { signal });
+  },
+
+  buildVerify(payload: BuildVerifyRequest, signal?: AbortSignal): Promise<BuildResult> {
+    return request<BuildResult>('/api/v1/build/verify', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  /** Stream a sandbox build: log lines arrive live, the resolved promise carries the result. */
+  async buildVerifyStream(
+    payload: BuildVerifyRequest,
+    handlers: { onLog: (line: string) => void; signal?: AbortSignal },
+  ): Promise<BuildResult> {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/v1/build/verify/stream`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify(payload),
+        signal: handlers.signal,
+      });
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') {
+        throw reason;
+      }
+      throw new ApiError(`Kodo API is unreachable at ${API_BASE_LABEL}. Is the FastAPI service running?`, 0);
+    }
+
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    return readEventStream(response, handlers);
+  },
+
+  aiFixBuildErrors(payload: FixBuildErrorsRequest, signal?: AbortSignal): Promise<FixBuildErrorsResponse> {
+    return request<FixBuildErrorsResponse>('/api/v1/ai/fix-build-errors', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal,

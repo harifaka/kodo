@@ -3,8 +3,9 @@ import { DiffEditor } from '@monaco-editor/react';
 import { ApiError, api } from '../lib/api';
 import { countLineChanges } from '../lib/diff';
 import { buildPatchOperations, isDraftEmpty, type Draft } from '../lib/draft';
+import { BuildVerificationPanel } from './BuildVerificationPanel';
 import type { WorkspaceIR } from '../types/core-ir';
-import type { PlanPreview } from '../types/ai';
+import type { LlmOverride, PlanPreview } from '../types/ai';
 import type { DryRunResponse, GitStatus } from '../types/patching';
 import { AlertIcon, BuilderIcon, CheckIcon, DeployIcon, DiffIcon, ShieldIcon, SparkIcon, Spinner } from './icons';
 
@@ -16,6 +17,12 @@ interface DiffPreviewProps {
   plan?: PlanPreview | null;
   onPlanDismiss?: () => void;
   onApplied: (applyId: string, appliedFiles: string[]) => void;
+  /** Phase 9: verify the proposed patches in a sandbox before they reach disk. */
+  aiConfigured?: boolean;
+  llmConfig?: LlmOverride;
+  onPlanReady?: (preview: PlanPreview) => void;
+  /** Fallback jump for build diagnostics that point outside the current patch set (opens the inspector). */
+  onOpenFile?: (filePath: string, line?: number) => void;
 }
 
 interface DryRunState {
@@ -70,6 +77,10 @@ export function DiffPreview({
   plan: externalPlan = null,
   onPlanDismiss,
   onApplied,
+  aiConfigured = false,
+  llmConfig,
+  onPlanReady,
+  onOpenFile,
 }: DiffPreviewProps) {
   const [state, setState] = useState<DryRunState>({
     response: null,
@@ -289,6 +300,27 @@ export function DiffPreview({
         disabled={waiting || selectedPatches.length === 0 || patches.length === 0}
         onApply={requestApply}
       />
+
+      {!waiting && selectedPatches.length > 0 && (
+        <BuildVerificationPanel
+          rootPath={workspace.rootPath}
+          patches={selectedPatches.map((patch) => ({
+            filePath: patch.filePath,
+            proposedContent: patch.proposedContent,
+            isNewFile: Boolean(patch.isNewFile),
+          }))}
+          onOpenFile={(filePath, line) => {
+            if (patchPaths.includes(filePath)) {
+              setSelectedPath(filePath);
+              return;
+            }
+            onOpenFile?.(filePath, line);
+          }}
+          onFixReady={onPlanReady}
+          aiConfigured={aiConfigured}
+          llmConfig={llmConfig}
+        />
+      )}
 
       {externalPlan && (
         <div
