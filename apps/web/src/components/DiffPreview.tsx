@@ -1,13 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import { ApiError, api } from '../lib/api';
 import { countLineChanges } from '../lib/diff';
 import { buildPatchOperations, isDraftEmpty, type Draft } from '../lib/draft';
+import { confidencePercent, diffStatusMeta } from '../lib/decision';
+import { toSystemOneOverride } from '../lib/decisionSettings';
+import { useSystemOneSettings } from '../hooks/useSystemOneSettings';
 import { BuildVerificationPanel } from './BuildVerificationPanel';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { LlmOverride, PlanPreview } from '../types/ai';
-import type { DryRunResponse, GitStatus } from '../types/patching';
-import { AlertIcon, BuilderIcon, CheckIcon, DeployIcon, DiffIcon, ShieldIcon, SparkIcon, Spinner } from './icons';
+import type { ScreenDiffResponse } from '../types/decision';
+import type { DryRunResponse, GitStatus, PatchResult } from '../types/patching';
+import {
+  AlertIcon,
+  BuilderIcon,
+  CheckIcon,
+  DecisionIcon,
+  DeployIcon,
+  DiffIcon,
+  ShieldIcon,
+  SparkIcon,
+  Spinner,
+} from './icons';
 
 interface DiffPreviewProps {
   workspace: WorkspaceIR;
@@ -69,6 +83,19 @@ const DIFF_OPTIONS_BASE = {
 };
 
 const DEBOUNCE_MS = 220;
+const AUTO_SCREEN_KEY = 'kodo:autoScreenAiDiffs';
+const MAX_SCREEN_PATCHES = 20;
+
+const SCREEN_FLAG_LABELS: Record<string, string> = {
+  possible_logic_loss: 'possible logic loss',
+  possible_layer_violation: 'layer boundary violation',
+  removed_signatures: 'signatures removed',
+  high_risk_block_advised: 'block advised',
+  abstained: 'System 1 abstained',
+  low_confidence: 'low confidence',
+  logic_risk_uncertain: 'logic risk uncertain',
+  layer_boundary_uncertain: 'boundary uncertain',
+};
 
 export function DiffPreview({
   workspace,
@@ -99,9 +126,27 @@ export function DiffPreview({
   const [applyFailure, setApplyFailure] = useState<ApplyFailure | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [showDirtyList, setShowDirtyList] = useState(false);
+  const [screen, setScreen] = useState<{
+    pending: boolean;
+    result: ScreenDiffResponse | null;
+    error: string | null;
+  }>({ pending: false, result: null, error: null });
+  const [autoScreen, setAutoScreen] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUTO_SCREEN_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const lastScreenedKey = useRef<string | null>(null);
 
   const dirty = !isDraftEmpty(draft);
   const plan = useMemo(() => buildPatchOperations(workspace, draft), [workspace, draft]);
+  const systemOneSettings = useSystemOneSettings();
+  const systemOneConfig = useMemo(
+    () => toSystemOneOverride(systemOneSettings),
+    [systemOneSettings],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -213,11 +258,76 @@ export function DiffPreview({
   }, [state.response, external]);
 
   useEffect(() => {
+    // A new patch set invalidates the previous advisory screen.
+    setScreen({ pending: false, result: null, error: null });
+  }, [state.response, external]);
+
+  useEffect(() => {
     if (!external || external.patches.length === 0) {
       return;
     }
     setSelectedPath(external.patches[0].filePath);
   }, [external]);
+
+  const screenPatchList = useMemo(
+    () => selectedPatches.slice(0, MAX_SCREEN_PATCHES),
+    [selectedPatches],
+  );
+
+  const autoScreenKey = useMemo(() => {
+    if (externalPlan?.kind !== 'ai' || screenPatchList.length === 0) {
+      return null;
+    }
+    return `${externalPlan.label}|${screenPatchList
+      .map((patch) => `${patch.filePath}:${patch.proposedContent.length}`)
+      .join('|')}`;
+  }, [externalPlan, screenPatchList]);
+
+  const runScreen = useCallback(async () => {
+    if (screenPatchList.length === 0 || screen.pending) {
+      return;
+    }
+    setScreen({ pending: true, result: null, error: null });
+    try {
+      const result = await api.decisionScreenDiff({
+        rootPath: workspace.rootPath,
+        patches: screenPatchList.map((patch: PatchResult) => ({
+          filePath: patch.filePath,
+          originalContent: patch.originalContent,
+          proposedContent: patch.proposedContent,
+          isNewFile: Boolean(patch.isNewFile),
+        })),
+        workspaceIr: workspace,
+        systemOneConfig,
+      });
+      setScreen({ pending: false, result, error: null });
+    } catch (reason) {
+      setScreen({
+        pending: false,
+        result: null,
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
+    }
+  }, [screen.pending, screenPatchList, systemOneConfig, workspace]);
+
+  useEffect(() => {
+    if (!autoScreen || !autoScreenKey || screen.pending) {
+      return;
+    }
+    if (lastScreenedKey.current === autoScreenKey) {
+      return;
+    }
+    lastScreenedKey.current = autoScreenKey;
+    void runScreen();
+  }, [autoScreen, autoScreenKey, runScreen, screen.pending]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUTO_SCREEN_KEY, String(autoScreen));
+    } catch {
+      // Private mode: the toggle still works for this session.
+    }
+  }, [autoScreen]);
 
   const runApply = useCallback(
     async (override: boolean) => {
@@ -300,6 +410,89 @@ export function DiffPreview({
         disabled={waiting || selectedPatches.length === 0 || patches.length === 0}
         onApply={requestApply}
       />
+
+      {!waiting && patches.length > 0 && (
+        <div className="border-b border-ink-700/70 bg-ink-900/40">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
+            <DecisionIcon className="h-3.5 w-3.5 shrink-0 text-sky-300" />
+            <button
+              type="button"
+              onClick={() => {
+                lastScreenedKey.current = autoScreenKey;
+                void runScreen();
+              }}
+              disabled={screen.pending || screenPatchList.length === 0}
+              title="Advisory System 1 screen of the proposed diff: logic-deletion risk, layer boundaries and review priority."
+              className="flex items-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-400/10 px-2 py-0.5 text-[10px] font-medium text-sky-200 transition enabled:hover:bg-sky-400/20 disabled:opacity-50"
+            >
+              {screen.pending ? <Spinner className="h-3 w-3" /> : <DecisionIcon className="h-3 w-3" />}
+              {screen.pending ? 'Screening…' : 'Screen Diff (Laya S1)'}
+            </button>
+            <label
+              className="flex items-center gap-1.5 text-[9.5px] text-slate-500"
+              title="Automatically screen every AI-originated diff once it appears."
+            >
+              <input
+                type="checkbox"
+                checked={autoScreen}
+                onChange={(event) => setAutoScreen(event.target.checked)}
+                className="h-3 w-3 accent-sky-500"
+              />
+              auto-screen AI diffs
+            </label>
+            {screen.result && (
+              <>
+                <span
+                  title={diffStatusMeta(screen.result.status).hint}
+                  className={`rounded border px-1.5 py-0.5 text-[9.5px] font-medium ${
+                    diffStatusMeta(screen.result.status).className
+                  }`}
+                >
+                  {diffStatusMeta(screen.result.status).label}
+                </span>
+                <span className="font-mono text-[9px] text-slate-500">
+                  {confidencePercent(screen.result.confidence)} confidence
+                </span>
+                {screen.result.available === false && (
+                  <span className="text-[9px] text-amber-300/80">
+                    {screen.result.warning ?? 'System 1 unavailable — review manually.'}
+                  </span>
+                )}
+              </>
+            )}
+            <span className="ml-auto text-[9px] leading-relaxed text-slate-600">
+              Advisory — deterministic Audit &amp; Monaco Diff remain required
+            </span>
+          </div>
+          {screen.error && (
+            <p className="flex items-start gap-1.5 px-3 pb-1.5 text-[9.5px] leading-relaxed text-rose-300">
+              <AlertIcon className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+              {screen.error}
+            </p>
+          )}
+          {screen.result && screen.result.flags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 px-3 pb-1.5">
+              {screen.result.flags.map((flag) => (
+                <span
+                  key={flag}
+                  className={`rounded px-1 py-0.5 text-[8.5px] ${
+                    flag === 'possible_logic_loss' ||
+                    flag === 'possible_layer_violation' ||
+                    flag === 'high_risk_block_advised'
+                      ? 'bg-rose-500/15 text-rose-200'
+                      : 'bg-amber-400/10 text-amber-200/80'
+                  }`}
+                >
+                  {SCREEN_FLAG_LABELS[flag] ?? flag}
+                </span>
+              ))}
+              <span className="ml-1 text-[8.5px] leading-relaxed text-slate-600">
+                {screen.result.advisoryNote}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {!waiting && selectedPatches.length > 0 && (
         <BuildVerificationPanel

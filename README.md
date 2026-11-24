@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and three optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Ephemeral Builders](https://img.shields.io/badge/Status%20v0.4%20%C2%B7%20Phases%201--9%20delivered-brightgreen.svg)
+![Status: Laya Decision Layer](https://img.shields.io/badge/Status%20v0.5%20%C2%B7%20Phases%201--10%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -21,6 +21,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **DeepSeek Architecture Copilot:** OpenAI-compatible client for **DeepSeek Cloud** or air-gapped **Ollama / vLLM** that turns a business spec into a blueprint, proposes fixes for audit findings and implements single methods — always as IR-aware proposals reviewed in the Monaco diff. The LLM never writes to disk.
 - **Deploy Studio:** Generates non-root multi-stage `Dockerfile`s, a healthchecked `docker-compose.yml` (PostgreSQL / Redis / RabbitMQ on a `kodo-net` bridge) and a placeholder-only `.env.example` — then controls local Docker (compose up/down, live health, filterable logs), exports Git branches and GitHub PRs, and records every apply/rollback/deploy/Git action in a local append-only audit log.
 - **Ephemeral Build Verification (Phase 9):** **Verify Build (Sandbox)** compiles — and optionally unit-tests — the exact proposed patches before they reach disk, inside a disposable, non-root, `--network=none` container built from pre-warmed Maven 3.9/JDK 21, .NET 8 SDK or Node 22 images. The workspace is streamed in as an in-memory tar snapshot (never mounted), output streams live into the UI, diagnostics are parsed per compiler, and a failing build can hand its errors to the AI Copilot for a reviewed fix.
+- **System 1 Decision Layer (Phase 10):** **Laya** — a local, non-autoregressive 421M decision model — runs over `/v1/systemone` (Ollama or `laya-serve`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek (System 2), and pre-screen proposed diffs in milliseconds. Every decision becomes an inspectable, tenant-scoped **ADR** with accept/override feedback and a JSONL training export. It is **advisory only**: it never writes to disk and degrades cleanly to deterministic rules + manual DeepSeek triggers when offline.
 
 ---
 
@@ -52,9 +53,17 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
     the orchestrator creates a disposable, non-root, --network=none container per verification and
     feeds it an in-memory tar snapshot, so the host workspace is never mounted.
 
+    System 1 / System 2 lane (Phase 10, optional):
+      Kodo UI -> POST /api/v1/decision/{triage-audit,route-task,screen-diff}
+              -> app/decision (compact <=12 KiB deterministic state + typed questions)
+              -> Laya over POST /v1/systemone (ollama | laya-serve, `--profile ai-local`)
+              -> advisory answer + ArchitectureDecisionRecord (per user)
+              -> System 2 DeepSeek only when Laya's calibrated confidence says so
+      Laya never generates text, never writes to disk and never replaces the deterministic gates.
+
 ---
 
-## Quick Start (Phases 1–9, local + SaaS)
+## Quick Start (Phases 1–10, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -62,6 +71,10 @@ docker compose up --build
 
 # Optional: build the three ephemeral builder images (Verify Build)
 docker compose --profile builders build
+
+# Optional: run local Laya (System 1) alongside the stack, then pull the model once
+docker compose --profile ai-local up -d ollama
+docker compose exec ollama ollama pull laya
 ```
 
 Open **<http://localhost:3000>** — the Nginx image serves the UI and proxies `/api/` and `/health` to
@@ -163,12 +176,13 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–9)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–10)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
-(v0.3.0) and Phase 9 is the sandbox-verified build loop (v0.4.0)** — Kodo now covers the full
-**Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop and ships as one container stack for
-both local self-hosting and multi-tenant SaaS.
+(v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0) and Phase 10 is the advisory System 1
+decision layer (v0.5.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Sandbox Verify →
+Deploy** loop plus a **System 1 → System 2** AI decision path, and ships as one container stack for both
+local self-hosting and multi-tenant SaaS.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -233,16 +247,37 @@ both local self-hosting and multi-tenant SaaS.
 
 ---
 
-## What's Next (Roadmap: Phase 10)
-
-Phases 1–9 are delivered. The next chapter is the **hybrid System 1 + System 2** decision layer. Full
-detail and definitions of done: [ROADMAP.md](ROADMAP.md).
-
-| Phase | Focus | Headline |
-|---|---|---|
-| **10** | Laya Decision Layer (System 1 + System 2) | **Laya** — Convai Innovations' Apache-2.0 421M non-autoregressive decision model — runs locally (`/v1/systemone`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek, and pre-screen AI diffs; every decision becomes an inspectable ADR. Falls back cleanly to deterministic rules when Laya is offline. |
+### Phase 10: Laya Decision Layer (System 1 Triage + System 2 DeepSeek Routing) - Delivered (v0.5.0)
+- **Advisory local System 1:** `app/decision/` speaks the standard `/v1/systemone` protocol
+  (`{ model, state, questions }` → `{ model, answers, usage }`) against Ollama (`laya`) or
+  `laya-serve`, with defensive parsing of the optional `abstain`, `route` and `prediction_set`
+  fields. Laya never generates text and never writes to disk.
+- **Deterministic, budgeted state:** `state_packer.py` projects the Core IR / patches into a fixed-key
+  order state with a hard **12 KiB** ceiling (and a **64 KiB** request ceiling), so Laya's token budget
+  and field-order sensitivity are respected. Every `choice` question has <= 12 options with an explicit
+  neutral fallback.
+- **Three workflows:** **Audit triage** (risk level + suggested route + confidence, up to 15
+  deduplicated/prioritised findings), **Task routing** (deterministic AST/Builder vs. DeepSeek
+  code/reasoning vs. human review, with abstain/low-confidence escalation) and a **pre-diff safety
+  gate** (`pass` / `caution` / `high_risk`, logic-deletion and layer-boundary flags).
+- **ADRs + continuous learning:** `architecture_decision_records` stores the compact state, the full
+  typed answer distribution, recommendation, confidence and latency per user. The **Decisions (ADR)**
+  tab lists them with confidence meters, expandable probability distributions and inline Accept/Override
+  feedback; `GET /api/v1/decisions/export-training` emits JSONL for local Laya calibration.
+- **Graceful degradation + safety:** when Laya is disabled/offline the routes return HTTP 200 with
+  `available: false` and a `SYSTEMONE_*` warning — the deterministic audit, Monaco diff, SHA-256 guarded
+  apply and Phase 9 builder verification remain the only gates. Tests:
+  `tests/test_decision_layer.py` (34 hermetic cases, `httpx.MockTransport` only); `pytest` 240 passed /
+  1 skipped, `ruff`, `npm run build` and `docker compose --profile ai-local config` green.
 
 ---
+
+## Roadmap Complete (Phases 1–10 delivered)
+
+All ten phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
+SaaS foundation, ephemeral builders and the Laya System 1 decision layer. Full detail and DoD evidence:
+[ROADMAP.md](ROADMAP.md).
 
 ## License
 

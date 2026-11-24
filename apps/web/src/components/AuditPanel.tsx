@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { SEVERITY_META, SEVERITY_ORDER, findingNames, type NodeAudit } from '../lib/audit';
+import { confidencePercent, riskMeta, routeMeta } from '../lib/decision';
 import type { AuditFinding, AuditReport, ComponentNode, Severity } from '../types/core-ir';
-import { AlertIcon, CodeIcon, SparkIcon, Spinner } from './icons';
+import type { TriageItem, TriageState } from '../types/decision';
+import { AlertIcon, CodeIcon, DecisionIcon, SparkIcon, Spinner } from './icons';
 
 type Filter = 'all' | Severity;
 
@@ -14,6 +16,9 @@ interface AuditPanelProps {
   aiConfigured?: boolean;
   aiFixingId?: string | null;
   onFixWithAi?: (finding: AuditFinding) => void;
+  /** Phase 10 advisory System 1 triage (never the sole gate). */
+  triage?: TriageState;
+  onTriage?: () => void;
 }
 
 export function AuditPanel({
@@ -24,6 +29,8 @@ export function AuditPanel({
   aiConfigured = false,
   aiFixingId = null,
   onFixWithAi,
+  triage,
+  onTriage,
 }: AuditPanelProps) {
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -44,10 +51,49 @@ export function AuditPanel({
 
   return (
     <div className="mt-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Audit findings</p>
-        <span className="font-mono text-[10px] text-slate-600">{report.findings.length}</span>
+        <div className="flex items-center gap-1.5">
+          {onTriage && (
+            <button
+              type="button"
+              onClick={onTriage}
+              disabled={triage?.pending}
+              title="Advisory System 1 triage: risk level, confidence and suggested route per finding. The deterministic audit stays authoritative."
+              className="flex items-center gap-1 rounded border border-sky-400/35 bg-sky-400/10 px-1.5 py-0.5 text-[9px] text-sky-200 transition enabled:hover:bg-sky-400/20 disabled:opacity-50"
+            >
+              {triage?.pending ? (
+                <Spinner className="h-2.5 w-2.5" />
+              ) : (
+                <DecisionIcon className="h-2.5 w-2.5" />
+              )}
+              {triage?.pending ? 'Triaging…' : 'Triage with Laya (System 1)'}
+            </button>
+          )}
+          <span className="font-mono text-[10px] text-slate-600">{report.findings.length}</span>
+        </div>
       </div>
+
+      {triage?.error && (
+        <p className="mt-1.5 flex items-start gap-1.5 text-[9.5px] leading-relaxed text-rose-300">
+          <AlertIcon className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+          {triage.error}
+        </p>
+      )}
+      {triage && !triage.pending && !triage.error && triage.available === false && (
+        <p className="mt-1.5 text-[9.5px] leading-relaxed text-amber-300/80">
+          {triage.warning ??
+            'System 1 is unavailable — deterministic rules and manual DeepSeek triggers still work.'}
+        </p>
+      )}
+      {triage && triage.available && (
+        <p className="mt-1.5 text-[9.5px] leading-relaxed text-sky-300/80">
+          Advisory triage · {triage.model ?? 'laya'} · {triage.latencyMs ?? 0} ms ·{' '}
+          {Object.keys(triage.items).length} finding
+          {Object.keys(triage.items).length === 1 ? '' : 's'}
+          {triage.warning ? ` · ${triage.warning}` : ''}
+        </p>
+      )}
 
       <div className="mt-2 flex flex-wrap gap-1">
         <FilterButton active={filter === 'all'} onClick={() => setFilter('all')} label="All" count={counts.all} />
@@ -81,6 +127,7 @@ export function AuditPanel({
               aiConfigured={aiConfigured}
               aiFixing={aiFixingId === finding.id}
               onFixWithAi={onFixWithAi}
+              triage={triage?.items[finding.id]}
             />
           ))}
         </ul>
@@ -97,6 +144,7 @@ export function FindingRow({
   aiConfigured = false,
   aiFixing = false,
   onFixWithAi,
+  triage,
 }: {
   finding: AuditFinding;
   nodesById: Map<string, ComponentNode>;
@@ -105,6 +153,7 @@ export function FindingRow({
   aiConfigured?: boolean;
   aiFixing?: boolean;
   onFixWithAi?: (finding: AuditFinding) => void;
+  triage?: TriageItem;
 }) {
   const meta = SEVERITY_META[finding.severity];
   const primary = finding.nodeIds[0];
@@ -160,6 +209,37 @@ export function FindingRow({
               </span>
             )}
           </div>
+
+          {triage && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              <span
+                title={riskMeta(triage.riskLevel).hint}
+                className={`rounded border px-1 py-0.5 text-[8.5px] font-medium ${riskMeta(triage.riskLevel).className}`}
+              >
+                {riskMeta(triage.riskLevel).label}
+              </span>
+              <span
+                title="Calibrated System 1 confidence. Below the auto-route threshold Kodo escalates."
+                className="rounded bg-ink-950/70 px-1 py-0.5 font-mono text-[8.5px] text-slate-400"
+              >
+                {confidencePercent(triage.confidence)}
+              </span>
+              <span
+                title={routeMeta(triage.recommendedRoute).hint}
+                className={`rounded border px-1 py-0.5 text-[8.5px] font-medium ${routeMeta(triage.recommendedRoute).className}`}
+              >
+                {routeMeta(triage.recommendedRoute).label}
+              </span>
+              {triage.escalatedToSystem2 && (
+                <span
+                  title="Confidence was below the threshold, so Kodo escalated instead of acting automatically."
+                  className="rounded bg-ink-950/70 px-1 py-0.5 text-[8.5px] text-amber-300/80"
+                >
+                  escalated
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {finding.filePath && (

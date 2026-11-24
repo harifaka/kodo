@@ -26,6 +26,7 @@ from app.config import (
 )
 from app.db import init_db
 from app.db.repository import LOCAL_USER_ID
+from app.decision.routes import router as decision_router
 from app.deploy.routes import router as deploy_router
 from app.llm.routes import router as ai_router
 
@@ -42,14 +43,15 @@ app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–9. "
+        "Kodo Architecture Control Center — Phases 1–10. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
         "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
-        "generates production Docker artifacts (reviewed through the same diff), verifies proposed code "
-        "in network-isolated ephemeral builder containers, controls local Docker Compose, and exports Git "
-        "branches/pull requests — all applied to disk behind path-containment, SHA-256 optimistic "
-        "concurrency and Git working-tree guards."
+        "triages/routes/screens with an advisory local System 1 (Laya) decision layer backed by "
+        "tenant-scoped ADRs, generates production Docker artifacts (reviewed through the same diff), "
+        "verifies proposed code in network-isolated ephemeral builder containers, controls local Docker "
+        "Compose, and exports Git branches/pull requests — all applied to disk behind path-containment, "
+        "SHA-256 optimistic concurrency and Git working-tree guards."
     ),
     version=__version__,
 )
@@ -121,6 +123,7 @@ app.include_router(deploy_router)
 app.include_router(git_router)
 app.include_router(auth_router)
 app.include_router(account_router)
+app.include_router(decision_router)
 
 
 @app.get("/", tags=["system"])
@@ -157,6 +160,12 @@ async def root() -> dict[str, str]:
         "workspaces": "GET /api/v1/workspaces",
         "blueprints": "GET /api/v1/blueprints",
         "userSettings": "GET /api/v1/user/settings",
+        "systemOneTest": "POST /api/v1/decision/test-connection",
+        "systemOneTriage": "POST /api/v1/decision/triage-audit",
+        "systemOneRoute": "POST /api/v1/decision/route-task",
+        "systemOneScreenDiff": "POST /api/v1/decision/screen-diff",
+        "decisions": "GET /api/v1/decisions",
+        "decisionsTrainingExport": "GET /api/v1/decisions/export-training",
     }
 
 

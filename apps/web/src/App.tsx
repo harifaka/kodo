@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { BuilderPanel } from './components/BuilderPanel';
+import { DecisionsPanel } from './components/DecisionsPanel';
 import { CodeInspector } from './components/CodeInspector';
 import { DeployStudio } from './components/DeployStudio';
 import { DiffPreview } from './components/DiffPreview';
@@ -16,17 +17,21 @@ import {
   BuilderIcon,
   CheckIcon,
   CodeIcon,
+  DecisionIcon,
   DeployIcon,
   DiffIcon,
   GraphIcon,
   Spinner,
   UmlIcon,
 } from './components/icons';
+import { useAuditTriage } from './hooks/useAuditTriage';
 import { useDraftAudit } from './hooks/useDraftAudit';
 import { useAiSettings } from './hooks/useAiSettings';
 import { useHealth } from './hooks/useHealth';
+import { useSystemOneSettings } from './hooks/useSystemOneSettings';
 import { ApiError, api } from './lib/api';
 import { isAiConfigured, providerLabel, toLlmOverride } from './lib/aiSettings';
+import { systemOneLabel } from './lib/decisionSettings';
 import {
   addField,
   addNodeAnnotation,
@@ -53,7 +58,7 @@ import type {
   WorkspaceIR,
 } from './types/core-ir';
 
-type TabId = 'graph' | 'uml' | 'code' | 'builder' | 'deploy' | 'diff';
+type TabId = 'graph' | 'uml' | 'code' | 'builder' | 'deploy' | 'diff' | 'decisions';
 
 const LAST_PATH_KEY = 'kodo:lastPath';
 // Stable empty arrays: useDraftAudit keys its effect on these inputs.
@@ -87,8 +92,12 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const health = useHealth();
   const aiSettings = useAiSettings();
+  const systemOneSettings = useSystemOneSettings();
+  const { triage, runTriage, resetTriage } = useAuditTriage(workspace);
 
   const aiConfigured = isAiConfigured(aiSettings) || aiServerConfigured;
+  const systemOneEnabled = systemOneSettings.enabled;
+  const systemOneBadge = systemOneLabel(systemOneSettings);
   const aiLabel = isAiConfigured(aiSettings)
     ? providerLabel(aiSettings)
     : aiServerConfigured
@@ -138,6 +147,10 @@ export default function App() {
     }
     void refreshWorkspaces();
   }, [auth?.authenticated, auth?.user?.id, refreshWorkspaces, workspaceRevision]);
+
+  useEffect(() => {
+    resetTriage();
+  }, [workspace?.rootPath, resetTriage]);
 
   const draftView = useMemo(() => (workspace ? applyDraft(workspace, draft) : null), [workspace, draft]);
   const nodes = draftView?.nodes ?? NO_NODES;
@@ -240,6 +253,7 @@ export default function App() {
     async (target: string, options: { resetView: boolean }): Promise<WorkspaceIR> => {
       const result = await api.scan(target);
       setWorkspace(result);
+      resetTriage();
       setDraft(emptyDraft());
       setPlan(null);
       setWorkspaceRevision((value) => value + 1);
@@ -255,7 +269,7 @@ export default function App() {
       health.refresh();
       return result;
     },
-    [health.refresh],
+    [health.refresh, resetTriage],
   );
 
   const handleScan = useCallback(async () => {
@@ -518,6 +532,8 @@ export default function App() {
         workspace={view}
         aiLabel={aiLabel}
         aiConfigured={aiConfigured}
+        systemOneLabel={systemOneBadge}
+        systemOneEnabled={systemOneEnabled}
         onOpenAiSettings={() => setAiModalOpen(true)}
         mode={auth?.mode ?? 'local'}
         authenticated={auth?.authenticated ?? true}
@@ -687,6 +703,13 @@ export default function App() {
                     onWorkspaceCloned={(localPath) => void handleWorkspaceCloned(localPath)}
                   />
                 )}
+                {tab === 'decisions' && (
+                  <DecisionsPanel
+                    key={`${view.rootPath}-decisions`}
+                    rootPath={view.rootPath}
+                    workspace={view}
+                  />
+                )}
                 {tab === 'diff' && workspace && (
                   <DiffPreview
                     workspace={workspace}
@@ -729,6 +752,8 @@ export default function App() {
             onFixWithAi={(finding) => void handleAiAuditFix(finding)}
             onImplementMethod={handleImplementMethod}
             onOpenAiSettings={() => setAiModalOpen(true)}
+            triage={triage}
+            onTriage={() => void runTriage()}
           />
         )}
       </div>
@@ -764,6 +789,7 @@ function TabBar({
       badge: planCount ? String(planCount) : undefined,
     },
     { id: 'deploy', label: 'Deploy', icon: DeployIcon },
+    { id: 'decisions', label: 'Decisions (ADR)', icon: DecisionIcon },
     {
       id: 'diff',
       label: 'Diff Preview',

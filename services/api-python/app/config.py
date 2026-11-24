@@ -64,6 +64,14 @@ DEFAULT_BUILDER_PIDS_LIMIT = 256
 MAX_BUILDER_SNAPSHOT_BYTES = 50 * 1024 * 1024
 MAX_BUILDER_LOG_BYTES = 256 * 1024
 
+# Phase 10 System 1 (Laya) decision layer. Purely advisory: Kodo keeps working with deterministic
+# rules and manual DeepSeek triggers when the local server is disabled or unreachable.
+DEFAULT_SYSTEMONE_ENABLED = True
+DEFAULT_SYSTEMONE_BASE_URL = "http://localhost:11434"
+DEFAULT_SYSTEMONE_MODEL = "laya"
+DEFAULT_SYSTEMONE_TIMEOUT_SECONDS = 10.0
+DEFAULT_SYSTEMONE_AUTO_THRESHOLD = 0.78
+
 
 class ConfigurationError(RuntimeError):
     """Raised when the process is configured in a way that cannot be served safely."""
@@ -168,6 +176,53 @@ def builder_cpus() -> str:
 
 def builder_pids_limit() -> int:
     return _env_int("KODO_BUILDER_PIDS_LIMIT", DEFAULT_BUILDER_PIDS_LIMIT, minimum=16)
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if value < minimum or value > maximum:
+        return default
+    return value
+
+
+def systemone_enabled() -> bool:
+    """System 1 is on by default; an unreachable server degrades gracefully at call time."""
+    return _env_flag("KODO_SYSTEMONE_ENABLED", DEFAULT_SYSTEMONE_ENABLED)
+
+
+def systemone_base_url() -> str:
+    return os.getenv("KODO_SYSTEMONE_BASE_URL", "").strip().rstrip("/") or DEFAULT_SYSTEMONE_BASE_URL
+
+
+def systemone_model() -> str:
+    return os.getenv("KODO_SYSTEMONE_MODEL", "").strip() or DEFAULT_SYSTEMONE_MODEL
+
+
+def systemone_api_key() -> str:
+    """Optional key for hosted `/v1/systemone` endpoints; never logged or persisted."""
+    return os.getenv("KODO_SYSTEMONE_API_KEY", "").strip()
+
+
+def systemone_timeout_seconds() -> float:
+    return _env_float(
+        "KODO_SYSTEMONE_TIMEOUT_SECONDS", DEFAULT_SYSTEMONE_TIMEOUT_SECONDS, minimum=0.5, maximum=120.0
+    )
+
+
+def systemone_auto_threshold() -> float:
+    """Calibrated confidence below which Kodo escalates instead of trusting System 1."""
+    return _env_float(
+        "KODO_SYSTEMONE_AUTO_THRESHOLD",
+        DEFAULT_SYSTEMONE_AUTO_THRESHOLD,
+        minimum=0.0,
+        maximum=1.0,
+    )
 
 
 _ephemeral_jwt_secret: str | None = None

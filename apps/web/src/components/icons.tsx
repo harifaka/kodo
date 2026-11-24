@@ -209,3 +209,15 @@ export function CloseIcon({ className = 'h-4 w-4' }: IconProps) {
     </svg>
   );
 }
+
+/** System 1 (Laya) — a small three-node decision network. */
+export function DecisionIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+      <circle cx="12" cy="4.8" r="2.1" />
+      <circle cx="5" cy="18.5" r="2.1" />
+      <circle cx="19" cy="18.5" r="2.1" />
+      <path d="M10.6 6.6 6.2 16.6M13.4 6.6l4.4 10M7.1 18.5h9.8" strokeLinecap="round" />
+    </svg>
+  );
+}

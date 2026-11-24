@@ -334,6 +334,38 @@ Allowed:
   `_stream_container`) and the LLM (`httpx.MockTransport`). pytest must never require a Docker daemon,
   network access or a host compiler.
 
+## 3j. System 1 / Laya advisory rules (Phase 10 — active)
+
+- **Advisory, never the sole gate.** `app/decision/` may triage findings, recommend a route and
+  pre-screen a diff, but it must never write to disk and never replace the deterministic Audit Engine,
+  the Monaco Diff review, the SHA-256 guarded apply or the Phase 9 builder verification. No
+  "auto-apply on confident triage", no hidden background calls.
+- **Wire protocol discipline.** Talk to `POST /v1/systemone` with `{ model, state, questions }` and
+  parse `{ model, answers, usage }` defensively (optional `abstain`, `route`, `prediction_set`). Serialize
+  requests with an explicit key order — never `sort_keys=True` — clamp `state` to **12 KiB** and the
+  whole body to **64 KiB**. Every `choice` question stays <= 12 options with an explicit neutral
+  fallback (`uncertain` / `human_review` / `careful_manual_review`); question ids and option keys are
+  stable API surface.
+- **No text generation.** Laya answers typed questions only. Never ask it for prose, code or free-form
+  JSON, and never feed its answer text into a prompt as instructions.
+- **Deterministic gating.** Below `KODO_SYSTEMONE_AUTO_THRESHOLD` (default `0.78`) or on `abstain`,
+  Kodo escalates to `deepseek_reasoning`/`human_review` instead of acting. Keep the escalation mapping
+  deterministic and covered by tests; never let a user-supplied threshold bypass a safety gate.
+- **Graceful degradation is part of the contract.** Disabled/unreachable/timeout/invalid responses must
+  return HTTP 200 with `available: false` (or a safe `human_review` recommendation) and a
+  `SYSTEMONE_*` warning. Scans, audits, dry-runs, applies and builds must never fail because Laya is
+  offline.
+- **Tenant-scoped ADRs only.** Every `architecture_decision_records` read/write goes through
+  `repository.*` with the authenticated `user_id`; another tenant's ADR is a `404`/empty list. Feedback
+  records a `decision_feedback` audit event (metadata only) and the training export contains only the
+  current user's confirmed/overridden rows.
+- **No secrets anywhere.** `KODO_SYSTEMONE_API_KEY` or the per-request `systemOneConfig.apiKey` are
+  attached to the outgoing request only. Never log them, echo them in errors, persist them in ADRs or
+  the database, or write them into a workspace. The UI keeps them in `sessionStorage`/memory only.
+- **Deterministic tests.** `tests/test_decision_layer.py` injects an `httpx.MockTransport` through
+  `app.decision.client.set_transport_override`; CI must never require Ollama, `laya-serve`, a Docker
+  daemon or network access.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -418,3 +450,9 @@ Allowed:
   `http://localhost:3000` serving the UI and `/health` proxying to FastAPI (Roslyn reachable). Every
   workflow in `.github/workflows/` must be valid YAML with the documented jobs, and all three images
   must build locally (`docker compose build`) as non-root, multi-stage images.
+- For System 1 changes: `pytest services/api-python/tests/test_decision_layer.py` must pass with no
+  Ollama/laya-serve process (mocked transport), `docker compose --profile ai-local config` must
+  validate, and the UI must show **Triage with Laya (System 1)** badges, the **Screen Diff (Laya S1)**
+  banner and the **Decisions (ADR)** tab. Kill the local Laya server and confirm triage/screen routes
+  still answer 200 with `available: false`, the audit panel and diff preview keep working, and no
+  dialogue ever reaches disk without the normal Apply → SHA-256 → rollback path.

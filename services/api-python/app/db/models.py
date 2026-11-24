@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -111,7 +112,40 @@ class UserSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ArchitectureDecisionRecord(Base):
+    """Phase 10 ADR: one advisory System 1 decision plus the human feedback on it.
+
+    Records are strictly tenant-scoped. ``state_json`` keeps the compact deterministic state that was
+    sent to Laya and ``answers_json`` the full typed answer distribution, so every route Kodo took
+    stays inspectable and exportable for local calibration.
+    """
+
+    __tablename__ = "architecture_decision_records"
+    __table_args__ = (
+        Index("ix_adr_user_created", "user_id", "created_at"),
+        Index("ix_adr_user_workspace", "user_id", "workspace_path"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    recommended_route: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    answers_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    feedback_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    override_route: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    feedback_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    feedback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 __all__ = [
+    "ArchitectureDecisionRecord",
     "AuditEvent",
     "Base",
     "RollbackBatch",

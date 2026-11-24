@@ -9,13 +9,15 @@ Blueprint -> Audit -> Edit -> Deploy platform.
   SQLite/PostgreSQL storage and fail-closed `KODO_MODE=saas` isolation.
 - **Phase 9** is shipped as **v0.4.0 (Ephemeral Builder Images)** — network-isolated, disposable
   builder containers verify proposed patches before they reach disk or a PR.
-- **Phase 10** is the remaining direction: the **Laya** System 1 + System 2 hybrid AI stack.
+- **Phase 10** is shipped as **v0.5.0 (Laya Decision Layer)** — an advisory local System 1 that
+  triages findings, routes work between deterministic tools and DeepSeek, pre-screens diffs and records
+  every decision as a tenant-scoped ADR.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8 and 9 are delivered (v0.3.0 and v0.4.0); the next implementation session
-> should follow Phase 10. Phases 1–9 stay below as delivered history.
+> by local and SaaS. Phases 8, 9 and 10 are delivered (v0.3.0, v0.4.0 and v0.5.0); **all ten phases of
+> the roadmap are complete**. Phases 1–10 stay below as delivered history.
 
 ---
 
@@ -199,13 +201,13 @@ and PRs, and records every action in an append-only local audit log.
 
 ---
 
-## Post-MVP Roadmap (Docker-First ✅, SaaS Foundation ✅, Ephemeral Builders ✅, System 1/2 AI next)
+## Post-MVP Roadmap (Docker-First ✅, SaaS Foundation ✅, Ephemeral Builders ✅, System 1/2 AI ✅)
 
 **Direction:** drop the desktop shell, ship one unified Docker stack for both local self-hosting and
 cloud SaaS, guarantee build correctness with sandboxed builder images, and add a fast local
 **System 1** decision layer (**Laya**) in front of the DeepSeek **System 2** reasoning model.
-Phase 7 (Docker-first packaging & CI/CD), Phase 8 (SaaS foundation) and Phase 9 (ephemeral builders)
-are delivered; Phase 10 is next.
+Phases 7 (Docker-first packaging & CI/CD), 8 (SaaS foundation), 9 (ephemeral builders) and 10 (Laya
+decision layer) are delivered.
 
 ## Phase 7: Docker-First Packaging & Multi-Stage GitHub Actions CI/CD ✅
 **Goal:** One command runs the whole Kodo stack locally, and CI builds/tests/publishes every image.
@@ -359,27 +361,61 @@ disposable non-root container. The user's files are never mounted and never modi
 
 ---
 
-## Phase 10: Laya Decision Layer (System 1 Triage + System 2 DeepSeek Routing)
+## Phase 10: Laya Decision Layer (System 1 Triage + System 2 DeepSeek Routing) ✅
 **Goal:** Cheap local intuition (System 1) decides **what** to do and **how risky** it is; DeepSeek
 (System 2) is spent only where real reasoning is required.
 
-- [ ] Integrate **Laya** (Convai Innovations, Apache-2.0, 421M non-autoregressive decision model,
+**Status:** Delivered as **v0.5.0** — advisory System 1 (Laya) over `/v1/systemone`, persisted ADRs with
+accept/override feedback, JSONL training export and a documented degradation path when Laya is offline.
+
+- [x] Integrate **Laya** (Convai Innovations, Apache-2.0, 421M non-autoregressive decision model,
       RLCD-calibrated probabilities, zero text generation) via Ollama (`laya`, `/v1/systemone`) or the
-      `laya` Python/Ollaya runtime as an optional `docker compose --profile ai-local` service.
-- [ ] Design strict typed decision schemas (`choice` <= 20 options, `yes/no`, `score` rubrics) operating
+      `laya` Python/Ollama runtime as an optional `docker compose --profile ai-local` service.
+  - [x] `app/decision/client.py`: async `/v1/systemone` client (`{ model, state, questions }` ->
+        `{ model, answers, usage }`) that also reads the optional `laya-serve` fields (`abstain`,
+        `route`, `prediction_set`) and maps `SYSTEMONE_DISABLED` / `_UNREACHABLE` / `_TIMEOUT` /
+        `_UNAUTHORIZED` / `_INVALID_RESPONSE`.
+  - [x] `docker-compose.yml` gains an `ollama/ollama:latest` service under `profiles: ["ai-local"]`
+        with a `kodo-ollama` model volume, healthcheck and `kodo-net` networking; the API reads
+        `KODO_SYSTEMONE_BASE_URL` (default `http://ollama:11434` in Compose, `http://localhost:11434`
+        outside Docker).
+- [x] Design strict typed decision schemas (`choice` <= 20 options, `yes/no`, `score` rubrics) operating
       on compact Core IR + Audit state in a single forward pass (~10–33 ms):
-  - [ ] **Audit Triage & Risk Scoring:** rank findings by real architectural risk vs. benign boilerplate.
-  - [ ] **System 1 -> System 2 Router:** use Laya's calibrated probabilities and confidence thresholds to
+  - [x] **Audit Triage & Risk Scoring:** rank findings by real architectural risk vs. benign boilerplate.
+  - [x] **System 1 -> System 2 Router:** use Laya's calibrated probabilities and confidence thresholds to
         route tasks between deterministic AST/Builder paths (zero cloud tokens) vs. escalating complex
         refactors to DeepSeek (System 2) or human review.
-  - [ ] **Pre-Diff Safety Gate:** fast multi-question check on AI-proposed patches (layer boundary check,
+  - [x] **Pre-Diff Safety Gate:** fast multi-question check on AI-proposed patches (layer boundary check,
         business-logic deletion risk, pattern conformance) before presenting to the user — always
         advisory alongside deterministic audit and Monaco Diff, never the sole gate.
-- [ ] Record decisions as inspectable **Architecture Decision Records (ADRs)** in the Phase 8 DB, with
+  - [x] Every `choice` question has <= 12 options (well under the ceiling) with an explicit neutral
+        fallback; `state_packer.py` builds a fixed-key-order state (finding/task/diff projections) and
+        clamps it to **12 KiB**, with the whole request capped at **64 KiB** and never sorted by key.
+- [x] Record decisions as inspectable **Architecture Decision Records (ADRs)** in the Phase 8 DB, with
       user accept/override feedback to support Laya's local continuous learning on team architectural
       preferences.
-- [ ] Graceful degradation: if local Laya/Ollama is offline, Kodo falls back cleanly to deterministic
+  - [x] `architecture_decision_records` table (user-scoped) storing the compact state, full typed answer
+        distribution, recommendation, confidence, latency and feedback.
+  - [x] `GET /api/v1/decisions`, `POST /api/v1/decisions/{id}/feedback` (with a `decision_feedback`
+        audit event) and `GET /api/v1/decisions/export-training` (JSONL ready for local calibration).
+  - [x] UI: `Decisions (ADR)` tab with the **Route a Task (S1 -> S2)** quick input, confidence meters,
+        expandable probability distributions, inline Accept/Override and the training export button.
+- [x] Graceful degradation: if local Laya/Ollama is offline, Kodo falls back cleanly to deterministic
       rules + manual DeepSeek triggers.
-- **Definition of Done:** Local Laya container runs alongside Kodo via `/v1/systemone`, triages real repo
-  scans in milliseconds with calibrated confidence scores, routes tasks between deterministic tools and
-  DeepSeek, and logs explainable ADRs.
+  - [x] Triage/screen routes answer HTTP 200 with `available: false`, an empty item list and a
+        `SYSTEMONE_*` warning; the router returns a safe `human_review` recommendation. No scan, audit
+        or diff is ever blocked by System 1.
+- **Definition of Done (evidence):** Local Laya runs alongside Kodo via `/v1/systemone`, triages real
+  repo scans in milliseconds with calibrated confidence scores, routes tasks between deterministic tools
+  and DeepSeek, and logs explainable ADRs.
+  - `tests/test_decision_layer.py` (34 hermetic cases, `httpx.MockTransport` only): deterministic state
+    key order + 12 KiB clamping, client parsing/abstain/timeout/unreachable/unauthorized parsing,
+    all three workflows persisting tenant-scoped ADRs with zero workspace byte changes, <= 15-finding
+    triage cap and finding filters, low-confidence/abstain escalation, the advisory `pass`/`caution`/
+    `high_risk` verdicts, accept/override feedback + audit event, JSONL training export, cross-tenant
+    404/empty-list isolation and the SaaS sandbox 403 gate. `pytest` **240 passed / 1 skipped** and
+    `ruff check app tests` are green, `npm run build` passes, and
+    `docker compose --profile ai-local config` validates.
+  - Security posture unchanged: System 1 is advisory, never writes to disk, and every ADR is scoped by
+    `user_id`; the deterministic audit, Monaco diff, SHA-256 apply and Phase 9 builder verification
+    remain the only gates.

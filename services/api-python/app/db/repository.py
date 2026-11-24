@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 
 from app.db.engine import session_scope
 from app.db.models import (
+    ArchitectureDecisionRecord,
     AuditEvent,
     RollbackBatch,
     SavedBlueprint,
@@ -86,6 +87,26 @@ class BlueprintRecord:
     stack: str
     blueprint_json: str
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    id: str
+    user_id: str
+    workspace_path: str
+    decision_type: str
+    subject: str
+    model: str
+    recommended_route: str
+    confidence: float
+    latency_ms: int
+    state_json: str
+    answers_json: str
+    feedback_status: str
+    override_route: str | None
+    feedback_note: str | None
+    created_at: datetime
+    feedback_at: datetime | None
 
 
 def _to_user(row: User) -> UserRecord:
@@ -445,8 +466,145 @@ def list_blueprints(user_id: str) -> list[BlueprintRecord]:
         ]
 
 
-# ------------------------------------------------------------------------------ user settings
+# --------------------------------------------------------------------------------- decisions
 
+MAX_DECISIONS = 200
+MAX_TRAINING_RECORDS = 500
+DECISION_FEEDBACK_STATUSES = ("pending", "accepted", "overridden")
+
+
+def _to_decision(row: ArchitectureDecisionRecord) -> DecisionRecord:
+    return DecisionRecord(
+        id=row.id,
+        user_id=row.user_id,
+        workspace_path=row.workspace_path,
+        decision_type=row.decision_type,
+        subject=row.subject,
+        model=row.model,
+        recommended_route=row.recommended_route,
+        confidence=float(row.confidence or 0.0),
+        latency_ms=int(row.latency_ms or 0),
+        state_json=row.state_json,
+        answers_json=row.answers_json,
+        feedback_status=row.feedback_status,
+        override_route=row.override_route,
+        feedback_note=row.feedback_note,
+        created_at=row.created_at,
+        feedback_at=row.feedback_at,
+    )
+
+
+def save_decision_record(
+    user_id: str,
+    *,
+    workspace_path: str,
+    decision_type: str,
+    subject: str,
+    model: str,
+    recommended_route: str,
+    confidence: float,
+    latency_ms: int,
+    state_json: str,
+    answers_json: str,
+) -> DecisionRecord:
+    """Persist one advisory System 1 decision for ``user_id`` only."""
+    with session_scope() as session:
+        row = ArchitectureDecisionRecord(
+            id=uuid.uuid4().hex,
+            user_id=user_id,
+            workspace_path=str(workspace_path)[:2000],
+            decision_type=decision_type[:40],
+            subject=subject[:300],
+            model=model[:120],
+            recommended_route=recommended_route[:60],
+            confidence=max(0.0, min(1.0, float(confidence))),
+            latency_ms=max(0, int(latency_ms)),
+            state_json=state_json,
+            answers_json=answers_json,
+            feedback_status="pending",
+            created_at=utcnow(),
+        )
+        session.add(row)
+        session.flush()
+        return _to_decision(row)
+
+
+def get_decision_record(user_id: str, adr_id: str) -> DecisionRecord | None:
+    with session_scope() as session:
+        row = session.get(ArchitectureDecisionRecord, adr_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_decision(row)
+
+
+def list_decision_records(
+    user_id: str,
+    *,
+    workspace_path: str | None = None,
+    decision_type: str | None = None,
+    limit: int = 50,
+) -> list[DecisionRecord]:
+    clamped = max(1, min(int(limit), MAX_DECISIONS))
+    with session_scope() as session:
+        statement = select(ArchitectureDecisionRecord).where(
+            ArchitectureDecisionRecord.user_id == user_id
+        )
+        if workspace_path:
+            statement = statement.where(ArchitectureDecisionRecord.workspace_path == str(workspace_path))
+        if decision_type:
+            statement = statement.where(ArchitectureDecisionRecord.decision_type == decision_type)
+        rows = session.scalars(
+            statement.order_by(
+                ArchitectureDecisionRecord.created_at.desc(),
+                ArchitectureDecisionRecord.id.desc(),
+            ).limit(clamped)
+        ).all()
+        return [_to_decision(row) for row in rows]
+
+
+def update_decision_feedback(
+    user_id: str,
+    adr_id: str,
+    *,
+    status: str,
+    override_route: str | None = None,
+    note: str | None = None,
+) -> DecisionRecord | None:
+    """Record accept/override feedback. Another tenant's ADR is indistinguishable from unknown."""
+    if status not in DECISION_FEEDBACK_STATUSES or status == "pending":
+        raise ValueError(f"Unsupported decision feedback status: {status}")
+    with session_scope() as session:
+        row = session.get(ArchitectureDecisionRecord, adr_id)
+        if row is None or row.user_id != user_id:
+            return None
+        row.feedback_status = status
+        row.override_route = override_route[:60] if override_route else None
+        row.feedback_note = note[:2000] if note else None
+        row.feedback_at = utcnow()
+        session.flush()
+        return _to_decision(row)
+
+
+def list_training_records(user_id: str, limit: int = MAX_TRAINING_RECORDS) -> list[DecisionRecord]:
+    """Confirmed/overridden ADRs only: the feedback signal Laya continuous learning consumes."""
+    clamped = max(1, min(int(limit), MAX_TRAINING_RECORDS))
+    with session_scope() as session:
+        rows = session.scalars(
+            select(ArchitectureDecisionRecord)
+            .where(
+                ArchitectureDecisionRecord.user_id == user_id,
+                ArchitectureDecisionRecord.feedback_status.in_(("accepted", "overridden")),
+            )
+            .order_by(
+                ArchitectureDecisionRecord.created_at.desc(),
+                ArchitectureDecisionRecord.id.desc(),
+            )
+            .limit(clamped)
+        ).all()
+        return [_to_decision(row) for row in rows]
+
+
+# ------------------------------------------------------------------------------ user settings
 SECRET_FIELD_HINTS = (
     "apikey",
     "api_key",
@@ -506,20 +664,27 @@ def save_user_settings(user_id: str, settings: dict[str, Any]) -> datetime:
 __all__ = [
     "AuditEventRecord",
     "BlueprintRecord",
+    "DECISION_FEEDBACK_STATUSES",
     "DEFAULT_AUDIT_LIMIT",
+    "DecisionRecord",
     "LOCAL_USER_ID",
     "MAX_AUDIT_EVENTS",
+    "MAX_DECISIONS",
     "MAX_ROLLBACK_BATCHES",
+    "MAX_TRAINING_RECORDS",
     "RollbackBatchRecord",
     "RollbackFileRecord",
     "UserRecord",
     "WorkspaceRecord",
     "delete_rollback_batch",
     "delete_workspace",
+    "get_decision_record",
     "get_user",
     "get_user_settings",
     "get_workspace",
     "list_blueprints",
+    "list_decision_records",
+    "list_training_records",
     "list_workspaces",
     "load_rollback_batch",
     "read_audit_events",
@@ -527,8 +692,10 @@ __all__ = [
     "record_workspace_scan",
     "remember_workspace",
     "save_blueprint",
+    "save_decision_record",
     "save_rollback_batch",
     "save_user_settings",
     "seed_local_user",
+    "update_decision_feedback",
     "upsert_github_user",
 ]

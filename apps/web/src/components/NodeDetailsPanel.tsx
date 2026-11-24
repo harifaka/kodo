@@ -16,6 +16,7 @@ import type {
   Stack,
   WorkspaceIR,
 } from '../types/core-ir';
+import type { TriageState } from '../types/decision';
 import { CodeIcon, CopyIcon, ExternalIcon } from './icons';
 import { AuditPanel, FindingRow } from './AuditPanel';
 import { HealthScoreCard } from './HealthScore';
@@ -42,6 +43,9 @@ interface NodeDetailsPanelProps {
   onFixWithAi: (finding: AuditFinding) => void;
   onImplementMethod: (node: ComponentNode, methodName: string, instruction: string) => Promise<void>;
   onOpenAiSettings: () => void;
+  /** Phase 10 advisory System 1 triage shared with the Audit panel and finding rows. */
+  triage: TriageState;
+  onTriage: () => void;
 }
 
 interface MicroEditHandlers {
@@ -111,6 +115,8 @@ export function NodeDetailsPanel({
   onFixWithAi,
   onImplementMethod,
   onOpenAiSettings,
+  triage,
+  onTriage,
 }: NodeDetailsPanelProps) {
   const micro: MicroEditHandlers = {
     onAddField,
@@ -155,6 +161,7 @@ export function NodeDetailsPanel({
             onFixWithAi={onFixWithAi}
             onImplementMethod={onImplementMethod}
             onOpenAiSettings={onOpenAiSettings}
+            triage={triage}
           />
         ) : (
           <WorkspaceOverview
@@ -164,6 +171,8 @@ export function NodeDetailsPanel({
             aiConfigured={aiConfigured}
             aiFixingId={aiFixingId}
             onFixWithAi={onFixWithAi}
+            triage={triage}
+            onTriage={onTriage}
           />
         )}
       </div>
@@ -187,6 +196,7 @@ function SelectedDetails({
   onFixWithAi,
   onImplementMethod,
   onOpenAiSettings,
+  triage,
 }: {
   workspace: WorkspaceIR;
   node: ComponentNode;
@@ -203,6 +213,7 @@ function SelectedDetails({
   onFixWithAi: (finding: AuditFinding) => void;
   onImplementMethod: (node: ComponentNode, methodName: string, instruction: string) => Promise<void>;
   onOpenAiSettings: () => void;
+  triage: TriageState;
 }) {
   const [copied, setCopied] = useState(false);
   const meta = LAYER_META[node.layer];
@@ -287,6 +298,7 @@ function SelectedDetails({
                 aiConfigured={aiConfigured}
                 aiFixing={aiFixingId === finding.id}
                 onFixWithAi={onFixWithAi}
+                triage={triage.items[finding.id]}
               />
             ))}
           </ul>
@@ -793,6 +805,8 @@ function WorkspaceOverview({
   aiConfigured,
   aiFixingId,
   onFixWithAi,
+  triage,
+  onTriage,
 }: {
   workspace: WorkspaceIR;
   onSelectNodeId: (nodeId: string) => void;
@@ -800,6 +814,8 @@ function WorkspaceOverview({
   aiConfigured: boolean;
   aiFixingId: string | null;
   onFixWithAi: (finding: AuditFinding) => void;
+  triage: TriageState;
+  onTriage: () => void;
 }) {
   const counts = LAYER_ORDER.map((layer) => ({
     layer,
@@ -849,6 +865,8 @@ function WorkspaceOverview({
         aiConfigured={aiConfigured}
         aiFixingId={aiFixingId}
         onFixWithAi={onFixWithAi}
+        triage={triage}
+        onTriage={onTriage}
       />
 
       <div className="mt-5 rounded-lg border border-ink-700/60 bg-ink-950/40 px-3 py-2.5">

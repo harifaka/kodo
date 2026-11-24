@@ -4,7 +4,7 @@ import { STACK_META } from '../lib/layers';
 import type { AuthUser, WorkspaceSummary } from '../types/account';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
-import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner } from './icons';
+import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner, DecisionIcon } from './icons';
 import { HealthChip } from './HealthScore';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
@@ -18,6 +18,9 @@ interface TopBarProps {
   /** Provider label shown on the AI Copilot pill (DeepSeek Cloud / Local On-Prem / Not Configured). */
   aiLabel: string;
   aiConfigured: boolean;
+  /** Phase 10 System 1 (Laya) advisory layer status. */
+  systemOneLabel: string;
+  systemOneEnabled: boolean;
   onOpenAiSettings: () => void;
   mode: string;
   authenticated: boolean;
@@ -40,6 +43,8 @@ export function TopBar({
   workspace,
   aiLabel,
   aiConfigured,
+  systemOneLabel,
+  systemOneEnabled,
   onOpenAiSettings,
   mode,
   authenticated,
@@ -159,6 +164,25 @@ export function TopBar({
               }`}
             />
             <span className="text-[10px] text-violet-200/80">{aiLabel}</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenAiSettings}
+            title={
+              systemOneEnabled
+                ? 'System 1 (Laya) is advisory: triage, routing and pre-diff screening only — the deterministic gates still decide.'
+                : 'System 1 (Laya) is disabled — Kodo uses deterministic rules and manual DeepSeek triggers.'
+            }
+            className="flex items-center gap-1.5 rounded-full border border-sky-400/25 bg-sky-400/[0.06] px-2.5 py-1 transition hover:border-sky-400/60 hover:bg-sky-400/[0.12]"
+          >
+            <DecisionIcon className="h-3 w-3 text-sky-300" />
+            <span className="text-[10.5px] font-medium text-slate-300">System 1</span>
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                systemOneEnabled ? 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.7)]' : 'bg-slate-500'
+              }`}
+            />
+            <span className="text-[10px] text-sky-200/80">{systemOneLabel}</span>
           </button>
           <StatusPill
             label="FastAPI"

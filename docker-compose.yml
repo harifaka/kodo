@@ -64,6 +64,15 @@ services:
       KODO_BUILDER_MEMORY: ${KODO_BUILDER_MEMORY:-1g}
       KODO_BUILDER_CPUS: ${KODO_BUILDER_CPUS:-1}
       KODO_BUILDER_PIDS_LIMIT: ${KODO_BUILDER_PIDS_LIMIT:-256}
+      # Phase 10 System 1 (Laya) decision layer. Advisory only: an unreachable server degrades to
+      # deterministic rules and manual DeepSeek triggers. `ollama` is the in-stack default when the
+      # `ai-local` profile is active; outside Docker it is http://localhost:11434.
+      KODO_SYSTEMONE_ENABLED: ${KODO_SYSTEMONE_ENABLED:-true}
+      KODO_SYSTEMONE_BASE_URL: ${KODO_SYSTEMONE_BASE_URL:-http://ollama:11434}
+      KODO_SYSTEMONE_MODEL: ${KODO_SYSTEMONE_MODEL:-laya}
+      KODO_SYSTEMONE_API_KEY: ${KODO_SYSTEMONE_API_KEY:-}
+      KODO_SYSTEMONE_TIMEOUT_SECONDS: ${KODO_SYSTEMONE_TIMEOUT_SECONDS:-10}
+      KODO_SYSTEMONE_AUTO_THRESHOLD: ${KODO_SYSTEMONE_AUTO_THRESHOLD:-0.78}
     volumes:
       - kodo-data:/data/kodo
       # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.
@@ -75,6 +84,10 @@ services:
         condition: service_healthy
       # Started only with `docker compose --profile saas up`; set KODO_DATABASE_URL to this service.
       postgres:
+        condition: service_healthy
+        required: false
+      # Started only with `docker compose --profile ai-local up`; System 1 stays optional.
+      ollama:
         condition: service_healthy
         required: false
     networks:
@@ -116,6 +129,27 @@ services:
     image: ${KODO_BUILDER_IMAGE_NODEJS:-kodo-builder-nodejs:local}
     command: ["true"]
     restart: "no"
+
+  # Optional local System 1 (Laya) decision model: `docker compose --profile ai-local up`.
+  # Pull the model once, then Kodo's advisory triage/routing/screening answers in milliseconds:
+  #   docker compose --profile ai-local up -d ollama
+  #   docker compose exec ollama ollama pull laya
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai-local"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - kodo-ollama:/root/.ollama
+    networks:
+      - kodo-net
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   # Optional SaaS database: `docker compose --profile saas up`.
   # Point api-python at it with KODO_DATABASE_URL=postgresql+psycopg://kodo:kodo@postgres:5432/kodo
@@ -163,6 +197,7 @@ services:
 volumes:
   kodo-data:
   kodo-pgdata:
+  kodo-ollama:
 
 networks:
   kodo-net:

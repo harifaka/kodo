@@ -49,6 +49,19 @@ import type {
   FixBuildErrorsRequest,
   FixBuildErrorsResponse,
 } from '../types/build';
+import type {
+  DecisionFeedbackRequest,
+  DecisionListResponse,
+  DecisionRecordSummary,
+  RouteTaskRequest,
+  RouteTaskResponse,
+  ScreenDiffRequest,
+  ScreenDiffResponse,
+  SystemOneOverride,
+  SystemOneTestResponse,
+  TriageAuditRequest,
+  TriageAuditResponse,
+} from '../types/decision';
 
 // Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
 // paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
@@ -443,5 +456,84 @@ export const api = {
       body: JSON.stringify(payload),
       signal,
     });
+  },
+
+  systemOneTestConnection(
+    systemOneConfig?: SystemOneOverride,
+    signal?: AbortSignal,
+  ): Promise<SystemOneTestResponse> {
+    return request<SystemOneTestResponse>('/api/v1/decision/test-connection', {
+      method: 'POST',
+      body: JSON.stringify({ systemOneConfig }),
+      signal,
+    });
+  },
+
+  decisionTriageAudit(
+    payload: TriageAuditRequest,
+    signal?: AbortSignal,
+  ): Promise<TriageAuditResponse> {
+    return request<TriageAuditResponse>('/api/v1/decision/triage-audit', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  decisionRouteTask(payload: RouteTaskRequest, signal?: AbortSignal): Promise<RouteTaskResponse> {
+    return request<RouteTaskResponse>('/api/v1/decision/route-task', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  decisionScreenDiff(payload: ScreenDiffRequest, signal?: AbortSignal): Promise<ScreenDiffResponse> {
+    return request<ScreenDiffResponse>('/api/v1/decision/screen-diff', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+
+  decisions(
+    params: { rootPath?: string; decisionType?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<DecisionListResponse> {
+    const query = new URLSearchParams();
+    if (params.rootPath) {
+      query.set('rootPath', params.rootPath);
+    }
+    if (params.decisionType) {
+      query.set('decisionType', params.decisionType);
+    }
+    query.set('limit', String(params.limit ?? 50));
+    return request<DecisionListResponse>(`/api/v1/decisions?${query.toString()}`, { signal });
+  },
+
+  decisionFeedback(
+    adrId: string,
+    payload: DecisionFeedbackRequest,
+  ): Promise<DecisionRecordSummary> {
+    return request<DecisionRecordSummary>(
+      `/api/v1/decisions/${encodeURIComponent(adrId)}/feedback`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  },
+
+  /** JSONL download of accepted/overridden ADRs for local Laya calibration. */
+  async decisionExportTraining(): Promise<string> {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/v1/decisions/export-training`, {
+        credentials: 'include',
+      });
+    } catch {
+      throw new ApiError(`Kodo API is unreachable at ${API_BASE_LABEL}. Is the FastAPI service running?`, 0);
+    }
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    return response.text();
   },
 };

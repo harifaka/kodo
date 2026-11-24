@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–9: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders)
+# Kodo — Developer Setup (Phases 1–10: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -36,6 +36,13 @@ Phase 7 makes Kodo **Docker-first**: the Tauri desktop wrapper is deleted, `apps
 whole stack behind an Nginx reverse proxy (same-origin `/api/` + `/health`) with health-gated startup.
 GitHub Actions then tests everything (`pytest`, `ruff`, `dotnet build`, `npm run build`, Docker build
 matrix) and publishes semver/`latest`/sha images to GHCR.
+
+Phase 10 adds the **System 1 (Laya) decision layer** (`app/decision/`): a local, non-autoregressive
+model reachable over `/v1/systemone` that triages findings, routes work between deterministic tools and
+DeepSeek, and pre-screens proposed diffs. It is strictly **advisory** ? it never writes to disk ? and
+every decision is persisted as a tenant-scoped **ADR** with accept/override feedback. When Laya is
+offline or disabled the whole platform keeps working on deterministic rules and manual DeepSeek
+triggers.
 
 ```
 Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root nginx)
@@ -670,6 +677,8 @@ time; `npm run dev` keeps `http://localhost:8088`.
 
 Compose profile `builders` (optional) adds the three build-only images: `docker compose --profile builders build`
 builds `kodo-builder-java`, `kodo-builder-csharp` and `kodo-builder-nodejs` without starting anything.
+Compose profile `ai-local` (optional) adds a single `ollama/ollama:latest` service (`kodo-ollama` model
+volume, `kodo-net`, healthcheck) for the Phase 10 System 1 decision model.
 
 **GitHub Actions** ([.github/workflows/](/C:/source/kodo/.github/workflows)):
 
@@ -724,6 +733,12 @@ docker compose down                                   # add -v to drop the kodo-
 | `KODO_BUILDER_CPUS` | FastAPI process | `1` | `--cpus` limit (validated; bad values fall back to `1`) |
 | `KODO_BUILDER_PIDS_LIMIT` | FastAPI process | `256` | `--pids-limit` (minimum 16) |
 | `DOCKER_GID` | Compose override | `999` | Host Docker socket group id for `group_add` (Phase 9, Docker-first only) |
+| `KODO_SYSTEMONE_ENABLED` | FastAPI process | `true` | Enable the advisory System 1 (Laya) layer; `false` degrades to deterministic rules |
+| `KODO_SYSTEMONE_BASE_URL` | FastAPI process | `http://localhost:11434` (`http://ollama:11434` in Compose) | `/v1/systemone` endpoint (Ollama or `laya-serve`) |
+| `KODO_SYSTEMONE_MODEL` | FastAPI process | `laya` | System 1 model name |
+| `KODO_SYSTEMONE_API_KEY` | FastAPI process | *(empty)* | Optional key for hosted `/v1/systemone`; never logged or persisted |
+| `KODO_SYSTEMONE_TIMEOUT_SECONDS` | FastAPI process | `10` | Per-decision HTTP timeout (clamped 0.5?120) |
+| `KODO_SYSTEMONE_AUTO_THRESHOLD` | FastAPI process | `0.78` | Calibrated confidence below which Kodo escalates to System 2 / human review |
 
 ---
 
@@ -735,8 +750,9 @@ docker compose down                                   # add -v to drop the kodo-
 # the guarded apply/rollback suite (needs `git` on PATH), the Phase 4 generator suite
 # (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up),
 # the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed),
-# the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs)
-# and the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required)
+# the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs),
+# the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required)
+# and the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -750,9 +766,10 @@ cd apps/web
 npm install
 npm run build
 
-# Docker: validate both compose files, then the full stack (all three healthy)
+# Docker: validate both compose files (plus the optional System 1 profile), then the full stack
 docker compose config --quiet
 docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose --profile ai-local config --quiet
 docker compose up -d --build
 curl http://localhost:3000/health
 ```
@@ -978,7 +995,100 @@ pretending a desktop UI can be built on Linux.
 
 ---
 
-## 10. Repository layout
+## 10. System 1 (Laya) decision layer (Phase 10)
+
+**What it is.** Laya is a small (421M) non-autoregressive decision model with calibrated probabilities.
+It never generates text: Kodo sends a compact **state** plus a **typed question set** to
+`POST /v1/systemone` and receives typed answers in milliseconds. It is **advisory only** — the
+deterministic audit, Monaco diff review, SHA-256 guarded apply and Phase 9 builder verification remain
+the only gates, and Laya never writes to disk.
+
+| Workflow | Endpoint | Questions |
+| --- | --- | --- |
+| Audit triage (<= 15 findings) | `POST /api/v1/decision/triage-audit` | `risk_level`, `fix_route`, `needs_human_design` |
+| Task router (S1 -> S2) | `POST /api/v1/decision/route-task` | `execution_path`, `blast_radius`, `escalate_to_system2` |
+| Pre-diff safety screen | `POST /api/v1/decision/screen-diff` | `logic_deletion_risk`, `layer_boundary_risk`, `review_priority` |
+| Connection probe | `POST /api/v1/decision/test-connection` | one reachability question |
+| ADR list / feedback / export | `GET /api/v1/decisions`, `POST /api/v1/decisions/{id}/feedback`, `GET /api/v1/decisions/export-training` | — |
+
+### Start Laya with Docker (recommended)
+
+```powershell
+# Optional profile: adds the ollama service on kodo-net with the kodo-ollama model volume
+docker compose --profile ai-local up -d ollama
+
+# Pull the decision model once (stored in the named volume)
+docker compose exec ollama ollama pull laya
+
+# The API already points at http://ollama:11434 via KODO_SYSTEMONE_BASE_URL
+docker compose exec api-python curl -sS -X POST http://127.0.0.1:8088/api/v1/decision/test-connection `
+  -H "Content-Type: application/json" -d "{}"
+```
+
+The compose file defaults `KODO_SYSTEMONE_BASE_URL` to `http://ollama:11434`. If you run Ollama on the
+host instead, set `KODO_SYSTEMONE_BASE_URL=http://host.docker.internal:11434` (Docker Desktop) and skip
+the profile.
+
+### Start Laya without Docker
+
+```powershell
+# Option A — Ollama on the host
+ollama serve
+ollama pull laya
+$env:KODO_SYSTEMONE_BASE_URL = "http://localhost:11434"
+
+# Option B — laya-serve exposing the same /v1/systemone protocol
+# (see the Laya project for the exact launch command); then:
+$env:KODO_SYSTEMONE_BASE_URL = "http://localhost:8000"
+
+# Option C — a hosted /v1/systemone endpoint
+$env:KODO_SYSTEMONE_BASE_URL = "https://your-laya-host"
+$env:KODO_SYSTEMONE_API_KEY = "…"   # request-only; never logged or stored
+```
+
+Restart uvicorn and confirm from the UI (**AI settings → System 1 → Test System 1**, shows latency in
+ms) or with the test-connection call above.
+
+### Settings, threshold and wire budgets
+
+- The UI drawer stores Base URL, model, optional API key and the **auto-route confidence threshold** in
+  `sessionStorage` only; `systemOneConfig` travels per request. Server operators can set the matching
+  `KODO_SYSTEMONE_*` variables (see §6).
+- `state_packer.py` builds finding/task/diff states with a **fixed key order** and clamps them to
+  **12 KiB**; the entire request is capped at **64 KiB**. Choices stay <= 12 options with an explicit
+  neutral fallback (`uncertain` / `human_review` / `careful_manual_review`).
+- Below `KODO_SYSTEMONE_AUTO_THRESHOLD` (default `0.78`) or on `abstain == true`, Kodo escalates:
+  audit triage -> `deepseek_refactor` or `human_review`, task routing -> `deepseek_reasoning` or
+  `human_review`, diff screening -> at least `caution`.
+
+### ADRs, feedback and training export
+
+Every advisory decision writes one tenant-scoped `architecture_decision_records` row (compact state,
+full answer distribution, recommendation, confidence, latency). The **Decisions (ADR)** tab lists them
+with confidence meters, expandable probability distributions and inline **Accept** / **Override**
+buttons (override records the replacement route and a note, plus a `decision_feedback` audit event).
+
+`GET /api/v1/decisions/export-training` returns JSONL of accepted/overridden ADRs
+(`{ state, questions, confirmed_answers, feedback_status, note }`) for Laya local calibration/continuous
+learning. Only the current user's rows are exported; API keys never appear in ADRs or the export.
+
+### Graceful degradation
+
+If Laya is disabled, unreachable, times out or answers an invalid body, the triage/screen routes answer
+**HTTP 200** with `available: false`, an empty item list and a `SYSTEMONE_*` warning, and the task router
+returns a safe `human_review` recommendation. Scans, audits, dry-runs and applies are never blocked.
+
+### Verify it
+
+```powershell
+cd services/api-python
+python -m pytest tests/test_decision_layer.py -q     # 34 hermetic cases, no live Laya needed
+python -m ruff check app tests
+```
+
+---
+
+## 11. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
@@ -1018,6 +1128,11 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
   app/builders/                   staging.py (in-memory tar + patch overlay), diagnostics.py
                                   (Maven/MSBuild/tsc), runner.py (hardened docker create/cp/start/rm),
                                   models.py, routes.py (/build/status, /build/verify[/stream])
+  app/decision/                   config.py (env + per-request System One overrides), client.py
+                                  (/v1/systemone httpx client + connection probe), state_packer.py
+                                  (deterministic <=12 KiB finding/task/diff states), schemas.py (typed
+                                  question sets), service.py (triage/route/screen + ADR persistence),
+                                  routes.py (/decision/*, /decisions*), models.py (wire contracts)
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
                                   git_safety.py (read-only git), apply_service.py (the only writer),
                                   scaffold_service.py (blueprint → create-only dry-run),
@@ -1028,14 +1143,16 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   guarded apply/rollback, stack generators + 100/100 self-audit,
                                   AI Copilot (mocked httpx transport), Deploy Studio (mocked Docker CLI
                                   + GitHub API, real local git), ephemeral builders (mocked Docker CLI
-                                  and LLM, in-memory tar staging)
+                                  and LLM, in-memory tar staging) and the System 1 decision layer
+                                  (mocked /v1/systemone, ADR isolation, training export)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
   nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
                                   DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
-                                  AiSettingsModal, MethodsSection, BuildVerificationPanel
+                                  AiSettingsModal, MethodsSection, BuildVerificationPanel,
+                                  DecisionsPanel (Phase 10 ADR tab)
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,
