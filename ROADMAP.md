@@ -13,11 +13,18 @@ Blueprint -> Audit -> Edit -> Deploy platform.
   triages findings, routes work between deterministic tools and DeepSeek, pre-screens diffs and records
   every decision as a tenant-scoped ADR.
 
+> **Next evolution (v0.6+) is planned, not delivered.** Phases 11–13 — Local UX / Dual-Mode Browse
+> Folder, Full Python Stack Support and Production SaaS Hardening — are recorded in the
+> [Next Evolution](#next-evolution-v06--local-ux-python-stack--saas-hardening) section below. They are
+> **not** part of the v0.5.0 contract and are not active implementation scope until a future session
+> starts them.
+
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
 > by local and SaaS. Phases 8, 9 and 10 are delivered (v0.3.0, v0.4.0 and v0.5.0); **all ten phases of
-> the roadmap are complete**. Phases 1–10 stay below as delivered history.
+> the roadmap are complete**. Phases 1–10 stay below as delivered history, and the planned v0.6+ tracks
+> (Phases 11–13) are recorded at the end under *Next Evolution*.
 
 ---
 
@@ -419,3 +426,74 @@ accept/override feedback, JSONL training export and a documented degradation pat
   - Security posture unchanged: System 1 is advisory, never writes to disk, and every ADR is scoped by
     `user_id`; the deterministic audit, Monaco diff, SHA-256 apply and Phase 9 builder verification
     remain the only gates.
+
+---
+
+## Next Evolution (v0.6+ — Local UX, Python Stack & SaaS Hardening)
+
+**Status: planned — not delivered.** Phases 1–10 above remain the active delivered contract
+(v0.1.0–v0.5.0). The three phases below are recorded for future sessions; implementation starts only
+when a session explicitly takes them on.
+
+### Phase 11: Local UX, Dual-Mode Folder Browser & Large-Repo Ergonomics ⬜
+**Goal:** Make pointing Kodo at a real workspace on the user's own machine a one-click, zero-copy
+experience in **both** local runtimes (Docker and native), and keep the Macro Graph / UML readable on
+large repositories.
+
+- [ ] Add a local-only, **zero-copy (in-place)** server-side directory browser API
+      (`GET /api/v1/fs/browse`) that operates directly on real workspace directories without uploading
+      or copying files — strictly disabled in `KODO_MODE=saas` (`403`).
+- [ ] Support both local runtimes seamlessly via configurable `KODO_BROWSE_ROOTS`:
+  - [ ] **Docker local mode:** auto-detects mounted host folders (defaulting to `/projects` mapped from
+        `KODO_LOCAL_PROJECTS_DIR`, with support for multiple mounted roots); if `/projects` is empty
+        (default `.kodo-empty`), return a clear setup hint showing how to point
+        `KODO_LOCAL_PROJECTS_DIR` in `.env` to the user's host projects directory.
+  - [ ] **Native (bare-metal) mode:** lists real host roots (Windows drive letters `C:\`, `D:\`, or
+        POSIX `~` / `/`) for direct local filesystem navigation.
+- [ ] Build a **Browse Folder** modal in the Web UI with root/drive switcher, breadcrumb navigation,
+      automatic project/stack detection badges (`Spring Boot`, `C#/.NET`, `Node.js`, `Python`), and
+      monorepo sub-project selection.
+- [ ] Improve large-codebase ergonomics in Macro Graph & UML: quick node search (`Ctrl+K`), layer/stack
+      filters, an **"Issues Only"** toggle, and a **1-hop Neighborhood Focus** mode so Mermaid diagrams
+      stay readable on 100+ component repos.
+- **Definition of Done:** In both local Docker (`KODO_LOCAL_PROJECTS_DIR` -> `/projects`) and native
+  mode, a user can click **Browse**, navigate host folders without copying files, pick a detected
+  project or monorepo subfolder with one click, and smoothly filter/focus a 100+ node graph.
+
+---
+
+### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) ⬜
+**Goal:** Elevate Python web applications from "visible in the graph" to a first-class stack across the
+whole Blueprint -> Audit -> Edit -> Verify -> Deploy loop.
+
+- [ ] Extend Core IR extraction in `services/api-python` with **Tree-sitter Python**
+      (`tree-sitter-python`) to detect routers/views, services, repositories, Pydantic/SQLAlchemy/Django
+      models, type-annotated fields, decorators, and cross-module relations.
+- [ ] Extend the Phase 2 deterministic Audit Engine rules for Python architectural conventions (e.g.,
+      router-to-DB leakage, missing Pydantic validation, god classes, circular imports).
+- [ ] Add Tree-sitter byte-offset **AST Patching** for Python fields, type hints, and decorators
+      (preserving hand-written methods and docstrings).
+- [ ] Add a **Python (FastAPI + Pydantic + SQLAlchemy)** vertical-slice plugin to the Phase 4
+      Multi-Stack Builder, a non-root multi-stage Python template to Phase 6 Deploy Studio, and a
+      pre-warmed offline `kodo-builder-python` (`ruff` + `mypy` + `pytest`) image to Phase 9 Ephemeral
+      Builders.
+- **Definition of Done:** Kodo can scan, audit, safely edit, scaffold, compile/test-verify
+  (`--network=none`), and containerize Python web apps — verified by self-scanning Kodo's own
+  `services/api-python` codebase.
+
+---
+
+### Phase 13: Production SaaS Hardening (Migrations, Quotas & Rate Limiting) ⬜
+**Goal:** Make `KODO_MODE=saas` safe to operate for real tenants: upgradeable schemas, bounded storage
+and abuse-resistant endpoints.
+
+- [ ] Introduce **Alembic** database migrations alongside SQLAlchemy (replacing bare `create_all()` for
+      safe schema upgrades on existing SQLite/PostgreSQL instances).
+- [ ] Add per-user workspace disk quotas, clone size caps, and automatic TTL cleanup for stale cloned
+      workspaces in `KODO_MODE=saas`.
+- [ ] Add API rate limiting on expensive endpoints (`/scan`, `/git/clone`, `/build/verify`, `/ai/*`) and
+      document TLS reverse-proxy deployment (Caddy/Traefik) + optional GitHub App / encrypted
+      short-lived token flow for private repo operations.
+- **Definition of Done:** Existing SQLite/PostgreSQL databases upgrade cleanly via
+  `alembic upgrade head`, SaaS mode enforces per-user storage quotas and rate limits, and a production
+  VPS deployment guide is verified end-to-end.

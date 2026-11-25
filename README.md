@@ -272,6 +272,19 @@ local self-hosting and multi-tenant SaaS.
 
 ---
 
+## What's Next (v0.6+ Roadmap: Phases 11–13)
+
+**Planned — not delivered.** The v0.5.0 / Phases 1–10 contract above is unchanged; these three tracks
+are recorded in [ROADMAP.md](ROADMAP.md) and start only in a future session.
+
+| Phase | Track | Highlights |
+| --- | --- | --- |
+| 11 | Dual-Mode Local Folder Browser & Large-Repo UX | Local-only zero-copy `GET /api/v1/fs/browse` (in-place, `403` in `KODO_MODE=saas`); `KODO_BROWSE_ROOTS` serving Docker-mounted `/projects` (from `KODO_LOCAL_PROJECTS_DIR`) **and** native host drives (`C:\`, `D:\`, `~`, `/`); **Browse Folder** modal with root switcher, breadcrumbs, stack-detection badges and monorepo sub-project picking; graph/UML quick search (`Ctrl+K`), layer/stack filters, **Issues Only** toggle and 1-hop neighborhood focus. |
+| 12 | Full Python Stack Support (FastAPI / Django / Flask) | Tree-sitter Python Core IR extraction (routers/views, services, repositories, Pydantic/SQLAlchemy/Django models, decorators, cross-module relations); Python audit rules (router-to-DB leakage, missing Pydantic validation, god classes, circular imports); byte-offset AST patching for Python; FastAPI vertical-slice plugin, Python deploy template and a pre-warmed offline `kodo-builder-python` (`ruff` + `mypy` + `pytest`) image. |
+| 13 | Production SaaS Hardening | **Alembic** migrations replacing `create_all()` for safe SQLite/PostgreSQL upgrades; per-user disk quotas, clone size caps and TTL cleanup of stale cloned workspaces; rate limiting on `/scan`, `/git/clone`, `/build/verify` and `/ai/*`; TLS reverse-proxy (Caddy/Traefik) guide with optional GitHub App short-lived tokens. |
+
+---
+
 ## Roadmap Complete (Phases 1–10 delivered)
 
 All ten phases are shipped: the original X-Ray visualizer, deterministic audit, guarded

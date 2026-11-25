@@ -41,9 +41,15 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   `@tauri-apps/*` dependencies or desktop-only origins.
 - **Phase 8 (SaaS foundation) is active** — multi-tenancy, persistence and auth rules live in §3h.
 - **Phase 9 (ephemeral builders) is active** — sandboxed compile/test verification rules live in §3i.
-- **Phase 10** (the **Laya** System 1 decision layer served at `/v1/systemone`) is planned in
-  `ROADMAP.md` but is **NOT active for implementation**. Do not add Phase 10 code, workflows, services
-  or compose profiles unless a task explicitly asks for them.
+- **Phase 10 (Laya System 1 decision layer, `/v1/systemone`) is active** — rules live in §3j.
+- **Phases 1–10 (v0.5.0) are the active delivered contract.** Everything below them is binding:
+  do not regress the Core IR, the guarded apply, the sandbox verifier or the advisory System 1 lane.
+- **Phases 11–13 (v0.6+) are planned, NOT active.** Dual-Mode Browse Folder & Large-Repo UX (zero-copy
+  `GET /api/v1/fs/browse`, `KODO_BROWSE_ROOTS`), Full Python Stack Support (Tree-sitter Python IR,
+  Python audit rules, byte-offset patching, Python builder image) and Production SaaS Hardening
+  (Alembic migrations, per-user quotas/TTL, rate limiting, TLS reverse proxy) are recorded in
+  `ROADMAP.md` only. Do not add their endpoints, config, migrations, images, compose profiles or UI
+  until a task explicitly asks for them.
 
 ## 3. Write policy (hard rule)
 
