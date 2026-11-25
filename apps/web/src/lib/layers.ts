@@ -34,6 +34,7 @@ export const STACK_META: Record<Stack, { label: string; color: string }> = {
   'spring-boot': { label: 'Spring Boot', color: '#6ee7b7' },
   'csharp-dotnet': { label: 'C# / .NET', color: '#c084fc' },
   nodejs: { label: 'Node.js', color: '#facc15' },
+  python: { label: 'Python', color: '#38bdf8' },
   unknown: { label: 'Unknown', color: '#94a3b8' },
 };
 
@@ -50,11 +51,12 @@ export const KIND_LABEL: Record<string, string> = {
   record: 'record',
   enum: 'enum',
   module: 'module',
+  router: 'router',
 };
 
 /**
- * Folder-browser badges (Phase 11). These come from marker files in a directory listing, not from
- * an AST scan — Python in particular is detection-only until Phase 12 lands the real analyzer.
+ * Folder-browser badges (Phase 11). Python is a first-class stack since Phase 12 (Tree-sitter
+ * analyzer, audit rules, patching, generator, deploy template and builder image).
  */
 export const PROJECT_STACK_META: Record<
   ProjectStackTag,
@@ -82,7 +84,7 @@ export const PROJECT_STACK_META: Record<
     label: 'Python',
     short: 'Python',
     color: '#38bdf8',
-    title: 'Marker detection only (pyproject.toml / requirements.txt / setup.py) — full Python analysis arrives in Phase 12.',
+    title: 'Detected pyproject.toml / requirements.txt / setup.py',
   },
 };
 

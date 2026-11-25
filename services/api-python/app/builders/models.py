@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-BuildStackId = Literal["java", "csharp", "nodejs"]
+BuildStackId = Literal["java", "csharp", "nodejs", "python"]
 BuildStatusId = Literal["passed", "failed", "timeout", "unavailable"]
 BuildSeverity = Literal["error", "warning"]
 

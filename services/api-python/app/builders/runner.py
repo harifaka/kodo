@@ -64,6 +64,14 @@ _CSHARP_COMMANDS = {
         "dotnet test --no-restore -p:EnableWindowsTargeting=true"
     ),
 }
+# Ruff and mypy emit `path:line[:col]: code message` diagnostics for the UI; pytest runs last.
+_PYTHON_COMMANDS = {
+    False: "ruff check . --output-format concise && mypy --ignore-missing-imports --no-error-summary .",
+    True: (
+        "ruff check . --output-format concise && mypy --ignore-missing-imports --no-error-summary . "
+        "&& pytest -q"
+    ),
+}
 
 
 def run_ephemeral_build(
@@ -77,7 +85,9 @@ def run_ephemeral_build(
     """Stage the workspace and verify it in a disposable, network-isolated builder container."""
     if stack not in BUILDER_STACKS:
         raise BuildError(
-            400, "UNKNOWN_STACK", f"Stack '{stack}' is not one of the allow-listed builders: Java, C#, Node.js."
+            400,
+            "UNKNOWN_STACK",
+            f"Stack '{stack}' is not one of the allow-listed builders: Java, C#, Node.js, Python.",
         )
 
     build_id = uuid.uuid4().hex[:12]
@@ -198,6 +208,8 @@ def detect_build_stack(
         return "java"
     if any(name.endswith((".csproj", ".sln")) for name in names):
         return "csharp"
+    if names & {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"}:
+        return "python"
     if "package.json" in names or "tsconfig.json" in names:
         return "nodejs"
     return None
@@ -271,6 +283,9 @@ def _command_for(stack: str, *, run_tests: bool, network_mode: str) -> list[str]
 
     if stack == "csharp":
         return ["sh", "-c", _CSHARP_COMMANDS[run_tests]]
+
+    if stack == "python":
+        return ["sh", "-c", _PYTHON_COMMANDS[run_tests]]
 
     return ["sh", "-c", _NODE_COMMANDS[run_tests]]
 

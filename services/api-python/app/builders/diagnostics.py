@@ -32,13 +32,22 @@ _TSC_COLON = re.compile(
     r"(?P<sev>error|warning)\s+(?P<code>TS\d+):\s*(?P<msg>.*)$",
     re.IGNORECASE,
 )
+_RUFF = re.compile(
+    r"^(?P<path>[^\s:]+\.py):(?P<line>\d+):(?P<col>\d+):\s+(?P<code>[A-Z]+\d+)\s+(?P<msg>.*)$"
+)
+_MYPY = re.compile(
+    r"^(?P<path>[^\s:]+\.py):(?P<line>\d+)(?::(?P<col>\d+))?:\s+(?P<sev>error|warning|note):\s*"
+    r"(?P<msg>.*)$",
+    re.IGNORECASE,
+)
 
 _PARSERS_BY_STACK = {
     "java": (_MAVEN,),
     "csharp": (_MSBUILD,),
     "nodejs": (_TSC_PAREN, _TSC_COLON),
+    "python": (_RUFF, _MYPY),
 }
-_ALL_PARSERS = (_MAVEN, _MSBUILD, _TSC_PAREN, _TSC_COLON)
+_ALL_PARSERS = (_MAVEN, _MSBUILD, _TSC_PAREN, _TSC_COLON, _RUFF, _MYPY)
 
 
 def strip_ansi(text: str) -> str:
@@ -77,11 +86,14 @@ def parse_diagnostics(output: str, stack: str | None = None) -> list[BuildDiagno
             if match is None:
                 continue
             groups = match.groupdict()
+            severity = (groups.get("sev") or "").lower()
+            if severity == "note":
+                break
             diagnostic = BuildDiagnostic(
                 file_path=normalize_path(groups.get("path") or ""),
                 line=int(groups.get("line") or 0),
                 column=int(groups.get("col") or 0),
-                severity="warning" if (groups.get("sev") or "").lower() == "warning" else "error",
+                severity="warning" if severity == "warning" else "error",
                 code=(groups.get("code") or "").strip(),
                 message=(groups.get("msg") or "").strip(),
             )

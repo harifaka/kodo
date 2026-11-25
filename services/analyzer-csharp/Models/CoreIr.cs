@@ -47,6 +47,7 @@ public sealed record AnalyzeResponse(
 public static class IrConstants
 {
     public const string CSharpStack = "csharp-dotnet";
+    public const string PythonStack = "python";
 
     public static class Layers
     {
@@ -67,6 +68,7 @@ public static class IrConstants
         public const string Record = "record";
         public const string Enum = "enum";
         public const string Module = "module";
+        public const string Router = "router";
     }
 
     public static class RelationTypes

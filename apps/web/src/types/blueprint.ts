@@ -2,7 +2,7 @@
 
 import type { DryRunResponse } from './patching';
 
-export type BlueprintStack = 'spring-boot' | 'csharp-wpf' | 'nodejs';
+export type BlueprintStack = 'spring-boot' | 'csharp-wpf' | 'nodejs' | 'python-fastapi';
 
 export interface BlueprintField {
   name: string;

@@ -33,6 +33,7 @@ class BlueprintStack(StrEnum):
     SPRING_BOOT = "spring-boot"
     CSHARP_WPF = "csharp-wpf"
     NODEJS = "nodejs"
+    PYTHON_FASTAPI = "python-fastapi"
 
 
 class BlueprintField(BlueprintModel):

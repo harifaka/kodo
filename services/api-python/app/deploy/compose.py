@@ -14,6 +14,7 @@ from app.deploy.spec import (
     NODEJS,
     PASSWORD_FALLBACK,
     PASSWORD_PLACEHOLDER,
+    PYTHON,
     SIDECAR_DOCKERFILE,
     SPRING_BOOT,
 )
@@ -42,6 +43,15 @@ _STACK_IGNORES = {
     NODEJS: ("node_modules/", "dist/", "coverage/", "*.tsbuildinfo", "npm-debug.log*"),
     CSHARP_DOTNET: ("bin/", "obj/", "TestResults/", "*.user"),
     CSHARP_WPF: ("bin/", "obj/", "TestResults/", "*.user"),
+    PYTHON: (
+        "*.py[cod]",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        ".ruff_cache/",
+        "*.egg-info/",
+        "dist/",
+        "build/",
+    ),
 }
 
 
@@ -105,7 +115,7 @@ def compose_yaml(*, stack: str, slug: str, port: int, services: tuple[str, ...],
     lines.extend(
         [
             "    healthcheck:",
-            f'      test: ["CMD-SHELL", "{healthcheck(stack, port)}"]',
+            f'      test: ["CMD-SHELL", {_yaml_quote(healthcheck(stack, port))}]',
             "      interval: 30s",
             "      timeout: 5s",
             "      retries: 3",
@@ -132,12 +142,19 @@ def _var(name: str, default: str | None = None) -> str:
     return "${" + name + (f":-{default}" if default is not None else "") + "}"
 
 
+def _yaml_quote(value: str) -> str:
+    """Double-quote a YAML scalar, escaping backslashes and inner quotes (Python healthcheck)."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _app_environment(stack: str, port: int, services: tuple[str, ...]) -> list[tuple[str, str]]:
     env: list[tuple[str, str]] = []
     if stack == SPRING_BOOT:
         env.append(("SERVER_PORT", str(port)))
     elif stack == NODEJS:
         env.extend([("PORT", str(port)), ("NODE_ENV", "production")])
+    elif stack == PYTHON:
+        env.extend([("PORT", str(port)), ("PYTHONUNBUFFERED", "1")])
     else:
         env.append(("ASPNETCORE_URLS", f"http://+:{port}"))
 
@@ -154,6 +171,8 @@ def _app_environment(stack: str, port: int, services: tuple[str, ...]) -> list[t
                 ]
             )
         elif stack == NODEJS:
+            env.append(("DATABASE_URL", _node_database_url()))
+        elif stack == PYTHON:
             env.append(("DATABASE_URL", _node_database_url()))
         else:
             env.append(("ConnectionStrings__Default", _dotnet_connection_string()))

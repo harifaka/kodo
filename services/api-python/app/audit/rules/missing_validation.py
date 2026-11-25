@@ -6,7 +6,9 @@ from app.audit.context import AuditContext, edge_key, type_identifiers
 from app.audit.engine import audit_rule
 from app.models.ir import AuditFinding, AuditRuleId, ComponentNode, Layer, Severity
 
-# Bean Validation (Java) and DataAnnotations (.NET) markers the analyzers surface as annotations.
+# Bean Validation (Java), DataAnnotations (.NET) and Pydantic (Python) markers the analyzers
+# surface as annotations. `field` also matches `@Field(...)` and `@field_validator` because the
+# analyzers strip call arguments before storing the annotation.
 _VALIDATION_MARKERS = (
     "valid",
     "validated",
@@ -24,9 +26,15 @@ _VALIDATION_MARKERS = (
     "regularexpression",
     "minlength",
     "maxlength",
+    "field",
+    "validator",
+    "emailstr",
+    "constr",
+    "conint",
+    "annotated",
 )
 
-_DTO_SUFFIXES = ("dto", "request", "command", "input", "payload", "form")
+_DTO_SUFFIXES = ("dto", "request", "command", "input", "payload", "form", "schema")
 
 
 def _is_dto_name(name: str) -> bool:
@@ -78,8 +86,9 @@ def missing_validation(context: AuditContext) -> list[AuditFinding]:
                             f"the payload nor its fields carry any validation annotation."
                         ),
                         suggestion=(
-                            "Annotate the payload (`@NotNull`, `@Size`, `[Required]`, `[StringLength]`, …) "
-                            "and validate it at the controller boundary (`@Valid` / `[ApiController]`)."
+                            "Annotate the payload (`@NotNull`, `@Size`, `[Required]`, `[StringLength]`, "
+                            "Pydantic `Field(min_length=…)` / `@field_validator`, …) and validate it at "
+                            "the controller boundary (`@Valid`, `[ApiController]`, FastAPI model binding)."
                         ),
                         node_ids=[controller.id, payload.id],
                         edge_keys=edge_keys,

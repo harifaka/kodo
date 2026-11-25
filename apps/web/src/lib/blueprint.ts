@@ -87,6 +87,30 @@ export const STACK_OPTIONS: StackOption[] = [
     defaultProject: 'acme-api',
     defaultBase: 'src',
   },
+  {
+    id: 'python-fastapi',
+    label: 'Python (FastAPI)',
+    short: 'FastAPI · Pydantic · SQLAlchemy',
+    baseLabel: 'Package root',
+    basePlaceholder: 'app',
+    description:
+      'SQLAlchemy model + Pydantic request/response + repository + service + APIRouter module + pytest skeleton.',
+    fieldTypes: [
+      'string',
+      'text',
+      'email',
+      'int',
+      'long',
+      'decimal',
+      'boolean',
+      'date',
+      'datetime',
+      'uuid',
+    ],
+    annotationPresets: ['Field(min_length=1)', 'Field(ge=0)', 'Field(max_length=200)'],
+    defaultProject: 'acme-api',
+    defaultBase: 'app',
+  },
 ];
 
 export function stackOption(stack: BlueprintStack): StackOption {

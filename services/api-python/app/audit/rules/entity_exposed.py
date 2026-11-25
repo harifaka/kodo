@@ -58,7 +58,8 @@ def entity_exposed_in_controller(context: AuditContext) -> list[AuditFinding]:
                 ),
                 suggestion=(
                     "Introduce a DTO/response model, map the entity to it in the service layer, "
-                    "and keep the entity inside the persistence boundary."
+                    "and keep the entity inside the persistence boundary "
+                    "(FastAPI `response_model=` / Django serializer)."
                 ),
                 node_ids=[controller.id, entity.id],
                 edge_keys=edge_keys,

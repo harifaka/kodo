@@ -1,6 +1,6 @@
 # Kodo — Architecture Rules
 
-Kodo is an Architecture Control Center for multi-stack codebases (Spring Boot, C#/.NET, Node.js).
+Kodo is an Architecture Control Center for multi-stack codebases (Spring Boot, C#/.NET, Node.js, Python).
 This file is binding for every human and AI contributor.
 
 ## 1. Core IR is the single source of truth
@@ -44,16 +44,15 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - **Phase 10 (Laya System 1 decision layer, `/v1/systemone`) is active** — rules live in §3j.
 - **Phase 11 (local UX, dual-mode folder browser & large-repo ergonomics) is active** — rules live in
   §3k. `GET /api/v1/fs/browse` is zero-copy, local-only and **always 403 in `KODO_MODE=saas`**.
-- **Phases 1–11 (v0.6.0) are the active delivered contract.** Everything below them is binding:
-  do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane or the
-  local-only folder browser.
-- **Phases 12–13 (v0.7+) are planned, NOT active.** Full Python Stack Support (Tree-sitter Python IR,
-  Python audit rules, byte-offset patching, Python builder image) and Production SaaS Hardening
-  (Alembic migrations, per-user quotas/TTL, rate limiting, TLS reverse proxy) are recorded in
-  `ROADMAP.md` only. Do not add their endpoints, config, migrations, images, compose profiles or UI
-  until a task explicitly asks for them. Marker-file detection for `pyproject.toml` /
-  `requirements.txt` / `setup.py` as a **Browse badge** is part of Phase 11 and does **not** authorise
-  Python AST scanning.
+- **Phase 12 (full Python stack support: FastAPI / Django / Flask) is active** — rules live in §3l.
+  `tree-sitter-python` drives the analyzer, the byte-offset patcher, the FastAPI generator plugin,
+  the Python deploy template and the `kodo-builder-python` image.
+- **Phases 1–12 (v0.7.0) are the active delivered contract.** Everything below them is binding:
+  do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane,
+  the local-only folder browser or the Python stack.
+- **Phase 13 (Production SaaS hardening) is planned, NOT active.** Alembic migrations, per-user
+  quotas/TTL cleanup and API rate limiting are recorded in `ROADMAP.md` only. Do not add their
+  endpoints, config, migrations or compose profiles until a task explicitly asks for them.
 
 ## 3. Write policy (hard rule)
 
@@ -82,8 +81,9 @@ Allowed:
 - Parsing it in memory and returning Core IR.
 - Running the deterministic audit engine over the Core IR and returning `WorkspaceIR.audit`.
 - Applying AST rewrite operations to **in-memory** syntax trees/text (Tree-sitter byte offsets for
-  Java/TS/JS, Roslyn syntax rewriting for C#) and returning `originalContent` / `proposedContent`
-  through `POST /api/v1/dry-run`. The returned text is never written by the dry-run itself.
+  Java/TS/JS/**Python**, Roslyn syntax rewriting for C#) and returning `originalContent` /
+  `proposedContent` through `POST /api/v1/dry-run`. The returned text is never written by the dry-run
+  itself.
 - Rendering stack-plugin templates into **in-memory** file text (`app/generators/`) and returning it
   through `POST /api/v1/scaffold/dry-run` as create-only patches. Nothing is written there either.
 - Rendering Docker artifacts into **in-memory** file text (`app/deploy/generator.py`) and returning it
@@ -122,6 +122,10 @@ Allowed:
 - Java and TS/JS patchers must make surgical byte-offset edits inside the target type body and
   preserve every untouched token, method, comment and line ending. Regenerating whole files is
   forbidden.
+- The Python patcher (`app/patching/python_patcher.py`) edits class attributes and decorators by
+  byte offset, keeps class/module docstrings and hand-written methods verbatim, and only inserts
+  imports it knows (`Field`, `mapped_column`, `relationship`, `dataclass`, …). A module-level
+  FastAPI/Flask router has no editable attributes: report a warning and leave the file untouched.
 - The C# patcher must use `CSharpSyntaxTree.ParseText` + trivia-preserving rewriting. Methods,
   comments and formatting outside the targeted member/attribute stay verbatim.
 - Every patcher degrades gracefully: unsupported constructs produce a warning and leave the file's
@@ -221,7 +225,8 @@ Allowed:
   overwrites (`originalSha256` echoed by the UI). Never silently replace a user's Dockerfile.
 - **Image rules.** Every generated Dockerfile is multi-stage, pins an Alpine/slim runtime, creates a
   `kodo` user/group and drops privileges (`USER kodo`), exposes the configured port and declares a
-  `HEALTHCHECK`. Spring Boot must use `eclipse-temurin:21-jre-alpine` with `/actuator/health`.
+  `HEALTHCHECK`. Spring Boot must use `eclipse-temurin:21-jre-alpine` with `/actuator/health`;
+  Python uses `python:3.12-slim` with `uvicorn app.main:app` and a `urllib` healthcheck.
 - **WPF honesty.** WPF is Windows-only. For `csharp-wpf` emit a clear warning, no Linux `Dockerfile`,
   and an optional sidecar/API template (`Dockerfile.sidecar` + `profiles: ["sidecar"]`). Never claim a
   desktop UI can be containerized on Linux.
@@ -324,11 +329,11 @@ Allowed:
   (default `none`), `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--memory`, `--cpus`,
   `--pids-limit=256`, `--user 10001:10001` and `-w /workspace`. Never add `--privileged`, host mounts,
   environment passthrough or an interactive shell.
-- **Allow-listed stacks and images only.** `java`, `csharp` and `nodejs` map to `KODO_BUILDER_IMAGE_*`;
-  never accept an image, command or entrypoint from the client. Commands are fixed constants; the only
-  `sh -c` payloads (`tsc --noEmit[ && vitest run]`, the dotnet restore+build/test pair) are constants
-  executed inside the container, never interpolated user input, and every subprocess uses
-  `shell=False` on the host.
+- **Allow-listed stacks and images only.** `java`, `csharp`, `nodejs` and `python` map to
+  `KODO_BUILDER_IMAGE_*`; never accept an image, command or entrypoint from the client. Commands are
+  fixed constants; the only `sh -c` payloads (`tsc --noEmit[ && vitest run]`, the dotnet
+  restore+build/test pair and `ruff check … && mypy …[ && pytest -q]`) are constants executed inside
+  the container, never interpolated user input, and every subprocess uses `shell=False` on the host.
 - **Timeout + guaranteed cleanup.** `KODO_BUILDER_TIMEOUT_SECONDS` (default 120) bounds the run; the
   client is killed and `docker rm -f <id>` always runs in a `finally` block, including create/copy
   failures and timeouts. A missing daemon or image is a reported `status: "unavailable"`, never a 500.
@@ -416,6 +421,43 @@ Allowed:
   mount / runtime detection; no test may browse a real host folder, need a Docker daemon or touch the
   network.
 
+## 3l. Python stack rules (Phase 12 — active)
+
+- **One analyzer, Tree-sitter only.** `app/analyzers/python_analyzer.py` is pure: text in, Core IR
+  out. It never imports or executes project code and never touches the filesystem. Import resolution
+  lives in `python_imports.py`; layer/kind classification in `python_layers.py`.
+- **Detection and noise.** `pyproject.toml`, `requirements.txt`, `setup.py`/`setup.cfg` or any `.py`
+  source marks the workspace as `python`. Skip `.venv`, `venv`, `__pycache__`, `.pytest_cache`,
+  `.mypy_cache`, `.ruff_cache`, `build`, `dist`, `*.egg-info` and `site-packages`. Test files
+  (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) never enter the graph, so they cannot create
+  layer or orphan findings.
+- **IR mapping.** Classes become `class`/`enum`/`interface` nodes; module-level `APIRouter`,
+  `FastAPI` and `Blueprint` route modules become synthetic `router` nodes (layer `controller`, id =
+  relative file path, methods = route handlers). Pydantic DTOs use the `other` layer because the
+  canonical contract has no `dto` layer; `MISSING_VALIDATION` still recognises them by name and by
+  `Field(...)`/`@field_validator` markers.
+- **Relations.** `from … import …` / `import …` resolve to workspace files (package-root aware file
+  hints); class attributes and `__init__`/`Depends(...)` parameters become `depends_on`; base
+  classes become `inherits`/`implements`; `relationship(...)` targets become `references`. Never
+  guess an ambiguous simple name.
+- **Audit stays deterministic.** Python gets no separate rule engine: router-to-repository leakage is
+  `LAYER_VIOLATION`, circular imports are `CIRCULAR_DEPENDENCY`, god classes are `GOD_CLASS` and
+  Pydantic payloads without constraints are `MISSING_VALIDATION`. Findings must be byte-identical
+  for identical trees.
+- **Patching is proposal-only.** `patch_python` returns text through `/api/v1/dry-run`; disk writes
+  still require the Monaco diff + SHA-256 guarded apply. Docstrings, methods, comments and line
+  endings outside the edited attribute stay verbatim, and only known imports are inserted.
+- **Generator.** `python-fastapi` renders SQLAlchemy model → Pydantic request/response → repository →
+  service → `APIRouter` (+ pytest skeleton) and a `pyproject.toml` / `app.main:app` skeleton.
+  Generated projects must self-audit at **100/100** with Kodo's own Python analyzer.
+- **Deploy + builder.** The Python Dockerfile is multi-stage (`python:3.12-slim`), runs as uid 10001
+  `kodo`, exposes port 8000 and healthchecks `/health` through `urllib` (slim has no curl). The
+  `kodo-builder-python` image is pre-warmed with ruff/mypy/pytest and verifies with `--network=none`
+  and the fixed `ruff check` / `mypy` / `pytest` commands.
+- **Deterministic tests.** `tests/test_python_stack.py` covers the analyzer, patcher, generator,
+  deploy template and builder configuration without network access, a Docker daemon or a host
+  toolchain.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -424,7 +466,8 @@ Allowed:
   (403 `SAAS_PATH_FORBIDDEN`) — see §3h.
 - Never follow symlinks out of the root. Never expose absolute filesystem paths to the UI except the
   scanned `rootPath` the user supplied.
-- Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv` when walking.
+- Skip `node_modules`, `.git`, `bin`, `obj`, `target`, `dist`, `.venv`, `venv`, `__pycache__`,
+  `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info` and `site-packages` when walking.
 - Enforce file count / file size limits and report them as `WorkspaceIR.warnings`, not exceptions.
 - Dry-run patching and apply repeat the containment check per file, reject absolute paths and `..`,
   and enforce the 2 MB cap. Apply additionally re-checks containment on every rollback target.
@@ -438,7 +481,7 @@ Allowed:
 ## 5. Degradation, never crashing
 
 - The C# analyzer is optional at runtime. If it is offline, the orchestrator MUST still return
-  Java/TS/JS results and append a human-readable entry to `WorkspaceIR.warnings`.
+  Java/TS/JS/Python results and append a human-readable entry to `WorkspaceIR.warnings`.
 - Unparsable files, unknown extensions, and oversized files produce warnings, never 500s.
 - AI Copilot failures (missing key, 401/403, 429, timeout, unreachable local server) return the
   structured error codes from §3e; they never block scanning, auditing or the guarded apply path.
@@ -461,8 +504,9 @@ Allowed:
 
 - `dotnet build services/analyzer-csharp` succeeds.
 - `python -m pytest services/api-python/tests` succeeds (including the Phase 4 generator suite, which
-  re-scans generated projects and asserts a 100/100 self-audit, and the Phase 8 suite covering
-  restart-safe rollback, tenant isolation, SaaS 401/403 gates and mocked GitHub OAuth).
+  re-scans generated projects and asserts a 100/100 self-audit, the Phase 8 suite covering
+  restart-safe rollback, tenant isolation, SaaS 401/403 gates and mocked GitHub OAuth, and the
+  Phase 12 Python suite).
 - `python -m ruff check` on changed Python files succeeds.
 - `npm run build` in `apps/web` succeeds (type-check + bundle).
 - The full flow works end to end: scan a folder -> graph nodes appear -> UML renders -> file opens
@@ -514,3 +558,11 @@ Allowed:
   pills, **Issues Only** and **Focus 1-Hop** and confirm the UML tab matches the filtered subset
   (including the >60-class guard). Confirm nothing was uploaded/copied (file mtimes unchanged) and
   that `GET /api/v1/fs/browse` never returns a path outside the configured roots.
+- For Python changes: `pytest services/api-python/tests/test_python_stack.py` must pass with no
+  network, Docker daemon or host toolchain, and `pytest services/api-python/tests` must stay green.
+  Scan Kodo's own `services/api-python` (FastAPI) folder and confirm the routers, services,
+  repositories and Pydantic DTOs appear with `depends_on`/`references` edges and no parse warnings;
+  open a `.py` file, add/rename a field, **Preview Diff (Dry-Run)** and confirm docstrings and
+  methods are untouched; apply and roll back to byte-identical content. Generate a `python-fastapi`
+  blueprint and confirm the self-scan reports 100/100, then generate the Python Docker artifacts and
+  confirm `docker compose config` accepts the interpolated healthcheck.

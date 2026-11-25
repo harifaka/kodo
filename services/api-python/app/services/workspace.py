@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.analyzers.common import ReferenceCandidate
 from app.analyzers.java import parse_java
+from app.analyzers.python_analyzer import parse_python
 from app.analyzers.scanner import ScanFiles, collect_files, detect_stacks
 from app.analyzers.typescript import parse_script
 from app.audit import run_audit
@@ -60,7 +61,7 @@ async def build_workspace(raw_path: str) -> WorkspaceIR:
     if not nodes:
         warnings.append(
             "No supported components were discovered. "
-            "Kodo currently analyzes .java, .ts, .tsx, .js, .jsx and .cs files."
+            "Kodo currently analyzes .java, .ts, .tsx, .js, .jsx, .cs and .py files."
         )
 
     return WorkspaceIR(
@@ -98,6 +99,16 @@ def _parse_local_sources(
         if source is None:
             continue
         result = parse_script(rel_path, source, known_scripts)
+        nodes.extend(result.nodes)
+        references.extend(result.references)
+        warnings.extend(result.warnings)
+
+    known_python = set(scan.python)
+    for rel_path in scan.python:
+        source = _read_source(root, rel_path, warnings)
+        if source is None:
+            continue
+        result = parse_python(rel_path, source, known_python)
         nodes.extend(result.nodes)
         references.extend(result.references)
         warnings.extend(result.warnings)

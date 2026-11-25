@@ -1,10 +1,10 @@
 # Kodo
 
 **Architecture Control Center for the Vibe-Coding Era.**
-Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and three optional ephemeral builder images.
+Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js, Python/FastAPI) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and four optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Large-Repo UX](https://img.shields.io/badge/Status%20v0.6%20%C2%B7%20Phases%201--11%20delivered-brightgreen.svg)
+![Status: Python Stack](https://img.shields.io/badge/Status%20v0.7%20%C2%B7%20Phases%201--12%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -15,14 +15,15 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 
 - **Single Source of Truth (Core IR):** Stack-agnostic Intermediate Representation of services, classes, business fields, relations, and annotations.
 - **Docker-First (Local & SaaS):** One shared React + TypeScript UI served by Nginx alongside the FastAPI orchestrator and the Roslyn analyzer on a single Docker network — the same stack for local self-hosting (`docker compose up --build`) and cloud SaaS. The desktop shell was removed in Phase 7 and versioned images are published to GHCR.
-- **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
+- **Deep AST Analysis:** Uses **Tree-sitter** (Java, TypeScript/JavaScript, **Python**) via Python FastAPI and **Roslyn** via a dedicated C# ASP.NET Core microservice for accurate C# analysis.
 - **Deterministic Pattern Audit:** Six Core-IR rules (layer violations, circular dependencies, god classes, orphans, entities leaked through controllers, missing validation) produce an **Architecture Health Score** with actionable findings — still 100% read-only and zero LLM.
-- **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)** and **Node.js**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
+- **Multi-Stack Builder:** Versioned `kodo.blueprint.json` plans render production-shaped vertical slices for **Spring Boot**, **C# WPF (MVVM)**, **Node.js** and **Python (FastAPI + Pydantic + SQLAlchemy)**, self-audited to a 100/100 health score and written through the same guarded, create-only apply pipeline.
 - **DeepSeek Architecture Copilot:** OpenAI-compatible client for **DeepSeek Cloud** or air-gapped **Ollama / vLLM** that turns a business spec into a blueprint, proposes fixes for audit findings and implements single methods — always as IR-aware proposals reviewed in the Monaco diff. The LLM never writes to disk.
 - **Deploy Studio:** Generates non-root multi-stage `Dockerfile`s, a healthchecked `docker-compose.yml` (PostgreSQL / Redis / RabbitMQ on a `kodo-net` bridge) and a placeholder-only `.env.example` — then controls local Docker (compose up/down, live health, filterable logs), exports Git branches and GitHub PRs, and records every apply/rollback/deploy/Git action in a local append-only audit log.
-- **Ephemeral Build Verification (Phase 9):** **Verify Build (Sandbox)** compiles — and optionally unit-tests — the exact proposed patches before they reach disk, inside a disposable, non-root, `--network=none` container built from pre-warmed Maven 3.9/JDK 21, .NET 8 SDK or Node 22 images. The workspace is streamed in as an in-memory tar snapshot (never mounted), output streams live into the UI, diagnostics are parsed per compiler, and a failing build can hand its errors to the AI Copilot for a reviewed fix.
+- **Ephemeral Build Verification (Phase 9):** **Verify Build (Sandbox)** compiles — and optionally unit-tests — the exact proposed patches before they reach disk, inside a disposable, non-root, `--network=none` container built from pre-warmed Maven 3.9/JDK 21, .NET 8 SDK, Node 22 or Python 3.12 (ruff/mypy/pytest) images. The workspace is streamed in as an in-memory tar snapshot (never mounted), output streams live into the UI, diagnostics are parsed per compiler, and a failing build can hand its errors to the AI Copilot for a reviewed fix.
 - **System 1 Decision Layer (Phase 10):** **Laya** — a local, non-autoregressive 421M decision model — runs over `/v1/systemone` (Ollama or `laya-serve`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek (System 2), and pre-screen proposed diffs in milliseconds. Every decision becomes an inspectable, tenant-scoped **ADR** with accept/override feedback and a JSONL training export. It is **advisory only**: it never writes to disk and degrades cleanly to deterministic rules + manual DeepSeek triggers when offline.
 - **Dual-Mode Folder Browser & Large-Repo Ergonomics (Phase 11):** a **Browse…** modal lists your real host folders **in place — zero uploads, zero copies** — whether Kodo runs natively (Windows drives, `~`, `/`) or in Docker (the `/projects` mount, with an actionable hint when the mount is still the empty `.kodo-empty` placeholder). Immediate child folders are badged by marker files (`Spring Boot / Java`, `C# / .NET`, `Node.js`, `Python`) with monorepo drill-down. The Macro Graph gains `Ctrl+K` search, layer/stack filter pills, **Issues Only**, and a **1-Hop Focus** mode; the Mermaid UML view renders the same filtered subset and guards diagrams over 60 classes. Browsing is **local-only — always `403` in `KODO_MODE=saas`**.
+- **Full Python Stack Support (Phase 12):** Python web apps are a first-class stack end to end. The **Tree-sitter Python** analyzer maps FastAPI `APIRouter`/`FastAPI`, Flask `Blueprint` and Django `APIView`/`views.py` modules onto the Macro Graph as `router` components, plus Pydantic v2 DTOs, SQLAlchemy 2 / Django ORM entities, repositories and services with package-root-aware `import` relations. The deterministic audit recognises Pydantic `Field(...)` validation, Python layer leaks and circular imports; the byte-offset patcher edits attributes and decorators while preserving docstrings and methods; the Builder renders a **FastAPI + Pydantic + SQLAlchemy** vertical slice; Deploy Studio and the pre-warmed `kodo-builder-python` image complete the loop. Verified by scanning Kodo's own `services/api-python`.
 
 ---
 
@@ -39,7 +40,7 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
             | same-origin proxy: /api/ and /health
             v
     Orchestrator API (Python FastAPI, :8088)
-    Core IR | Tree-sitter (Java/TS/JS) | DeepSeek / Ollama (OpenAI-compatible) | Docker
+    Core IR | Tree-sitter (Java/TS/JS/Python) | DeepSeek / Ollama (OpenAI-compatible) | Docker
     SQLAlchemy (SQLite / PostgreSQL) | GitHub OAuth + JWT sessions (KODO_MODE=saas)
             |
             | Internal HTTP (JSON)
@@ -50,9 +51,9 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
     All three images (web + Nginx, api-python, analyzer-csharp) run on one Compose network —
     local and production profiles differ only in configuration, never in architecture.
 
-    Phase 9 adds three optional builder images (java, csharp, nodejs) that never join the stack:
-    the orchestrator creates a disposable, non-root, --network=none container per verification and
-    feeds it an in-memory tar snapshot, so the host workspace is never mounted.
+    Phase 9 adds four optional builder images (java, csharp, nodejs, python) that never join the
+    stack: the orchestrator creates a disposable, non-root, --network=none container per verification
+    and feeds it an in-memory tar snapshot, so the host workspace is never mounted.
 
     System 1 / System 2 lane (Phase 10, optional):
       Kodo UI -> POST /api/v1/decision/{triage-audit,route-task,screen-diff}
@@ -71,13 +72,13 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
 
 ---
 
-## Quick Start (Phases 1–11, local + SaaS)
+## Quick Start (Phases 1–12, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
 docker compose up --build
 
-# Optional: build the three ephemeral builder images (Verify Build)
+# Optional: build the four ephemeral builder images (Verify Build)
 docker compose --profile builders build
 
 # Optional: run local Laya (System 1) alongside the stack, then pull the model once
@@ -178,12 +179,13 @@ in the audit table.
 **Verify before you apply.** The Diff preview and Deploy Studio both carry a **Verify Build
 (Sandbox)** bar. It stages the workspace (plus every selected in-memory patch) into a tar stream,
 streams it into a disposable container and runs the stack's fixed build command — `mvn -o test-compile`,
-`dotnet build -p:EnableWindowsTargeting=true` or `tsc --noEmit` (add `Run unit tests` for
-`mvn test` / `dotnet test` / `vitest run`). Containers run as uid 10001 with every capability dropped,
-`--network=none`, `1g`/`1 CPU`/`256 PIDs` limits and a 120 s timeout, and are always removed afterwards.
-The host workspace is never mounted or modified; parsed diagnostics jump straight to the file, and a
-failing build can be sent to **Fix Build Errors with AI**, which returns a normal dry-run patch for the
-Monaco diff. Build them once with `docker compose --profile builders build`; see
+`dotnet build -p:EnableWindowsTargeting=true`, `tsc --noEmit` or `ruff check … && mypy …` (add
+`Run unit tests` for `mvn test` / `dotnet test` / `vitest run` / `pytest -q`). Containers run as uid
+10001 with every capability dropped, `--network=none`, `1g`/`1 CPU`/`256 PIDs` limits and a 120 s
+timeout, and are always removed afterwards. The host workspace is never mounted or modified; parsed
+diagnostics jump straight to the file, and a failing build can be sent to **Fix Build Errors with AI**,
+which returns a normal dry-run patch for the Monaco diff. Build them once with
+`docker compose --profile builders build`; see
 [DEV_SETUP.md](DEV_SETUP.md#9-ephemeral-builders-phase-9) for the Docker-outside-of-Docker setup.
 
 **Two modes, one stack.** `KODO_MODE=local` (default) is zero-configuration: SQLite on the
@@ -199,12 +201,13 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–11)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–12)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
 (v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0), Phase 10 is the advisory System 1
-decision layer (v0.5.0) and Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0)** — Kodo now
-covers the full **Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop plus a
+decision layer (v0.5.0), Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0) and Phase 12
+is the full Python stack (v0.7.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit →
+Sandbox Verify → Deploy** loop for Java, C#, Node.js **and Python**, plus a
 **System 1 → System 2** AI decision path, ships as one container stack for both local self-hosting and
 multi-tenant SaaS, and can browse your real folders in place from either runtime.
 
@@ -221,11 +224,11 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
 
 ### Phase 3: Real-Life Business Field Editor & Safe Round-Trip - Delivered
 - Macro/Micro editing: connect/disconnect relations on the canvas and edit real business fields, types, and annotations (`@Entity`, `@Column`, `[Required]`, etc.) in a keyboard-friendly inspector with stack-aware presets.
-- **Dry-Run Monaco Side-by-Side Diff** for every draft edit, computed in memory with **Tree-sitter byte-offset patching** (Java/TS/JS) and **trivia-preserving Roslyn rewriting** (C#). Hand-written methods and comments stay verbatim.
+- **Dry-Run Monaco Side-by-Side Diff** for every draft edit, computed in memory with **Tree-sitter byte-offset patching** (Java/TS/JS/Python) and **trivia-preserving Roslyn rewriting** (C#). Hand-written methods and comments stay verbatim.
 - **Guarded apply to disk**: read-only Git status inspection, a dirty-tree / non-Git confirmation gate, SHA-256 optimistic concurrency (stale files abort the whole batch), atomic writes that preserve CRLF/LF, and an in-memory rollback snapshot with one-click undo. Applying re-scans the workspace so the graph, UML and health score immediately reflect the saved code.
 
 ### Phase 4: Multi-Stack Builder & Pattern Blueprints - Delivered
-- Full stack plugin generators for **Spring Boot 3 / Java 21**, **C# WPF (.NET 8, MVVM)** and **Node.js (TypeScript, layered Express)**.
+- Full stack plugin generators for **Spring Boot 3 / Java 21**, **C# WPF (.NET 8, MVVM)**, **Node.js (TypeScript, layered Express)** and **Python (FastAPI + Pydantic v2 + SQLAlchemy 2)**.
 - One-click vertical slice scaffolding: Entity/Model + DTO + Mapper + Repository + Service + Controller (+ unit-test skeleton), with constructor-injected service-to-service dependencies.
 - Versionable `kodo.blueprint.json` (schema `1.0`) committed alongside the repo for team PR reviews, loaded back into the Builder.
 - Generated files are **self-audited to 100/100** and land on disk only through the guarded apply pipeline: dry-run → Monaco diff → create-only apply (`409 FILE_EXISTS` instead of silent overwrite) → rollback that also prunes the folders it created.
@@ -236,7 +239,7 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
 - Workflows: *Business Spec -> Blueprint* (schema-validated with one repair retry), *Audit Error -> Diff Fix*, and *Targeted Method Implementation* — each one returns a normal dry-run plan for the Monaco diff; the LLM has no write access.
 
 ### Phase 6: Ready-to-Deploy Docker Studio - Delivered
-- Stack-aware, **non-root multi-stage Dockerfiles** (Maven/Temurin 21 JRE, `node:22-alpine`, .NET 8 SDK → `aspnet:8.0-alpine`) with `EXPOSE` and `HEALTHCHECK`; WPF projects get an explicit "desktop app cannot run in Linux" warning plus an optional sidecar/API compose template.
+- Stack-aware, **non-root multi-stage Dockerfiles** (Maven/Temurin 21 JRE, `node:22-alpine`, `python:3.12-slim`, .NET 8 SDK → `aspnet:8.0-alpine`) with `EXPOSE` and `HEALTHCHECK`; WPF projects get an explicit "desktop app cannot run in Linux" warning plus an optional sidecar/API compose template.
 - **`docker-compose.yml`** with selectable PostgreSQL / Redis / RabbitMQ, pinned Alpine images, healthchecks, `depends_on: condition: service_healthy`, a `kodo-net` bridge, named volumes and `${VAR}` interpolation — plus a `.env.example` that only ever holds placeholders.
 - **Local Docker control panel:** daemon/CLI status, `compose up -d --build`, `compose down [--volumes]`, container health table and a filterable log viewer (tail clamped, service name validated, `shell=False`, strict root containment and timeouts).
 - **SaaS / Git adapter:** shallow clone of HTTPS GitHub/GitLab repositories into `~/.kodo/workspaces` (token passed as a transient `http.extraHeader`, never stored), branch + commit export, and optional GitHub Pull Request creation.
@@ -262,7 +265,7 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
 ---
 
 ### Phase 9: Ephemeral Builder Images (Sandboxed Compile & Test Verification) - Delivered (v0.4.0)
-- **Three pre-warmed, non-root (uid 10001) builder images** in `services/builders/`: Maven 3.9/JDK 21 with a seeded `.m2`, .NET 8 SDK with the NuGet cache (incl. the Windows desktop targeting pack), and Node 22 with a shared `typescript`/`vitest`/`express` cache. Built with `docker compose --profile builders build`; they never run as part of the stack.
+- **Four pre-warmed, non-root (uid 10001) builder images** in `services/builders/`: Maven 3.9/JDK 21 with a seeded `.m2`, .NET 8 SDK with the NuGet cache (incl. the Windows desktop targeting pack), Node 22 with a shared `typescript`/`vitest`/`express` cache, and Python 3.12 with `ruff`/`mypy`/`pytest` plus FastAPI/Pydantic/SQLAlchemy. Built with `docker compose --profile builders build`; they never run as part of the stack.
 - **Zero workspace mutation:** the workspace (plus every selected in-memory patch) is staged into a deterministic tar — `.git`, `node_modules`, `target`, `bin`, `obj`, `.venv`, `__pycache__` skipped, escaping symlinks dropped, 50 MB cap — and streamed into the container with `docker cp -`. The host folder is never mounted and its bytes/mtimes never change.
 - **Hardened sandbox:** `--network=none` by default (`KODO_BUILDER_NETWORK_MODE` opt-in), `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--memory=1g`, `--cpus=1`, `--pids-limit=256`, a strict timeout and a guaranteed `docker rm -f` in a `finally` block. Only list-argument subprocesses; the fixed stack commands are the only shell strings.
 - **API + streaming UI:** `GET /api/v1/build/status`, `POST /api/v1/build/verify` and an SSE `POST /api/v1/build/verify/stream`; parsed Maven/MSBuild/`tsc` diagnostics; a `verify_build` audit event per user; the `BuildVerificationPanel` in the Diff preview (verify patches before Apply) and Deploy Studio (verify before Git export).
@@ -307,8 +310,8 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
   gated in the auth middleware *before* authentication — and the Browse button is never rendered.
 - **Project badges without an AST:** immediate-child marker detection only (`pom.xml` /
   `build.gradle[.kts]`, `*.csproj` / `*.sln`, `package.json`, `pyproject.toml` / `requirements.txt` /
-  `setup.py`, `.git`) plus `hasSubdirectories` for monorepo drill-down. Python is labelled `preview`
-  (Phase 12 brings the real analyzer). Noise folders (`.git`, `node_modules`, `target`, `bin`, `obj`,
+  `setup.py`, `.git`) plus `hasSubdirectories` for monorepo drill-down. Badges stay marker-only; the
+  real Python analyzer arrived in Phase 12. Noise folders (`.git`, `node_modules`, `target`, `bin`, `obj`,
   `.venv`, `venv`, `__pycache__`, `.idea`, `.vscode`, recycle-bin/system folders) are skipped unless
   `showHidden` is set, and listings cap at 500 entries with `truncated: true`.
 - **Empty Docker mount helper:** browsing `/projects` while it still holds only the `.kodo-empty` →
@@ -332,25 +335,60 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
 
 ---
 
-## What's Next (v0.7+ Roadmap: Phases 12–13)
+### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) - Delivered (v0.7.0)
+- **Tree-sitter Python analyzer** (`services/api-python/app/analyzers/python_analyzer.py`): classes,
+  base classes, decorators, typed class attributes (`name: str = Field(...)`,
+  `id: Mapped[int] = mapped_column(...)`, Django `models.CharField(...)`), `__init__` dependencies and
+  `async def` methods; package-root-aware `import`/`from … import` resolution in `python_imports.py`;
+  deterministic layer classification in `python_layers.py`.
+- **Routers become first-class graph components.** Module-level `APIRouter`, `FastAPI` and `Blueprint`
+  route modules emit a synthetic `router` node (layer `controller`, handlers as methods, route
+  decorators as annotations) and `include_router`/`register_blueprint` composition edges — so Kodo's
+  own FastAPI app self-scans as **204 components / 252 relations** with 10 router modules and no parse
+  warnings.
+- **Noise-aware scanning.** `pyproject.toml` / `requirements.txt` / `setup.py` / `*.py` detection;
+  `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `build`, `dist`,
+  `*.egg-info` and `site-packages` are skipped, and `tests/`, `test_*.py`, `*_test.py` and
+  `conftest.py` stay out of the architecture graph.
+- **Python-aware audit.** `MISSING_VALIDATION` recognises Pydantic `Field(...)`,
+  `@field_validator`, `EmailStr` and `constr`; router→repository leakage is `LAYER_VIOLATION`;
+  circular imports and god classes reuse the deterministic engine. No new rule ids, no schema churn.
+- **Byte-offset Python patching.** `app/patching/python_patcher.py` adds/updates/removes class
+  attributes, type hints and decorators, inserts only known imports (`Field`, `mapped_column`,
+  `relationship`, `dataclass`, …) and preserves docstrings, methods, comments and line endings. Every
+  edit still flows dry-run → Monaco diff → SHA-256 guarded apply → rollback; module-level routers are
+  reported as unsupported instead of being rewritten.
+- **`python-fastapi` blueprints.** SQLAlchemy 2 model → Pydantic v2 request/response → repository →
+  service → `APIRouter` (+ pytest skeleton) plus `pyproject.toml`, `app/db.py` and `app/main.py`;
+  generated projects self-audit at **100/100**.
+- **Deploy + builder.** A `python:3.12-slim` multi-stage Dockerfile (uid 10001 `kodo`,
+  `uvicorn app.main:app`, `urllib` `/health` healthcheck, compose `DATABASE_URL`/`PYTHONUNBUFFERED`)
+  and a pre-warmed `kodo-builder-python` image whose fixed commands are
+  `ruff check … && mypy …[ && pytest -q]`, with structured ruff/mypy diagnostics in the UI.
+- **Evidence:** `tests/test_python_stack.py` (19 hermetic cases), `pytest` **271 passed / 5 skipped**
+  (only the environment-dependent Roslyn-container skips), `ruff check app tests`, `npm run build`,
+  `dotnet build services/analyzer-csharp` and every `docker compose config` variant green.
 
-**Planned — not delivered.** The v0.6.0 / Phases 1–11 contract above is unchanged; these two tracks
-are recorded in [ROADMAP.md](ROADMAP.md) and start only in a future session.
+---
+
+## What's Next (v0.8+ Roadmap: Phase 13)
+
+**Planned — not delivered.** The v0.7.0 / Phases 1–12 contract above is unchanged; Phase 13 is
+recorded in [ROADMAP.md](ROADMAP.md) and starts only in a future session.
 
 | Phase | Track | Highlights |
 | --- | --- | --- |
-| 12 | Full Python Stack Support (FastAPI / Django / Flask) | Tree-sitter Python Core IR extraction (routers/views, services, repositories, Pydantic/SQLAlchemy/Django models, decorators, cross-module relations); Python audit rules (router-to-DB leakage, missing Pydantic validation, god classes, circular imports); byte-offset AST patching for Python; FastAPI vertical-slice plugin, Python deploy template and a pre-warmed offline `kodo-builder-python` (`ruff` + `mypy` + `pytest`) image. |
 | 13 | Production SaaS Hardening | **Alembic** migrations replacing `create_all()` for safe SQLite/PostgreSQL upgrades; per-user disk quotas, clone size caps and TTL cleanup of stale cloned workspaces; rate limiting on `/scan`, `/git/clone`, `/build/verify` and `/ai/*`; TLS reverse-proxy (Caddy/Traefik) guide with optional GitHub App short-lived tokens. |
 
 ---
 
-## Roadmap Complete (Phases 1–11 delivered)
+## Roadmap Complete (Phases 1–12 delivered)
 
-All eleven phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+All twelve phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
 AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
-SaaS foundation, ephemeral builders, the Laya System 1 decision layer and the local dual-mode folder
-browser with large-repo graph ergonomics. Full detail and DoD evidence:
-[ROADMAP.md](ROADMAP.md).
+SaaS foundation, ephemeral builders, the Laya System 1 decision layer, the local dual-mode folder
+browser with large-repo graph ergonomics, and full Python stack support (FastAPI / Django / Flask).
+Full detail and DoD evidence: [ROADMAP.md](ROADMAP.md).
 
 ## License
 

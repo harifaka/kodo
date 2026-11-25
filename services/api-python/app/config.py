@@ -50,11 +50,12 @@ MAX_APPLY_FILES = 200
 
 # Phase 9 ephemeral builders. The images are pre-warmed, non-root and only ever consume a staged
 # tar stream: the host workspace is never mounted and the container never sees the real files.
-BUILDER_STACKS = ("java", "csharp", "nodejs")
+BUILDER_STACKS = ("java", "csharp", "nodejs", "python")
 BUILDER_NETWORK_MODES = ("none", "bridge", "host")
 DEFAULT_BUILDER_IMAGE_JAVA = "kodo-builder-java:local"
 DEFAULT_BUILDER_IMAGE_CSHARP = "kodo-builder-csharp:local"
 DEFAULT_BUILDER_IMAGE_NODEJS = "kodo-builder-nodejs:local"
+DEFAULT_BUILDER_IMAGE_PYTHON = "kodo-builder-python:local"
 DEFAULT_BUILDER_NETWORK_MODE = "none"
 DEFAULT_BUILDER_TIMEOUT_SECONDS = 120
 DEFAULT_BUILDER_MEMORY = "1g"
@@ -149,6 +150,7 @@ _BUILDER_ENV = {
     "java": ("KODO_BUILDER_IMAGE_JAVA", DEFAULT_BUILDER_IMAGE_JAVA),
     "csharp": ("KODO_BUILDER_IMAGE_CSHARP", DEFAULT_BUILDER_IMAGE_CSHARP),
     "nodejs": ("KODO_BUILDER_IMAGE_NODEJS", DEFAULT_BUILDER_IMAGE_NODEJS),
+    "python": ("KODO_BUILDER_IMAGE_PYTHON", DEFAULT_BUILDER_IMAGE_PYTHON),
 }
 
 

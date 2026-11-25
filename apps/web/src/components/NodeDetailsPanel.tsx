@@ -60,6 +60,7 @@ const FIELD_TYPES: Record<Stack, string[]> = {
   'spring-boot': ['String', 'Long', 'Integer', 'BigDecimal', 'UUID', 'LocalDateTime', 'LocalDate', 'Boolean', 'Double'],
   'csharp-dotnet': ['string', 'int', 'long', 'decimal', 'Guid', 'DateTime', 'bool', 'double'],
   nodejs: ['string', 'number', 'boolean', 'Date', 'Record<string, unknown>'],
+  python: ['str', 'int', 'float', 'Decimal', 'bool', 'date', 'datetime', 'UUID', 'Mapped[int]'],
   unknown: ['string', 'number', 'boolean'],
 };
 
@@ -67,6 +68,7 @@ const VISIBILITIES: Record<Stack, string[]> = {
   'spring-boot': ['private', 'public', 'protected', 'package'],
   'csharp-dotnet': ['public', 'private', 'protected', 'internal', 'private readonly'],
   nodejs: ['public', 'private', 'protected', 'readonly'],
+  python: ['private', 'public'],
   unknown: ['public', 'private'],
 };
 
@@ -74,6 +76,7 @@ const ANNOTATION_PRESETS: Record<Stack, string[]> = {
   'spring-boot': ['@NotNull', '@NotBlank', '@Valid', '@Column(nullable = false)', '@Column(unique = true)', '@ManyToOne'],
   'csharp-dotnet': ['[Required]', '[StringLength(100)]', '[Key]', '[JsonPropertyName("...")]'],
   nodejs: ['@IsNotEmpty()', '@IsString()', '@IsNumber()', '@Column()'],
+  python: ['Field(...)', 'mapped_column()', 'relationship()', '@dataclass'],
   unknown: [],
 };
 
@@ -916,7 +919,7 @@ function Empty({ text }: { text: string }) {
 }
 
 function defaultVisibility(stack: Stack): string {
-  if (stack === 'csharp-dotnet') {
+  if (stack === 'csharp-dotnet' || stack === 'python') {
     return 'public';
   }
   return 'private';

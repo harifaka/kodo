@@ -68,8 +68,8 @@ def resolve_stack(raw: str, root: Path) -> str:
             raise DeployError(
                 400,
                 "STACK_NOT_DETECTED",
-                "Could not detect a supported stack (Spring Boot, Node.js, C#/.NET) at the workspace "
-                "root. Choose the stack explicitly.",
+                "Could not detect a supported stack (Spring Boot, Node.js, C#/.NET, Python/FastAPI) at "
+                "the workspace root. Choose the stack explicitly.",
             )
         return detected
     return normalize_stack(value)

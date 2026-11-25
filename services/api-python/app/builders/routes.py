@@ -127,8 +127,9 @@ def _resolve_stack(root, request: BuildVerifyRequest) -> str:
             detail={
                 "code": "UNKNOWN_STACK",
                 "message": (
-                    "Kodo could not detect a build stack (pom.xml, *.csproj/*.sln or "
-                    "package.json/tsconfig.json). Pick a stack explicitly or add a project file."
+                    "Kodo could not detect a build stack (pom.xml, *.csproj/*.sln, "
+                    "package.json/tsconfig.json or pyproject.toml/requirements.txt). Pick a stack "
+                    "explicitly or add a project file."
                 ),
             },
         )

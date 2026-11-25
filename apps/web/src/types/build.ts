@@ -3,7 +3,7 @@
 import type { AiPatchResponse, LlmOverride } from './ai';
 import type { WorkspaceIR } from './core-ir';
 
-export type BuildStack = 'java' | 'csharp' | 'nodejs';
+export type BuildStack = 'java' | 'csharp' | 'nodejs' | 'python';
 export type BuildStatusKind = 'passed' | 'failed' | 'timeout' | 'unavailable';
 
 /** One in-memory proposal verified inside the sandbox; the workspace itself is never modified. */

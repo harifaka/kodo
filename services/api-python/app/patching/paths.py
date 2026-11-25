@@ -19,6 +19,7 @@ LANGUAGE_BY_SUFFIX = {
     ".mjs": "javascript",
     ".cjs": "javascript",
     ".cs": "csharp",
+    ".py": "python",
 }
 
 
@@ -57,7 +58,8 @@ def build_targets(root_path: str, operations: list[PatchOperation]) -> list[Patc
         if language is None:
             raise PatchRejected(
                 400,
-                f"Unsupported file type for patching: {display[target]} (expected .java, .ts/.tsx, .js/.jsx or .cs).",
+                f"Unsupported file type for patching: {display[target]} "
+                "(expected .java, .ts/.tsx, .js/.jsx, .cs or .py).",
             )
 
         try:

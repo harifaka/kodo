@@ -60,7 +60,7 @@
   "$defs": {
     "stack": {
       "type": "string",
-      "enum": ["spring-boot", "csharp-dotnet", "nodejs", "unknown"]
+      "enum": ["spring-boot", "csharp-dotnet", "nodejs", "python", "unknown"]
     },
     "layer": {
       "type": "string",
@@ -77,7 +77,8 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["class", "interface", "record", "enum", "module"]
+      "enum": ["class", "interface", "record", "enum", "module", "router"],
+      "description": "`router` is used for synthetic module-level FastAPI/Flask router components (Phase 12)."
     },
     "relationType": {
       "type": "string",

@@ -1,0 +1,23 @@
+"""Persistence access for {{ name }}."""
+
+from __future__ import annotations
+
+from sqlalchemy.orm import Session
+
+from {{ models_module }} import {{ name }}
+
+
+class {{ name }}Repository:
+    """Repository boundary: services never touch the session directly."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def list(self) -> list[{{ name }}]:
+        """Return every persisted {{ name }} entity."""
+        return list(self._session.query({{ name }}).all())
+
+    def add(self, entity: {{ name }}) -> {{ name }}:
+        """Stage a new {{ name }} entity and return it."""
+        self._session.add(entity)
+        return entity

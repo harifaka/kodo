@@ -27,6 +27,12 @@ _STACK_GUIDANCE = {
         "number, decimal, boolean, date, datetime, uuid. Allowed annotations: @IsNotEmpty(), "
         "@IsString(), @IsNumber(), @IsEmail(), @Min(0), @Max(100), @Length(1, 200)."
     ),
+    "python-fastapi": (
+        "Python 3.11+ FastAPI + Pydantic v2 + SQLAlchemy 2. Canonical field types: string, text, "
+        "email, int, long, decimal, boolean, date, datetime, uuid. Validation uses Pydantic "
+        "Field(...) constraints; annotations such as Field(min_length=1) are optional because the "
+        "generator adds them from the canonical type."
+    ),
 }
 
 _BLUEPRINT_CONTRACT = """Return exactly one JSON object:
@@ -34,7 +40,7 @@ _BLUEPRINT_CONTRACT = """Return exactly one JSON object:
   "blueprint": {
     "schemaVersion": "1.0",
     "projectName": "Human readable project name",
-    "stack": "spring-boot" | "csharp-wpf" | "nodejs",
+    "stack": "spring-boot" | "csharp-wpf" | "nodejs" | "python-fastapi",
     "basePackageOrNamespace": "com.acme.billing",
     "slices": [
       {

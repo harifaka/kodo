@@ -29,10 +29,12 @@ _ALLOWED_TARGETS: dict[Layer, frozenset[Layer]] = {
 
 _SUGGESTIONS: dict[tuple[Layer, Layer], str] = {
     (Layer.CONTROLLER, Layer.REPOSITORY): (
-        "Move the query behind a service and inject that service into the controller."
+        "Move the query behind a service and inject that service into the controller "
+        "(a FastAPI route should depend on the service via `Depends(...)`, never the repository)."
     ),
     (Layer.CONTROLLER, Layer.ENTITY): (
-        "Map the entity to a DTO in the service layer and expose the DTO instead of the entity."
+        "Map the entity to a DTO in the service layer and expose the DTO instead of the entity "
+        "(`response_model=` in FastAPI)."
     ),
     (Layer.VIEW, Layer.SERVICE): (
         "Bind the view to a view model that calls the service, so the UI stays presentation-only."

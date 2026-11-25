@@ -39,6 +39,13 @@ export const DEPLOY_STACK_OPTIONS: DeployStackOption[] = [
     defaultPort: 8080,
     healthPath: '/health',
   },
+  {
+    id: 'python',
+    label: 'Python (FastAPI)',
+    short: 'Python',
+    defaultPort: 8000,
+    healthPath: '/health',
+  },
 ];
 
 export const BACKING_SERVICE_OPTIONS: Array<{ id: BackingServiceId; label: string; hint: string }> = [
@@ -51,7 +58,7 @@ export function stackOption(id: DeployStackId): DeployStackOption {
   return DEPLOY_STACK_OPTIONS.find((entry) => entry.id === id) ?? DEPLOY_STACK_OPTIONS[0];
 }
 
-/** Map Core IR stacks (`spring-boot`, `nodejs`, `csharp-dotnet`) to the Deploy Studio default. */
+/** Map Core IR stacks (`spring-boot`, `nodejs`, `csharp-dotnet`, `python`) to the Deploy Studio default. */
 export function detectedDeployStack(detectedStacks: string[]): DeployStackId | 'auto' {
   const candidate = detectedStacks.find((stack) =>
     DEPLOY_STACK_OPTIONS.some((option) => option.id === stack),

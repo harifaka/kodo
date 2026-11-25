@@ -1,0 +1,47 @@
+"""Business logic for {{ name }}."""
+
+from __future__ import annotations
+
+from {{ models_module }} import {{ name }}
+from {{ repositories_module }} import {{ name }}Repository
+from {{ schemas_module }} import {{ name }}Request, {{ name }}Response
+{% for dependency in dependencies %}
+from {{ dependency.schemas_module }} import {{ dependency.name }}Response
+from {{ dependency.services_module }} import {{ dependency.name }}Service
+{% endfor %}
+
+
+class {{ name }}Service:
+    """Coordinates {{ name }} use cases behind the repository boundary."""
+
+    def __init__({{ init_params }}) -> None:
+{% for line in init_body %}
+        {{ line }}
+{% endfor %}
+
+    def list(self) -> list[{{ name }}Response]:
+        """Return every {{ name }} as a response DTO."""
+        return [self._to_response(entity) for entity in self._repository.list()]
+
+    def create(self, payload: {{ name }}Request) -> {{ name }}Response:
+        """Persist a validated payload and return the response DTO."""
+        entity = {{ name }}(
+{% for field in fields %}
+            {{ field.name }}=payload.{{ field.name }},
+{% endfor %}
+        )
+        return self._to_response(self._repository.add(entity))
+{% for dependency in dependencies %}
+
+    def find_{{ dependency.var }}(self, identifier: int) -> {{ dependency.name }}Response:
+        """Delegate to the {{ dependency.name }} service instead of querying its repository."""
+        return self._{{ dependency.var }}_service.get(identifier)
+{% endfor %}
+
+    def _to_response(self, entity: {{ name }}) -> {{ name }}Response:
+        return {{ name }}Response(
+            id=entity.id,
+{% for field in fields %}
+            {{ field.name }}=entity.{{ field.name }},
+{% endfor %}
+        )

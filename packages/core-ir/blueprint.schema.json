@@ -20,14 +20,14 @@
     },
     "stack": {
       "type": "string",
-      "enum": ["spring-boot", "csharp-wpf", "nodejs"],
+      "enum": ["spring-boot", "csharp-wpf", "nodejs", "python-fastapi"],
       "description": "Target stack whose generator plugin renders the slices."
     },
     "basePackageOrNamespace": {
       "type": "string",
       "minLength": 1,
       "maxLength": 160,
-      "description": "Java base package (com.acme.billing), C# root namespace (Acme.Desktop) or the TypeScript source root (src)."
+      "description": "Java base package (com.acme.billing), C# root namespace (Acme.Desktop), the TypeScript source root (src) or the Python package root (app)."
     },
     "slices": {
       "type": "array",

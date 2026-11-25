@@ -1,8 +1,8 @@
-# Kodo — Developer Setup (Phases 1–11: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX)
+# Kodo — Developer Setup (Phases 1–12: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
-TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
-renders a layer graph, a Mermaid UML diagram, an architecture health score with findings, and a
+TypeScript, JavaScript, C# **and Python** sources onto the Core IR, runs a deterministic audit over that
+IR, and renders a layer graph, a Mermaid UML diagram, an architecture health score with findings, and a
 read-only Monaco source inspector.
 
 Phase 3a adds **macro draft editing**: connect and cut relations on the Macro Graph, with the audit
@@ -16,8 +16,9 @@ behind strict path containment, a Git working-tree check, SHA-256 optimistic con
 writes and an in-memory rollback. Every write is explicitly confirmed by a human.
 
 Phase 4 adds the **Multi-Stack Builder**: Jinja2 stack generators turn a versioned
-`kodo.blueprint.json` into vertical slices for Spring Boot, C# WPF (MVVM) and Node.js, and expose them
-as a scaffold dry-run that reuses the Phase 3c guarded apply. New files are **create-only** — an
+`kodo.blueprint.json` into vertical slices for Spring Boot, C# WPF (MVVM), Node.js and
+Python (FastAPI + Pydantic + SQLAlchemy), and expose them as a scaffold dry-run that reuses the
+Phase 3c guarded apply. New files are **create-only** — an
 existing path aborts the batch with `409 FILE_EXISTS` instead of being overwritten.
 
 Phase 5 adds the **DeepSeek Architecture Copilot**: an OpenAI-compatible client for DeepSeek Cloud or
@@ -270,7 +271,7 @@ Open <http://127.0.0.1:5173>.
      browser and are never written to disk.
    - **Micro field editor** — with a component selected, use **+ Quick add field**, inline edit (`✎`),
      and `×` in the right panel. Type suggestions and annotation presets follow the component's stack
-     (Spring Boot, C#/.NET or Node.js/TS). Node annotations can be added/removed the same way.
+     (Spring Boot, C#/.NET, Node.js/TS or Python). Node annotations can be added/removed the same way.
    - **Preview Diff (Dry-Run)** — in the **Draft edits** panel opens the **Diff Preview** tab. The left
      sidebar lists every file the draft would change with line counts, patcher warnings and an apply
      checkbox; the main pane shows the original vs proposed content in a Monaco `DiffEditor`
@@ -351,6 +352,10 @@ plus best-effort relation edits (`add_dependency` / `remove_dependency`).
   `jakarta.persistence.*`, `java.math.BigDecimal`, …).
 - **TypeScript / JavaScript** — `app/patching/ts_patcher.py`: Tree-sitter byte offsets for class
   properties, decorators and interface fields.
+- **Python** — `app/patching/python_patcher.py`: Tree-sitter byte offsets for class attributes,
+  type hints and decorators; inserts only known imports (`Field`, `mapped_column`, `relationship`,
+  `dataclass`, …) and keeps docstrings, methods and line endings verbatim. Module-level FastAPI/Flask
+  routers have no editable attributes and are reported as a warning.
 - **C#** — `app/patching/csharp_patcher.py` POSTs `{ filePath, content, operations }` to the Roslyn
   container's `POST /patch`. `RoslynPatcher` parses with `CSharpSyntaxTree.ParseText` and rewrites only
   the target members/attributes, preserving trivia (comments and hand-written methods stay verbatim).
@@ -509,9 +514,9 @@ created when they are empty — never `rootPath` itself. `kodo.blueprint.json` i
 it already exists it is an ordinary SHA-256-verified overwrite.
 
 Generator plugins live in `app/generators/` (`base.py` protocol + registry, `spring_boot.py`,
-`csharp_wpf.py`, `nodejs.py`, Jinja2 templates under `templates/<stack>/`). Each plugin is pure: text
-in, text out. The test suite writes the 3-service demo for every stack into a temp folder, re-scans it
-with the full pipeline and asserts **0 findings and 100/100**.
+`csharp_wpf.py`, `nodejs.py`, `python_fastapi.py`, Jinja2 templates under `templates/<stack>/`). Each
+plugin is pure: text in, text out. The test suite writes the 3-service demo for every stack into a temp
+folder, re-scans it with the full pipeline and asserts **0 findings and 100/100**.
 
 ### AI Copilot (Phase 5)
 
@@ -651,6 +656,35 @@ Generated files:
   `{ timestamp, action, rootPath, summary, filesCount, status }`. Never file contents, never tokens
   (credential-shaped fragments are redacted before the line is written).
 
+### Python stack (Phase 12)
+
+- **Detection.** A workspace is `python` when it contains `pyproject.toml`, `requirements.txt`,
+  `setup.py`/`setup.cfg` or any `.py` source. `.venv`, `venv`, `__pycache__`, `.pytest_cache`,
+  `.mypy_cache`, `.ruff_cache`, `build`, `dist`, `*.egg-info` and `site-packages` are skipped, and
+  `tests/`, `test_*.py`, `*_test.py` and `conftest.py` stay out of the architecture graph.
+- **Analyzer.** `app/analyzers/python_analyzer.py` (Tree-sitter) extracts classes, base classes,
+  decorators, typed class attributes (`name: str = Field(...)`, `id: Mapped[int] = mapped_column(...)`,
+  Django `models.CharField(...)`), `__init__`/`Depends(...)` dependencies and `async def` methods.
+  `python_imports.py` resolves `import`/`from … import` (package-root aware) into file hints;
+  `python_layers.py` classifies controller/service/repository/entity/other deterministically.
+- **Routers.** Module-level `APIRouter`, `FastAPI` and `Blueprint` route modules become synthetic
+  `router` components (layer `controller`, handlers as methods, `@router.get`-style annotations) and
+  `include_router`/`register_blueprint` composition edges.
+- **Audit.** Pydantic payloads are validated by `Field(...)`/`@field_validator`/`EmailStr`/`constr`
+  markers; router→repository leakage, circular imports and god classes reuse the deterministic rules.
+- **Patch + generate.** `POST /api/v1/dry-run` accepts `.py` operations (add/update/remove attribute or
+  decorator) and the Builder renders a `python-fastapi` slice:
+  `app/models/<x>.py`, `app/schemas/<x>.py`, `app/repositories/<x>_repository.py`,
+  `app/services/<x>_service.py`, `app/api/<x>_routes.py`, `tests/test_<x>_service.py`, plus
+  `pyproject.toml`, `app/db.py` and `app/main.py`.
+- **Verify + deploy.** `kodo-builder-python` runs `ruff check . --output-format concise && mypy
+  --ignore-missing-imports --no-error-summary .` (`&& pytest -q` with *Run unit tests*) under
+  `--network=none`; Deploy Studio emits a `python:3.12-slim` multi-stage image on port 8000 with a
+  `urllib` `/health` healthcheck.
+- **Self-scan check:** point Kodo at `services/api-python` and expect the routers (account, fs, git,
+  routes, auth, builders, decision, deploy, llm, audit-log), services, repositories and Pydantic DTOs,
+  with `depends_on`/`references` edges and no parse warnings.
+
 ---
 
 ## 5. Docker packaging, Compose profiles & CI
@@ -665,6 +699,7 @@ Generated files:
 | `kodo-builder-java` | `maven:3.9-eclipse-temurin-21-alpine` + seed `pom.xml` | user `builder` (uid 10001), pre-warmed `.m2`, `/workspace`, build-only |
 | `kodo-builder-csharp` | `mcr.microsoft.com/dotnet/sdk:8.0-alpine` + seed projects | user `builder` (uid 10001), pre-warmed NuGet cache, `/workspace`, build-only |
 | `kodo-builder-nodejs` | `node:22-alpine` + `/opt/kodo-node-cache` | user `builder` (uid 10001), pre-warmed npm cache, `/workspace`, build-only |
+| `kodo-builder-python` | `python:3.12-slim` + ruff/mypy/pytest & FastAPI/Pydantic/SQLAlchemy | user `builder` (uid 10001), `/workspace`, build-only |
 
 **Nginx proxy** ([apps/web/nginx.conf](/C:/source/kodo/apps/web/nginx.conf)): `try_files $uri $uri/ /index.html`
 for the SPA, `/api/` and `/health` proxied to `http://api-python:8088` with `proxy_read_timeout 120s`
@@ -682,8 +717,9 @@ time; `npm run dev` keeps `http://localhost:8088`.
 | `docker-compose.prod.yml` | Override that replaces builds with `ghcr.io/${KODO_IMAGE_OWNER}/kodo-*:${KODO_TAG}` (`!reset` needs Compose ≥ 2.24), unpublishes internal ports, `restart: unless-stopped` |
 | `docker-compose.override.yml.example` | Copy to `docker-compose.override.yml` (git-ignored) for extra mounts, the Docker socket for Phase 9 or a published `:8088` |
 
-Compose profile `builders` (optional) adds the three build-only images: `docker compose --profile builders build`
-builds `kodo-builder-java`, `kodo-builder-csharp` and `kodo-builder-nodejs` without starting anything.
+Compose profile `builders` (optional) adds the four build-only images: `docker compose --profile builders build`
+builds `kodo-builder-java`, `kodo-builder-csharp`, `kodo-builder-nodejs` and `kodo-builder-python`
+without starting anything.
 Compose profile `ai-local` (optional) adds a single `ollama/ollama:latest` service (`kodo-ollama` model
 volume, `kodo-net`, healthcheck) for the Phase 10 System 1 decision model.
 
@@ -734,6 +770,7 @@ docker compose down                                   # add -v to drop the kodo-
 | `KODO_BUILDER_IMAGE_JAVA` | FastAPI process | `kodo-builder-java:local` | Java builder image tag |
 | `KODO_BUILDER_IMAGE_CSHARP` | FastAPI process | `kodo-builder-csharp:local` | C# builder image tag |
 | `KODO_BUILDER_IMAGE_NODEJS` | FastAPI process | `kodo-builder-nodejs:local` | Node.js builder image tag |
+| `KODO_BUILDER_IMAGE_PYTHON` | FastAPI process | `kodo-builder-python:local` | Python builder image tag |
 | `KODO_BUILDER_NETWORK_MODE` | FastAPI process | `none` | Container network (`none`/`bridge`/`host`); anything else falls back to `none` |
 | `KODO_BUILDER_TIMEOUT_SECONDS` | FastAPI process | `120` | Hard build timeout; the container is killed and removed |
 | `KODO_BUILDER_MEMORY` | FastAPI process | `1g` | `--memory` limit (validated; bad values fall back to `1g`) |
@@ -760,8 +797,10 @@ docker compose down                                   # add -v to drop the kodo-
 # the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed),
 # the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs),
 # the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required),
-# the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed)
-# and the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched)
+# the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed),
+# the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched)
+# and the Phase 12 Python suite (Tree-sitter analyzer, patcher, FastAPI generator, deploy template,
+# builder config; no network, Docker daemon or host toolchain)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -929,17 +968,19 @@ then always `docker rm -f`s the container.
 ### Build the images
 
 ```powershell
-# Build all three (Maven/JDK 21, .NET 8 SDK, Node 22), each pre-warmed for offline use
+# Build all four (Maven/JDK 21, .NET 8 SDK, Node 22, Python 3.12), each pre-warmed for offline use
 docker compose --profile builders build
 
 # Or only one stack
-docker compose --profile builders build kodo-builder-nodejs
+docker compose --profile builders build kodo-builder-python
 
 docker images | Select-String kodo-builder
 ```
 
 The images run as uid 10001 and write only under `/workspace` and the pre-warmed caches
-(`/home/builder/.m2`, `/home/builder/.nuget`, `/opt/kodo-node-cache`).
+(`/home/builder/.m2`, `/home/builder/.nuget`, `/opt/kodo-node-cache`, Python's MYPY/RUFF cache dirs).
+The Python builder runs the fixed `ruff check . --output-format concise && mypy --ignore-missing-imports
+--no-error-summary .` command (`&& pytest -q` when *Run unit tests* is enabled).
 
 ### Hardened container contract
 
@@ -1175,8 +1216,8 @@ returns `emptyMountHint: true` and the modal shows copyable `.env` lines plus
 Immediate children (and the current folder) are inspected for marker **filenames only**:
 `pom.xml` / `build.gradle` / `build.gradle.kts` → `java`; `*.csproj` / `*.sln` → `csharp`;
 `package.json` → `nodejs`; `pyproject.toml` / `requirements.txt` / `setup.py` → `python`; plus `.git`
-→ `isGitRepo` and `hasSubdirectories` for monorepo drill-down. Python carries a `preview` label —
-Phase 11 does **not** add a Python analyzer.
+→ `isGitRepo` and `hasSubdirectories` for monorepo drill-down. Badges remain marker-only; the Phase 12
+analyzer does the real Python AST work.
 
 ### Graph & UML ergonomics
 
@@ -1230,18 +1271,21 @@ services/builders/                Phase 9 ephemeral builder images (uid 10001, p
   java/                           Maven 3.9/JDK 21 + seed pom.xml/junit sources warming .m2
   csharp/                         .NET 8 SDK + WPF/xunit seed projects warming the NuGet cache
   nodejs/                         node:22-alpine + /opt/kodo-node-cache and the entrypoint cache link
+  python/                         python:3.12-slim + ruff/mypy/pytest and the FastAPI dependency set
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088, multi-stage Dockerfile)
   Dockerfile                      python:3.12-slim build → non-root kodo runtime with git/curl + /data/kodo
-  app/analyzers/                  java.py, typescript.py, scanner.py, common.py
+  app/analyzers/                  java.py, typescript.py, python_analyzer.py, python_imports.py,
+                                  python_layers.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
   app/generators/                 base.py (protocol + registry), spring_boot.py, csharp_wpf.py,
-                                  nodejs.py, templates/<stack>/*.j2
+                                  nodejs.py, python_fastapi.py, templates/<stack>/*.j2
   app/models/                     ir.py (Core IR), blueprint.py (versioned kodo.blueprint.json)
   app/llm/                        config.py (env + per-request overrides), client.py (OpenAI-compatible
                                   httpx client), context_packer.py (budgeted IR projection),
                                   prompts.py (system prompts), sources.py (bounded file reads),
                                   workflows.py (spec→blueprint, audit-fix, implement-method), routes.py
-  app/patching/                   java_patcher.py, ts_patcher.py, csharp_patcher.py, paths.py, models.py
+  app/patching/                   java_patcher.py, ts_patcher.py, python_patcher.py,
+                                  csharp_patcher.py, paths.py, models.py
   app/deploy/                     generator.py (orchestration + detection), spec.py (constants),
                                   dockerfiles.py (multi-stage templates), compose.py (compose/.dockerignore/
                                   .env.example), models.py (control-panel responses),
@@ -1269,7 +1313,8 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   + GitHub API, real local git), ephemeral builders (mocked Docker CLI
                                   and LLM, in-memory tar staging), the System 1 decision layer
                                   (mocked /v1/systemone, ADR isolation, training export) and the
-                                  Phase 11 folder browser (temp roots, mocked Docker mount)
+                                  Phase 11 folder browser (temp roots, mocked Docker mount) and the
+                                  Phase 12 Python stack (analyzer, patcher, generator, deploy, builder)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
   nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088

@@ -59,6 +59,7 @@ services:
       KODO_BUILDER_IMAGE_JAVA: ${KODO_BUILDER_IMAGE_JAVA:-kodo-builder-java:local}
       KODO_BUILDER_IMAGE_CSHARP: ${KODO_BUILDER_IMAGE_CSHARP:-kodo-builder-csharp:local}
       KODO_BUILDER_IMAGE_NODEJS: ${KODO_BUILDER_IMAGE_NODEJS:-kodo-builder-nodejs:local}
+      KODO_BUILDER_IMAGE_PYTHON: ${KODO_BUILDER_IMAGE_PYTHON:-kodo-builder-python:local}
       KODO_BUILDER_NETWORK_MODE: ${KODO_BUILDER_NETWORK_MODE:-none}
       KODO_BUILDER_TIMEOUT_SECONDS: ${KODO_BUILDER_TIMEOUT_SECONDS:-120}
       KODO_BUILDER_MEMORY: ${KODO_BUILDER_MEMORY:-1g}
@@ -131,6 +132,15 @@ services:
       context: ./services/builders/nodejs
       dockerfile: Dockerfile
     image: ${KODO_BUILDER_IMAGE_NODEJS:-kodo-builder-nodejs:local}
+    command: ["true"]
+    restart: "no"
+
+  kodo-builder-python:
+    profiles: ["builders"]
+    build:
+      context: ./services/builders/python
+      dockerfile: Dockerfile
+    image: ${KODO_BUILDER_IMAGE_PYTHON:-kodo-builder-python:local}
     command: ["true"]
     restart: "no"
 

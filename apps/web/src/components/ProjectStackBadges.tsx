@@ -27,11 +27,6 @@ export function ProjectStackBadges({ stacks, isGitRepo = false, className = '' }
           >
             <span className="h-1 w-1 rounded-full" style={{ backgroundColor: meta.color }} />
             {meta.short}
-            {stack === 'python' && (
-              <span className="rounded bg-ink-950/70 px-1 text-[8.5px] uppercase tracking-wide text-slate-400">
-                preview
-              </span>
-            )}
           </span>
         );
       })}

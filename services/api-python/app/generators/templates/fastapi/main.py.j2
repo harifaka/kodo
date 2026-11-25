@@ -1,0 +1,20 @@
+"""FastAPI entry point for {{ project_name }}."""
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+{% for slice in slices %}
+from {{ slice.api_module }} import router as {{ slice.var }}_router
+{% endfor %}
+
+app = FastAPI(title="{{ project_name }}")
+{% for slice in slices %}
+
+app.include_router({{ slice.var }}_router)
+{% endfor %}
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Liveness probe used by the generated container healthcheck."""
+    return {"status": "ok"}

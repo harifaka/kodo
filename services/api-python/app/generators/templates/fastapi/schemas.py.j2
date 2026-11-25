@@ -1,0 +1,25 @@
+"""Pydantic request/response models for {{ name }}."""
+
+from __future__ import annotations
+{% if imports %}
+
+{{ imports | join("\n") }}
+{% endif %}
+from pydantic import BaseModel, Field
+
+
+class {{ name }}Request(BaseModel):
+    """Validated request payload for {{ name }}."""
+
+{% for field in fields %}
+    {{ field.name }}: {{ field.request_type }} = {{ field.field_expression }}
+{% endfor %}
+
+
+class {{ name }}Response(BaseModel):
+    """Response payload for {{ name }}."""
+
+    id: int
+{% for field in fields %}
+    {{ field.name }}: {{ field.response_type }}
+{% endfor %}

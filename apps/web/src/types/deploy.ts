@@ -1,6 +1,6 @@
 /** Phase 6 Deploy Studio contracts (client <-> /api/v1/deploy, /api/v1/git, /api/v1/audit-log). */
 
-export type DeployStackId = 'spring-boot' | 'nodejs' | 'csharp-dotnet' | 'csharp-wpf';
+export type DeployStackId = 'spring-boot' | 'nodejs' | 'csharp-dotnet' | 'csharp-wpf' | 'python';
 export type BackingServiceId = 'postgres' | 'redis' | 'rabbitmq';
 
 /** POST /api/v1/deploy/dry-run — returns the standard DryRunResponse. */

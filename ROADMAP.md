@@ -15,19 +15,21 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 11** is shipped as **v0.6.0 (Local UX & Large-Repo Ergonomics)** — a local-only,
   zero-copy folder browser for both Docker and native runtimes, plus Macro Graph / UML search,
   filters, Issues Only and 1-hop focus for 100+ component repositories.
+- **Phase 12** is shipped as **v0.7.0 (Full Python Stack Support)** — Tree-sitter Python Core IR,
+  Python-aware audit, byte-offset patching, a FastAPI/Pydantic/SQLAlchemy generator, a Python deploy
+  template and the offline `kodo-builder-python` image.
 
-> **Next evolution (v0.7+) is planned, not delivered.** Phases 12–13 — Full Python Stack Support and
-> Production SaaS Hardening — are recorded in the
-> [Next Evolution](#next-evolution-v07--python-stack--saas-hardening) section below. They are
-> **not** part of the v0.6.0 contract and are not active implementation scope until a future session
-> starts them.
+> **Next evolution (v0.8+) is planned, not delivered.** Phase 13 — Production SaaS Hardening
+> (Alembic migrations, per-user quotas/TTL cleanup, API rate limiting) — is recorded at the end of this
+> file. It is **not** part of the v0.7.0 contract and is not active implementation scope until a future
+> session starts it.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8, 9, 10 and 11 are delivered (v0.3.0, v0.4.0, v0.5.0 and v0.6.0); **all
-> eleven delivered phases of the roadmap are complete**. Phases 1–11 stay below as delivered history,
-> and the planned v0.7+ tracks (Phases 12–13) are recorded at the end under *Next Evolution*.
+> by local and SaaS. Phases 8–12 are delivered (v0.3.0–v0.7.0); **all twelve delivered phases of the
+> roadmap are complete**. Phases 1–12 stay below as delivered history, and the planned Phase 13 track
+> is recorded at the end.
 
 ---
 
@@ -469,8 +471,8 @@ large repositories.
         `Local Filesystem`), root pills, Up button + clickable breadcrumbs, instant client-side folder
         filter, `Show hidden` toggle, current-folder banner with **Select & Scan Current Folder**, and a
         per-row hover **Scan** button. Marker badges come from `pom.xml` / `*.csproj|*.sln` /
-        `package.json` / `pyproject.toml|requirements.txt|setup.py` + `.git` (Python is labelled
-        `preview` — marker detection only, no Python AST in this phase).
+        `package.json` / `pyproject.toml|requirements.txt|setup.py` + `.git` (badges are marker-only;
+        the Phase 12 analyzer supersedes the early Python `preview` label).
   - [x] `TopBar` renders **Browse…** next to the path input in `local` mode only (never in `saas`), and
         a selection fills the input and immediately runs `Scan Project`.
 - [x] Improve large-codebase ergonomics in Macro Graph & UML: quick node search (`Ctrl+K`), layer/stack
@@ -508,30 +510,69 @@ large repositories.
 
 ---
 
-## Next Evolution (v0.7+ — Python Stack & SaaS Hardening)
+## Next Evolution — Python Stack (v0.7.0 delivered) & SaaS Hardening (planned)
 
-**Status: planned — not delivered.** Phases 1–11 above remain the active delivered contract
-(v0.1.0–v0.6.0). The two phases below are recorded for future sessions; implementation starts only
-when a session explicitly takes them on.
+**Status: Phase 12 delivered (v0.7.0); Phase 13 is planned — not delivered.** Phases 1–12 above
+remain the active delivered contract (v0.1.0–v0.7.0). Phase 13 starts only when a session explicitly
+takes it on.
 
-### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) ⬜
+### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) ✅ (v0.7.0)
 **Goal:** Elevate Python web applications from "visible in the graph" to a first-class stack across the
 whole Blueprint -> Audit -> Edit -> Verify -> Deploy loop.
 
-- [ ] Extend Core IR extraction in `services/api-python` with **Tree-sitter Python**
+- [x] Extend Core IR extraction in `services/api-python` with **Tree-sitter Python**
       (`tree-sitter-python`) to detect routers/views, services, repositories, Pydantic/SQLAlchemy/Django
       models, type-annotated fields, decorators, and cross-module relations.
-- [ ] Extend the Phase 2 deterministic Audit Engine rules for Python architectural conventions (e.g.,
+  - `app/analyzers/python_analyzer.py` (pure AST walk) + `python_imports.py` (package-root-aware
+    `import`/`from … import` resolution) + `python_layers.py` (layer/kind classification).
+  - `app/analyzers/scanner.py` detects `pyproject.toml` / `requirements.txt` / `setup.py` / `*.py`,
+    skips `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `build`,
+    `dist`, `*.egg-info`, `site-packages`, and keeps `tests/`, `test_*.py`, `*_test.py` and
+    `conftest.py` out of the graph.
+  - Module-level `APIRouter` / `FastAPI` / `Blueprint` modules become synthetic `router` components
+    (layer `controller`, handlers as methods, `include_router`/`register_blueprint` composition edges).
+  - Core IR gains the `python` stack and the `router` node kind (schema + Pydantic + TypeScript + C#).
+- [x] Extend the Phase 2 deterministic Audit Engine rules for Python architectural conventions (e.g.,
       router-to-DB leakage, missing Pydantic validation, god classes, circular imports).
-- [ ] Add Tree-sitter byte-offset **AST Patching** for Python fields, type hints, and decorators
+  - `MISSING_VALIDATION` recognises `Field(...)` / `@field_validator` / `EmailStr` / `constr` markers
+    and Python DTO suffixes; `LAYER_VIOLATION` suggestions now name FastAPI `Depends(...)`; entity
+    exposure points at `response_model`/Django serializers. Circular imports and god classes reuse the
+    generic rules over the Python graph (no new rule ids, no schema churn).
+- [x] Add Tree-sitter byte-offset **AST Patching** for Python fields, type hints, and decorators
       (preserving hand-written methods and docstrings).
-- [ ] Add a **Python (FastAPI + Pydantic + SQLAlchemy)** vertical-slice plugin to the Phase 4
+  - `app/patching/python_patcher.py` wired into `POST /api/v1/dry-run` and the Phase 3c guarded
+    apply/rollback; `.py` joins the patch language map. Imports are only added for known symbols
+    (`Field`, `mapped_column`, `relationship`, `dataclass`, `Decimal`, …). Module-level routers are
+    reported as unsupported instead of being rewritten.
+- [x] Add a **Python (FastAPI + Pydantic + SQLAlchemy)** vertical-slice plugin to the Phase 4
       Multi-Stack Builder, a non-root multi-stage Python template to Phase 6 Deploy Studio, and a
       pre-warmed offline `kodo-builder-python` (`ruff` + `mypy` + `pytest`) image to Phase 9 Ephemeral
       Builders.
+  - `python-fastapi` blueprint stack: `app/generators/python_fastapi.py` + Jinja2 templates render
+    SQLAlchemy 2 model, Pydantic v2 request/response, repository, service, `APIRouter` + pytest
+    skeleton and `pyproject.toml` / `app/db.py` / `app/main.py`; generated projects self-audit 100/100.
+  - Deploy Studio: `python:3.12-slim` multi-stage Dockerfile (uid 10001 `kodo`, `uvicorn
+    app.main:app`, `urllib` `/health` healthcheck), compose environment/`DATABASE_URL`, Python
+    `.dockerignore` and stack detection.
+  - Phase 9 builder: `kodo-builder-python` image (ruff/mypy/pytest + FastAPI/Pydantic/SQLAlchemy
+    preinstalled), `python` in the allow-listed stacks, structured ruff/mypy diagnostics and fixed
+    `--network=none` commands.
 - **Definition of Done:** Kodo can scan, audit, safely edit, scaffold, compile/test-verify
   (`--network=none`), and containerize Python web apps — verified by self-scanning Kodo's own
   `services/api-python` codebase.
+  - Self-scan of `services/api-python`: **204 components / 252 relations**, 0 errors, 10 router
+    components (account, fs, git, routes, auth, builders, decision, deploy, llm, audit-log) and no
+    parse warnings.
+  - `tests/test_python_stack.py` (19 hermetic cases) covers analyzer/layers/relations, Django/Flask,
+    scanner noise, schema-valid scan output, patcher add/update/remove/decorator behaviour, dry-run
+    SHA accuracy, guarded apply + byte-exact rollback, the FastAPI generator and its 100/100
+    self-audit, the Python deploy artifacts and the builder configuration/diagnostics.
+  - `pytest` **271 passed / 5 skipped** (only the environment-dependent Roslyn-container skips),
+    `ruff check app tests`, `npm run build`, `dotnet build services/analyzer-csharp`,
+    `docker compose config`, `docker compose --profile builders config` and
+    `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` are green.
+  - Security posture unchanged: Python scanning is read-only, patching is proposal-only, and every
+    Python write still flows through the Monaco diff + SHA-256 guarded apply + rollback.
 
 ---
 

@@ -1,0 +1,32 @@
+"""HTTP boundary for {{ name }} (FastAPI)."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, status
+
+from {{ schemas_module }} import {{ name }}Request, {{ name }}Response
+from {{ services_module }} import {{ name }}Service
+
+router = APIRouter(prefix="/api/{{ route }}", tags=["{{ name }}"])
+
+
+def get_{{ var }}_service() -> {{ name }}Service:
+    """Dependency-provider hook wired in the application entry point."""
+    raise NotImplementedError("Override get_{{ var }}_service in the application entry point.")
+
+
+@router.get("", response_model=list[{{ name }}Response])
+def list_{{ plural }}(
+    service: {{ name }}Service = Depends(get_{{ var }}_service),
+) -> list[{{ name }}Response]:
+    """List every {{ name }} record."""
+    return service.list()
+
+
+@router.post("", response_model={{ name }}Response, status_code=status.HTTP_201_CREATED)
+def create_{{ var }}(
+    payload: {{ name }}Request,
+    service: {{ name }}Service = Depends(get_{{ var }}_service),
+) -> {{ name }}Response:
+    """Create one {{ name }} record from a validated payload."""
+    return service.create(payload)

@@ -5,7 +5,7 @@ Importing this package registers every bundled plugin. Callers only depend on
 """
 
 # Importing the modules performs the registration as a side effect.
-from app.generators import csharp_wpf, nodejs, spring_boot
+from app.generators import csharp_wpf, nodejs, python_fastapi, spring_boot
 from app.generators.base import (
     GeneratedFile,
     GeneratorConfig,
@@ -28,6 +28,7 @@ __all__ = [
     "get_plugin",
     "language_for_path",
     "nodejs",
+    "python_fastapi",
     "register",
     "registry",
     "spring_boot",

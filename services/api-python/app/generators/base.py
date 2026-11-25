@@ -26,6 +26,7 @@ LANGUAGE_BY_SUFFIX = {
     ".js": "javascript",
     ".jsx": "javascript",
     ".cs": "csharp",
+    ".py": "python",
     ".xaml": "xml",
     ".csproj": "xml",
     ".xml": "xml",

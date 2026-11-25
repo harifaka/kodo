@@ -23,6 +23,7 @@ class Stack(StrEnum):
     SPRING_BOOT = "spring-boot"
     CSHARP_DOTNET = "csharp-dotnet"
     NODEJS = "nodejs"
+    PYTHON = "python"
     UNKNOWN = "unknown"
 
 
@@ -43,6 +44,7 @@ class NodeKind(StrEnum):
     RECORD = "record"
     ENUM = "enum"
     MODULE = "module"
+    ROUTER = "router"
 
 
 class RelationType(StrEnum):

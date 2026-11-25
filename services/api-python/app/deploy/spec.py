@@ -6,8 +6,9 @@ SPRING_BOOT = "spring-boot"
 NODEJS = "nodejs"
 CSHARP_DOTNET = "csharp-dotnet"
 CSHARP_WPF = "csharp-wpf"
+PYTHON = "python"
 
-STACKS: tuple[str, ...] = (SPRING_BOOT, NODEJS, CSHARP_DOTNET, CSHARP_WPF)
+STACKS: tuple[str, ...] = (SPRING_BOOT, NODEJS, CSHARP_DOTNET, CSHARP_WPF, PYTHON)
 BACKING_SERVICES: tuple[str, ...] = ("postgres", "redis", "rabbitmq")
 
 DOCKERFILE = "Dockerfile"
@@ -21,10 +22,16 @@ STACK_LABELS = {
     NODEJS: "Node.js (TypeScript)",
     CSHARP_DOTNET: "C# / .NET 8",
     CSHARP_WPF: "C# WPF (.NET 8, desktop)",
+    PYTHON: "Python (FastAPI)",
 }
 
-DEFAULT_PORTS = {SPRING_BOOT: 8080, NODEJS: 3000, CSHARP_DOTNET: 8080, CSHARP_WPF: 8080}
-HEALTH_PATHS = {SPRING_BOOT: "/actuator/health", NODEJS: "/health", CSHARP_DOTNET: "/health"}
+DEFAULT_PORTS = {SPRING_BOOT: 8080, NODEJS: 3000, CSHARP_DOTNET: 8080, CSHARP_WPF: 8080, PYTHON: 8000}
+HEALTH_PATHS = {
+    SPRING_BOOT: "/actuator/health",
+    NODEJS: "/health",
+    CSHARP_DOTNET: "/health",
+    PYTHON: "/health",
+}
 
 # Placeholders only. Real credentials belong in a local, git-ignored .env file.
 PASSWORD_PLACEHOLDER = "change-me-local-only"
@@ -43,6 +50,7 @@ __all__ = [
     "NODEJS",
     "PASSWORD_FALLBACK",
     "PASSWORD_PLACEHOLDER",
+    "PYTHON",
     "SIDECAR_DOCKERFILE",
     "SPRING_BOOT",
     "STACKS",

@@ -3,7 +3,7 @@
  * Mirrors packages/core-ir/schema.json and the Pydantic/C# implementations. Do not diverge.
  */
 
-export type Stack = 'spring-boot' | 'csharp-dotnet' | 'nodejs' | 'unknown';
+export type Stack = 'spring-boot' | 'csharp-dotnet' | 'nodejs' | 'python' | 'unknown';
 
 export type Layer =
   | 'controller'
@@ -15,7 +15,7 @@ export type Layer =
   | 'component'
   | 'other';
 
-export type NodeKind = 'class' | 'interface' | 'record' | 'enum' | 'module';
+export type NodeKind = 'class' | 'interface' | 'record' | 'enum' | 'module' | 'router';
 
 export type RelationType = 'depends_on' | 'inherits' | 'implements' | 'references';
 

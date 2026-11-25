@@ -16,10 +16,25 @@ SKIPPED_DIRECTORIES = frozenset(
         "node_modules", ".git", "bin", "obj", "target", "dist", ".venv", "venv",
         "__pycache__", ".next", ".nuxt", ".turbo", ".cache", "coverage", ".idea",
         ".vs", ".gradle", "build", "out", ".pytest_cache", ".mypy_cache",
+        # Phase 12: Python packaging/tooling noise is never first-party architecture.
+        ".ruff_cache", ".tox", ".nox", ".eggs", "site-packages", "htmlcov", ".pytype",
     }
 )
 
-MARKER_FILES = frozenset({"package.json"})
+# Directory suffixes that hold installed packages (`foo.egg-info`) and never source code.
+SKIPPED_DIRECTORY_SUFFIXES = (".egg-info",)
+
+MARKER_FILES = frozenset(
+    {
+        "package.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "setup.py",
+        "setup.cfg",
+        "Pipfile",
+    }
+)
 
 # Mirrors RoslynAnalyzer.GeneratedFileSuffixes: generated sources never hold first-party architecture.
 GENERATED_CSHARP_SUFFIXES = (
@@ -34,18 +49,22 @@ GENERATED_CSHARP_SUFFIXES = (
 MAX_SCANNED_FILES = 6000
 MAX_FILE_BYTES = 2_000_000
 
+# Mirrors the folder-browser noise list: tests describe behaviour, not architecture.
+_PYTHON_TEST_DIRECTORIES = frozenset({"tests", "test", "__tests__"})
+
 
 @dataclass
 class ScanFiles:
     java: list[str] = field(default_factory=list)
     scripts: list[str] = field(default_factory=list)
     csharp: list[str] = field(default_factory=list)
+    python: list[str] = field(default_factory=list)
     markers: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.java) + len(self.scripts) + len(self.csharp)
+        return len(self.java) + len(self.scripts) + len(self.csharp) + len(self.python)
 
 
 def collect_files(root: Path) -> ScanFiles:
@@ -53,7 +72,12 @@ def collect_files(root: Path) -> ScanFiles:
     scanned = 0
 
     for current_dir, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(d for d in dirnames if d.lower() not in SKIPPED_DIRECTORIES)
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d.lower() not in SKIPPED_DIRECTORIES
+            and not d.lower().endswith(SKIPPED_DIRECTORY_SUFFIXES)
+        )
         current_path = Path(current_dir)
 
         for filename in sorted(filenames):
@@ -74,6 +98,10 @@ def collect_files(root: Path) -> ScanFiles:
                 bucket = scan.scripts
             elif lower.endswith(".cs"):
                 bucket = scan.csharp
+            elif lower.endswith(".py"):
+                if _is_python_test_file(rel_path):
+                    continue
+                bucket = scan.python
             else:
                 continue
 
@@ -90,6 +118,14 @@ def collect_files(root: Path) -> ScanFiles:
             bucket.append(rel_path)
 
     return scan
+
+
+def _is_python_test_file(rel_path: str) -> bool:
+    parts = rel_path.split("/")
+    if any(part.lower() in _PYTHON_TEST_DIRECTORIES for part in parts[:-1]):
+        return True
+    name = parts[-1].lower()
+    return name == "conftest.py" or name.startswith("test_") or name.endswith("_test.py")
 
 
 def _is_reasonable_size(path: Path, rel_path: str, scan: ScanFiles) -> bool:
@@ -112,4 +148,13 @@ def detect_stacks(scan: ScanFiles) -> list[Stack]:
         stacks.append(Stack.CSHARP_DOTNET)
     if scan.scripts or "package.json" in scan.markers:
         stacks.append(Stack.NODEJS)
+    if scan.python or scan.markers & {
+        "pyproject.toml",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "setup.py",
+        "setup.cfg",
+        "Pipfile",
+    }:
+        stacks.append(Stack.PYTHON)
     return stacks or [Stack.UNKNOWN]

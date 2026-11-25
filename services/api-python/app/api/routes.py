@@ -32,6 +32,7 @@ from app.patching.models import (
     summarize,
 )
 from app.patching.paths import PatchRejected, build_targets
+from app.patching.python_patcher import patch_python
 from app.patching.ts_patcher import patch_script
 from app.services.apply_service import (
     ApplyRejected,
@@ -245,6 +246,8 @@ async def dry_run(
             outcome = patch_java(target.content, target.operations)
         elif target.language in {"typescript", "javascript"}:
             outcome = patch_script(target.content, target.operations, target.file_path)
+        elif target.language == "python":
+            outcome = patch_python(target.content, target.operations)
         else:
             outcome = await patch_csharp(target.file_path, target.content, target.operations)
 

@@ -35,6 +35,7 @@ STACKS = {
     "spring-boot": "com.acme.shop",
     "csharp-wpf": "Acme.Desktop",
     "nodejs": "src",
+    "python-fastapi": "app",
 }
 
 DEMO_SLICES = [
@@ -144,9 +145,10 @@ def _scan(root: Path):
 # --------------------------------------------------------------------------------------
 
 
-def test_registry_exposes_all_three_stack_plugins() -> None:
-    assert set(registry()) == {"spring-boot", "csharp-wpf", "nodejs"}
+def test_registry_exposes_all_four_stack_plugins() -> None:
+    assert set(registry()) == {"spring-boot", "csharp-wpf", "nodejs", "python-fastapi"}
     assert get_plugin("spring-boot").display_name == "Spring Boot"
+    assert get_plugin("python-fastapi").display_name == "FastAPI"
     for stack in STACKS:
         blueprint = Blueprint.model_validate(_blueprint(stack))
         files = generate_files(blueprint, include_project_skeleton=True)
@@ -302,7 +304,7 @@ def test_nodejs_slice_and_project_skeleton(client: TestClient, tmp_path: Path) -
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("stack", ["spring-boot", "nodejs"])
+@pytest.mark.parametrize("stack", ["spring-boot", "nodejs", "python-fastapi"])
 def test_generated_projects_score_100(client: TestClient, tmp_path: Path, stack: str) -> None:
     root = tmp_path / stack
     root.mkdir()
@@ -372,7 +374,7 @@ def test_create_only_apply_rejects_existing_files_as_a_whole_batch(
     assert (root / "pom.xml").read_text(encoding="utf-8") == "<project/>"
 
 
-@pytest.mark.parametrize("stack", ["spring-boot", "nodejs"])
+@pytest.mark.parametrize("stack", ["spring-boot", "nodejs", "python-fastapi"])
 def test_repeated_scaffold_reports_conflicts(client: TestClient, tmp_path: Path, stack: str) -> None:
     root = tmp_path / f"{stack}-twice"
     root.mkdir()
@@ -537,7 +539,7 @@ def test_invalid_blueprint_file_degrades_to_warning(client: TestClient, tmp_path
     assert body["warnings"]
 
 
-@pytest.mark.parametrize("stack", ["spring-boot", "csharp-wpf", "nodejs"])
+@pytest.mark.parametrize("stack", ["spring-boot", "csharp-wpf", "nodejs", "python-fastapi"])
 def test_rendered_blueprint_matches_the_canonical_schema(stack: str) -> None:
     schema = json.loads(BLUEPRINT_SCHEMA_PATH.read_text(encoding="utf-8"))
     document = json.loads(Blueprint.model_validate(_blueprint(stack)).render())

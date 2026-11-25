@@ -24,6 +24,7 @@ from app.deploy.spec import (
     DOCKERIGNORE,
     ENV_EXAMPLE,
     NODEJS,
+    PYTHON,
     SIDECAR_DOCKERFILE,
     SPRING_BOOT,
     STACK_LABELS,
@@ -44,6 +45,11 @@ _ALIASES = {
     "aspnet": CSHARP_DOTNET,
     CSHARP_WPF: CSHARP_WPF,
     "wpf": CSHARP_WPF,
+    PYTHON: PYTHON,
+    "fastapi": PYTHON,
+    "flask": PYTHON,
+    "django": PYTHON,
+    "python-fastapi": PYTHON,
 }
 
 
@@ -80,6 +86,8 @@ def detect_stack(root: Path) -> str | None:
 
     if {"pom.xml", "build.gradle", "build.gradle.kts"} & names:
         return SPRING_BOOT
+    if {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"} & names:
+        return PYTHON
     if "package.json" in names:
         return NODEJS
     if any(name.endswith((".csproj", ".sln", ".fsproj")) for name in names) or has_wpf_marker:
@@ -179,6 +187,13 @@ def _validate_port(port: int) -> int:
 
 
 def _root_warnings(stack: str, root: Path) -> list[str]:
+    if stack == PYTHON:
+        if not (root / "pyproject.toml").is_file() and not (root / "requirements.txt").is_file():
+            return [
+                "The Python build stage expects pyproject.toml or requirements.txt at the repository root."
+            ]
+        return []
+
     probes = {
         SPRING_BOOT: ("pom.xml", "The Maven build stage expects pom.xml at the repository root."),
         NODEJS: ("package.json", "The Node build stage expects package.json at the repository root."),
