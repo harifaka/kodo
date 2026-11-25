@@ -194,6 +194,14 @@ def _remember_scan(user_id: str, workspace: WorkspaceIR) -> None:
         pass
 
 
+def _touch_workspace(user_id: str, root: Path) -> None:
+    """Record read/apply/export activity so the SaaS TTL cleanup keeps active workspaces."""
+    try:
+        repository.touch_workspace(user_id, str(root))
+    except Exception:
+        pass
+
+
 @router.post("/api/v1/audit", response_model=AuditReport, tags=["analysis"])
 async def audit_preview(request: AuditRequest) -> AuditReport:
     """Re-score an edited (draft) IR so the UI can preview the impact of macro edits."""
@@ -341,6 +349,8 @@ def apply_to_disk(
     except ApplyRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
 
+    _touch_workspace(user.id, root)
+
     for patch in request.patches:
         if patch.file_path.replace("\\", "/").endswith(BLUEPRINT_FILE_NAME):
             blueprint = _parse_blueprint(patch.proposed_content)
@@ -376,6 +386,7 @@ async def read_file(
 ) -> FileContent:
     root_path = enforce_workspace_access(root, user)
     target = _resolve_inside_root(str(root_path), rel_path)
+    _touch_workspace(user.id, root_path)
 
     try:
         size = target.stat().st_size

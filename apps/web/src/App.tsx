@@ -51,7 +51,7 @@ import {
   type Draft,
 } from './lib/draft';
 import { buildGraph } from './lib/layout';
-import type { AuthMeResponse, WorkspaceSummary } from './types/account';
+import type { AuthMeResponse, WorkspaceStorage, WorkspaceSummary } from './types/account';
 import type { PlanPreview } from './types/ai';
 import type {
   AuditFinding,
@@ -98,6 +98,7 @@ export default function App() {
   const [aiFixingId, setAiFixingId] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [workspaceStorage, setWorkspaceStorage] = useState<WorkspaceStorage | null>(null);
   const health = useHealth();
   const aiSettings = useAiSettings();
   const systemOneSettings = useSystemOneSettings();
@@ -137,10 +138,16 @@ export default function App() {
 
   const refreshWorkspaces = useCallback(async () => {
     try {
-      const result = await api.fetchWorkspaces();
-      setWorkspaces(result.workspaces);
+      const [list, storage] = await Promise.all([
+        api.fetchWorkspaces(),
+        // Storage accounting is SaaS-only; a failure must never hide the workspace list.
+        api.getWorkspaceStorage().catch(() => null),
+      ]);
+      setWorkspaces(list.workspaces);
+      setWorkspaceStorage(storage);
     } catch {
       setWorkspaces([]);
+      setWorkspaceStorage(null);
     }
   }, []);
 
@@ -151,6 +158,7 @@ export default function App() {
   useEffect(() => {
     if (!auth?.authenticated) {
       setWorkspaces([]);
+      setWorkspaceStorage(null);
       return;
     }
     void refreshWorkspaces();
@@ -646,6 +654,7 @@ export default function App() {
         githubOAuthConfigured={auth?.githubOAuthConfigured ?? false}
         onSignOut={() => void handleSignOut()}
         workspaces={workspaces}
+        workspaceStorage={workspaceStorage}
         onSelectWorkspace={handleSelectWorkspace}
         onDeleteWorkspace={(workspace) => void handleDeleteWorkspace(workspace)}
         onWorkspaceCloned={(localPath) => void handleWorkspaceCloned(localPath)}

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.auth.dependencies import CurrentUser
+from app.db import repository
 from app.services.git_remote import (
     CloneResult,
     ExportResult,
@@ -70,7 +71,7 @@ def git_export(
     """Branch + commit the workspace, and optionally push and open a GitHub pull request."""
     root = enforce_workspace_access(request.root_path, user)
     try:
-        return export_branch(
+        result = export_branch(
             str(root),
             branch_name=request.branch_name,
             commit_message=request.commit_message,
@@ -81,3 +82,8 @@ def git_export(
         )
     except GitRemoteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
+    try:
+        repository.touch_workspace(user.id, str(root))
+    except Exception:
+        pass
+    return result

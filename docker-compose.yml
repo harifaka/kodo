@@ -78,6 +78,22 @@ services:
       # KODO_LOCAL_PROJECTS_DIR) plus KODO_WORKSPACES_DIR. Set a comma-separated list of absolute
       # container folders to allow-list different mounts. Always 403 in KODO_MODE=saas.
       KODO_BROWSE_ROOTS: ${KODO_BROWSE_ROOTS:-}
+      # Phase 13 SaaS hardening. Empty quotas/rate-limit flags => mode default: off in `local`,
+      # on in `saas`. TTL cleanup only ever runs in `saas`. See docs/SAAS_DEPLOYMENT.md.
+      KODO_DB_AUTO_MIGRATE: ${KODO_DB_AUTO_MIGRATE:-true}
+      KODO_QUOTA_ENABLED: ${KODO_QUOTA_ENABLED:-}
+      KODO_USER_QUOTA_MB: ${KODO_USER_QUOTA_MB:-500}
+      KODO_MAX_CLONE_SIZE_MB: ${KODO_MAX_CLONE_SIZE_MB:-200}
+      KODO_MAX_WORKSPACES_PER_USER: ${KODO_MAX_WORKSPACES_PER_USER:-10}
+      KODO_WORKSPACE_TTL_HOURS: ${KODO_WORKSPACE_TTL_HOURS:-72}
+      KODO_CLEANUP_INTERVAL_MINUTES: ${KODO_CLEANUP_INTERVAL_MINUTES:-30}
+      KODO_RATE_LIMIT_ENABLED: ${KODO_RATE_LIMIT_ENABLED:-}
+      KODO_TRUST_PROXY: ${KODO_TRUST_PROXY:-}
+      KODO_RL_SCAN_PER_MIN: ${KODO_RL_SCAN_PER_MIN:-30}
+      KODO_RL_CLONE_PER_MIN: ${KODO_RL_CLONE_PER_MIN:-10}
+      KODO_RL_BUILD_PER_MIN: ${KODO_RL_BUILD_PER_MIN:-10}
+      KODO_RL_AI_PER_MIN: ${KODO_RL_AI_PER_MIN:-20}
+      KODO_RL_AUTH_PER_MIN: ${KODO_RL_AUTH_PER_MIN:-20}
     volumes:
       - kodo-data:/data/kodo
       # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.

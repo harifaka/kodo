@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -43,6 +44,7 @@ from app.services.github_client import (
     set_transport_override,
 )
 from app.services.paths import user_sandbox_root, workspaces_dir
+from app.services.quota import enforce_post_clone_size, enforce_pre_clone_quota
 
 GIT_TIMEOUT_SECONDS = 60
 CLONE_TIMEOUT_SECONDS = 300
@@ -174,6 +176,17 @@ def clone_repository(
     slug = kebab_case(Path(urlsplit(url).path).name) or "repo"
     target = base / f"{slug}-{uuid.uuid4().hex[:8]}"
 
+    try:
+        enforce_pre_clone_quota(owner)
+    except HTTPException:
+        record_event(
+            AUDIT_ACTION_GIT_CLONE,
+            str(target),
+            "Clone rejected: the account is at its workspace quota or repository limit",
+            status="failed",
+        )
+        raise
+
     args = ["git", *_auth_args(token), "clone", "--depth", "1", "--single-branch"]
     if branch_name:
         args.extend(["--branch", branch_name])
@@ -193,6 +206,17 @@ def clone_repository(
         )
 
     checked_out = _current_branch(target) or branch_name
+    try:
+        size_bytes = enforce_post_clone_size(target, owner)
+    except HTTPException:
+        record_event(
+            AUDIT_ACTION_GIT_CLONE,
+            str(target),
+            "Clone removed: repository or account storage limit exceeded",
+            status="failed",
+        )
+        raise
+
     record_event(
         AUDIT_ACTION_GIT_CLONE,
         str(target),
@@ -206,6 +230,7 @@ def clone_repository(
             local_path=str(target),
             repo_url=url,
             branch=checked_out,
+            size_bytes=size_bytes,
         )
     except Exception:
         # A metadata write failure must not undo a successful clone.

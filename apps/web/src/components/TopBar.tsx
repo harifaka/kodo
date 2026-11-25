@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
 import { api } from '../lib/api';
 import { STACK_META } from '../lib/layers';
-import type { AuthUser, WorkspaceSummary } from '../types/account';
+import type { AuthUser, WorkspaceStorage, WorkspaceSummary } from '../types/account';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
 import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner, DecisionIcon } from './icons';
@@ -30,6 +30,7 @@ interface TopBarProps {
   githubOAuthConfigured: boolean;
   onSignOut: () => void;
   workspaces: WorkspaceSummary[];
+  workspaceStorage: WorkspaceStorage | null;
   onSelectWorkspace: (workspace: WorkspaceSummary) => void;
   onDeleteWorkspace: (workspace: WorkspaceSummary) => void;
   onWorkspaceCloned: (localPath: string) => void;
@@ -55,6 +56,7 @@ export function TopBar({
   githubOAuthConfigured,
   onSignOut,
   workspaces,
+  workspaceStorage,
   onSelectWorkspace,
   onDeleteWorkspace,
   onWorkspaceCloned,
@@ -88,6 +90,7 @@ export function TopBar({
           <WorkspaceSwitcher
             workspaces={workspaces}
             activePath={path}
+            storage={workspaceStorage}
             onSelect={onSelectWorkspace}
             onDelete={onDeleteWorkspace}
             onCloned={onWorkspaceCloned}

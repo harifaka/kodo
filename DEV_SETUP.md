@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–12: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack)
+# Kodo — Developer Setup (Phases 1–13: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack, Production SaaS Hardening)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript, C# **and Python** sources onto the Core IR, runs a deterministic audit over that
@@ -157,8 +157,32 @@ KODO_DATABASE_URL=postgresql+psycopg://kodo:kodo@postgres:5432/kodo
 KODO_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require
 ```
 
-Tables are created automatically at startup (`create_all`); there is no Alembic migration step yet,
-so start with a fresh database when upgrading an existing v0.2 deployment.
+Tables are owned by **Alembic** (`services/api-python/alembic/`). The API runs
+`alembic upgrade head` on startup (`KODO_DB_AUTO_MIGRATE=true`), so a fresh database is created and an
+existing Phase 8–12 database is upgraded in place: if the tables exist but `alembic_version` does not,
+Kodo stamps `0001_initial_schema` first and then applies the remaining revisions. Set
+`KODO_DB_AUTO_MIGRATE=false` to fall back to the legacy `create_all` bootstrap.
+
+```powershell
+cd services/api-python
+python -m alembic current            # revision recorded in alembic_version
+python -m alembic upgrade head       # apply pending migrations (also runs in-container)
+python -m alembic history            # 0001_initial_schema -> 0002_workspace_size_and_activity
+```
+
+Inside Docker:
+
+```powershell
+docker compose exec api-python alembic current
+docker compose exec api-python alembic upgrade head
+```
+
+Reverting a migration on SQLite uses `render_as_batch` automatically, so `downgrade` works for the
+additive `0002` revision:
+
+```powershell
+python -m alembic downgrade 0001_initial_schema
+```
 
 ### GitHub OAuth app
 
@@ -189,6 +213,11 @@ SaaS guarantees: every `/api/v1/*` call needs a valid session (except `/api/v1/a
 paths are rejected with `403 SAAS_PATH_FORBIDDEN` unless they resolve inside your sandbox, audit rows
 and rollback snapshots are scoped to the authenticated user, and `/api/v1/deploy/docker/*` is
 disabled while Dockerfile/Compose generation and Git export remain available.
+
+**Production deployment with TLS:** see [docs/SAAS_DEPLOYMENT.md](docs/SAAS_DEPLOYMENT.md) — DNS,
+secret generation, GitHub OAuth callback, the Caddy + PostgreSQL overlay
+(`docker-compose.saas.yml`), migration verification, managed PostgreSQL and backup/restore. Section 12
+below covers the Phase 13 quotas, TTL cleanup and rate limiting that the overlay switches on.
 
 ---
 
@@ -784,6 +813,20 @@ docker compose down                                   # add -v to drop the kodo-
 | `KODO_SYSTEMONE_TIMEOUT_SECONDS` | FastAPI process | `10` | Per-decision HTTP timeout (clamped 0.5?120) |
 | `KODO_SYSTEMONE_AUTO_THRESHOLD` | FastAPI process | `0.78` | Calibrated confidence below which Kodo escalates to System 2 / human review |
 | `KODO_BROWSE_ROOTS` | FastAPI process (Compose passes it through) | *(empty = auto-detect)* | Phase 11 local-only folder browser allow-list: comma-separated **absolute** folders. Empty ⇒ Docker uses `/projects` + `KODO_WORKSPACES_DIR`, native uses host drives / `~` / `/`. Browsing is always `403` in `KODO_MODE=saas` |
+| `KODO_DB_AUTO_MIGRATE` | FastAPI process | `true` | Run `alembic upgrade head` at startup. `false` keeps the legacy `create_all` bootstrap |
+| `KODO_QUOTA_ENABLED` | FastAPI process | `true` in `saas`, `false` in `local` | Per-user disk quotas and clone caps |
+| `KODO_USER_QUOTA_MB` | FastAPI process | `500` | Total disk allowed under `<KODO_WORKSPACES_DIR>/<user_id>/` |
+| `KODO_MAX_CLONE_SIZE_MB` | FastAPI process | `200` | Max size of one cloned repo; oversized clones are deleted immediately (`413 CLONE_SIZE_LIMIT_EXCEEDED`) |
+| `KODO_MAX_WORKSPACES_PER_USER` | FastAPI process | `10` | Workspace count cap (`413 WORKSPACE_QUOTA_EXCEEDED`) |
+| `KODO_WORKSPACE_TTL_HOURS` | FastAPI process | `72` | SaaS TTL for untouched cloned workspaces; `0` disables cleanup |
+| `KODO_CLEANUP_INTERVAL_MINUTES` | FastAPI process | `30` | Interval of the background TTL sweep (SaaS only) |
+| `KODO_RATE_LIMIT_ENABLED` | FastAPI process | `true` in `saas`, `false` in `local` | Per-bucket sliding-window rate limiting |
+| `KODO_RL_SCAN_PER_MIN` | FastAPI process | `30` | `/api/v1/scan` requests/min |
+| `KODO_RL_CLONE_PER_MIN` | FastAPI process | `10` | `/api/v1/git/clone` + `/api/v1/git/export` requests/min |
+| `KODO_RL_BUILD_PER_MIN` | FastAPI process | `10` | `/api/v1/build/verify` (+ `/stream`) requests/min |
+| `KODO_RL_AI_PER_MIN` | FastAPI process | `20` | `/api/v1/ai/*` + `/api/v1/decision/*` requests/min |
+| `KODO_RL_AUTH_PER_MIN` | FastAPI process | `20` | `/api/v1/auth/github/*` requests/min (keyed by client IP) |
+| `KODO_TRUST_PROXY` | FastAPI process | `true` in `saas`, `false` in `local` | Honour `X-Forwarded-For` for rate-limit IP keys (set by the Caddy overlay) |
 
 ---
 
@@ -798,9 +841,10 @@ docker compose down                                   # add -v to drop the kodo-
 # the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs),
 # the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required),
 # the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed),
-# the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched)
-# and the Phase 12 Python suite (Tree-sitter analyzer, patcher, FastAPI generator, deploy template,
-# builder config; no network, Docker daemon or host toolchain)
+# the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched),
+# the Phase 12 Python suite (Tree-sitter analyzer, patcher, FastAPI generator, deploy template,
+# builder config; no network, Docker daemon or host toolchain) and the Phase 13 hardening suite
+# (Alembic fresh + legacy upgrades, storage quotas, clone caps, TTL cleanup, rate limits)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -814,9 +858,10 @@ cd apps/web
 npm install
 npm run build
 
-# Docker: validate both compose files (plus the optional System 1 profile), then the full stack
+# Docker: validate every compose variant (plus the optional System 1 profile), then the full stack
 docker compose config --quiet
 docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.saas.yml config --quiet
 docker compose --profile ai-local config --quiet
 docker compose up -d --build
 curl http://localhost:3000/health
@@ -1251,13 +1296,102 @@ switch to the UML tab to see the filtered indicator (and the >60-class guard on 
 
 ---
 
-## 12. Repository layout
+## 12. SaaS hardening: migrations, quotas, TTL cleanup & rate limits (Phase 13)
+
+All of this is **inert in `KODO_MODE=local`**: quotas and rate limiting default to off, TTL cleanup
+never runs, and deleting a workspace bookmark never touches the folder on disk. Enable it for a real
+SaaS tenant fleet with the overlay (or the individual env vars below).
+
+### Alembic migrations
+
+```powershell
+cd services/api-python
+python -m alembic current       # -> 0002_workspace_size_and_activity (head)
+python -m alembic upgrade head  # startup does this automatically (KODO_DB_AUTO_MIGRATE=true)
+```
+
+`alembic/env.py` reads `KODO_DATABASE_URL` at runtime (never a hard-coded URL in `alembic.ini`) and
+enables `render_as_batch` for SQLite so `ALTER TABLE`-style migrations work there too. A database
+created by the older `create_all()` bootstrap (tables present, no `alembic_version`) is stamped at
+`0001_initial_schema` and then upgraded — no manual steps, no `table already exists`.
+
+### Storage quotas and the clone cap
+
+```powershell
+# Usage vs. quota for the signed-in user (enabled=false in local mode)
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/workspaces/storage
+# {"enabled":true,"usedBytes":128849018,"quotaBytes":524288000,
+#  "workspaceCount":3,"maxWorkspaces":10,"ttlHours":72}
+
+# Free space: removes the cloned folder only when it is inside <KODO_WORKSPACES_DIR>/<user_id>/
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+     http://localhost:3000/api/v1/workspaces/<workspace_id>
+```
+
+* `KODO_USER_QUOTA_MB` (500) — total bytes under the user sandbox.
+* `KODO_MAX_CLONE_SIZE_MB` (200) — one repo; an oversized clone is deleted immediately and the request
+  fails with `413 CLONE_SIZE_LIMIT_EXCEEDED`.
+* `KODO_MAX_WORKSPACES_PER_USER` (10) — pre-clone count cap (`413 WORKSPACE_QUOTA_EXCEEDED`).
+* Usage is measured with `os.scandir(follow_symlinks=False)`, so symlinks can neither inflate the
+  accounting nor escape the sandbox.
+
+### TTL cleanup
+
+`KODO_WORKSPACE_TTL_HOURS` (72, `0` disables) plus `KODO_CLEANUP_INTERVAL_MINUTES` (30) drive a
+cancellable `asyncio` task started in the FastAPI lifespan **only when `KODO_MODE=saas`**. Each pass
+removes workspaces whose `last_accessed_at` (falling back to `last_scanned_at` / `created_at`) is older
+than the TTL, and only if the folder lives strictly inside the owning tenant's sandbox. Every removal is
+audited as `workspace_ttl_cleanup`. Scans, file reads, applies and Git exports refresh
+`last_accessed_at`, so an active workspace is never collected.
+
+### Rate limiting
+
+| Bucket | Routes | Default (`KODO_RL_*_PER_MIN`) |
+| --- | --- | --- |
+| `scan` | `/api/v1/scan` | `KODO_RL_SCAN_PER_MIN=30` |
+| `clone` | `/api/v1/git/clone`, `/api/v1/git/export` | `KODO_RL_CLONE_PER_MIN=10` |
+| `build` | `/api/v1/build/verify`, `/api/v1/build/verify/stream` | `KODO_RL_BUILD_PER_MIN=10` |
+| `ai` | `/api/v1/ai/*`, `/api/v1/decision/*` | `KODO_RL_AI_PER_MIN=20` |
+| `auth` | `/api/v1/auth/github/*` (client IP) | `KODO_RL_AUTH_PER_MIN=20` |
+
+Authenticated buckets are keyed by user id, so one tenant can never exhaust another's budget. Responses
+carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`; rejections add `Retry-After`
+and a `429` body:
+
+```json
+{ "code": "RATE_LIMITED", "message": "Rate limit exceeded. Try again in 12s.", "retryAfterSeconds": 12 }
+```
+
+The limiter instance lives on `app.state.rate_limiter`
+(`app/middleware/rate_limit.py::SlidingWindowRateLimiter`) and can be reset or replaced in tests.
+
+### Verify it
+
+```powershell
+cd services/api-python
+python -m pytest tests/test_saas_hardening.py -q
+python -m ruff check app tests
+
+# Production overlay (Caddy TLS + PostgreSQL + SaaS defaults)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.saas.yml config --quiet
+```
+
+Manual SaaS pass: sign in, clone two repos, check the usage bar in **My Workspaces** (`n / 500 MB ·
+2/10 repos`), set `KODO_RL_SCAN_PER_MIN=2`, scan three times and confirm the third returns `429`;
+then delete a workspace and confirm the bar drops by that repo's size.
+
+---
+
+## 13. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
 docker-compose.yml                Local Docker stack: web (Nginx :3000→8080), api-python, analyzer-csharp
 docker-compose.prod.yml           GHCR-image override (publishes only the web port)
+docker-compose.saas.yml           Phase 13 SaaS overlay: Caddy TLS + PostgreSQL + quotas/rate limits
 docker-compose.override.yml.example  Optional extra mounts / published FastAPI :8088
+deploy/caddy/Caddyfile            Automatic HTTPS, security headers, 32 MB bodies, SSE flush_interval -1
+docs/SAAS_DEPLOYMENT.md           Production VPS runbook (DNS, secrets, OAuth, migrations, backups)
 .env.example                      KODO_WEB_PORT, KODO_LOCAL_PROJECTS_DIR, KODO_BROWSE_ROOTS, KODO_LLM_*, GHCR coordinates
 .kodo-empty/                      Placeholder bind-mount source so `docker compose up` works untouched
 .github/workflows/ci.yml          pytest + ruff, dotnet build, npm build, Docker build matrix
@@ -1274,6 +1408,13 @@ services/builders/                Phase 9 ephemeral builder images (uid 10001, p
   python/                         python:3.12-slim + ruff/mypy/pytest and the FastAPI dependency set
 services/api-python/              FastAPI orchestrator, tree-sitter analyzers (port 8088, multi-stage Dockerfile)
   Dockerfile                      python:3.12-slim build → non-root kodo runtime with git/curl + /data/kodo
+  alembic.ini                     Alembic entry point (script_location; no hard-coded database URL)
+  alembic/                        env.py (dynamic KODO_DATABASE_URL, render_as_batch on SQLite),
+                                  versions/0001_initial_schema.py, versions/0002_workspace_size_and_activity.py
+  app/db/                         models.py (SQLAlchemy tables), engine.py (run_migrations + sessions),
+                                  repository.py (tenant-scoped queries)
+  app/middleware/                 rate_limit.py (Phase 13 sliding-window limiter ASGI middleware)
+  app/services/quota.py           Phase 13 storage accounting, clone caps, TTL cleanup loop
   app/analyzers/                  java.py, typescript.py, python_analyzer.py, python_imports.py,
                                   python_layers.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)

@@ -58,6 +58,10 @@ class Workspace(Base):
     branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     last_health_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase 13: cached disk footprint (bytes) and the last scan/read/apply/export touch, used by the
+    # per-user storage quota and the SaaS TTL cleanup without walking the sandbox on every request.
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0, server_default="0")
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

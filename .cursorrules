@@ -47,12 +47,12 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - **Phase 12 (full Python stack support: FastAPI / Django / Flask) is active** — rules live in §3l.
   `tree-sitter-python` drives the analyzer, the byte-offset patcher, the FastAPI generator plugin,
   the Python deploy template and the `kodo-builder-python` image.
-- **Phases 1–12 (v0.7.0) are the active delivered contract.** Everything below them is binding:
+- **Phase 13 (production SaaS hardening: Alembic, quotas, TTL cleanup, rate limiting, TLS) is
+  active** — rules live in §3m.
+- **Phases 1–13 (v0.8.0) are the active delivered contract.** Everything below them is binding:
   do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane,
-  the local-only folder browser or the Python stack.
-- **Phase 13 (Production SaaS hardening) is planned, NOT active.** Alembic migrations, per-user
-  quotas/TTL cleanup and API rate limiting are recorded in `ROADMAP.md` only. Do not add their
-  endpoints, config, migrations or compose profiles until a task explicitly asks for them.
+  the local-only folder browser, the Python stack or the SaaS migrations/quotas/rate limits.
+  The v0.6+ roadmap (Phases 11–13) is **complete**; new work starts from a new roadmap item.
 
 ## 3. Write policy (hard rule)
 
@@ -297,8 +297,8 @@ Allowed:
   pre-Phase-8 behaviour (including the JSONL audit mirror) intact. `KODO_MODE=saas` is fail-closed.
 - **Database is configuration, not code.** `KODO_DATABASE_URL` accepts SQLite and any PostgreSQL URL
   (bundled `--profile saas` service or a managed third party). Never hard-code a DSN, never require a
-  specific provider, and never commit credentials. Schema bootstrap is `create_all` in
-  `app/db/engine.py`; add migrations only if a task explicitly asks for them.
+  specific provider, and never commit credentials. Schema changes go through **Alembic** (see §3m);
+  `create_all` only remains as the `KODO_DB_AUTO_MIGRATE=false` fallback.
 - **Every workspace path is gated.** Routes that accept a root path must call
   `enforce_workspace_access(root, user)`: local mode resolves the folder, SaaS mode additionally
   requires it to resolve inside `<KODO_WORKSPACES_DIR>/<user_id>/` (403 `SAAS_PATH_FORBIDDEN`).
@@ -457,6 +457,51 @@ Allowed:
 - **Deterministic tests.** `tests/test_python_stack.py` covers the analyzer, patcher, generator,
   deploy template and builder configuration without network access, a Docker daemon or a host
   toolchain.
+
+## 3m. SaaS hardening & Alembic migration rules (Phase 13 — active)
+
+- **Zero friction in local mode.** `KODO_MODE=local` must keep quotas and rate limiting **off** unless
+  `KODO_QUOTA_ENABLED` / `KODO_RATE_LIMIT_ENABLED` explicitly enable them, TTL cleanup must never run,
+  and deleting a workspace in local mode removes **only the DB bookmark** — never a host folder. Any new
+  SaaS-only guard must be inert (or absent) in local mode and covered by a local-mode test.
+- **Alembic owns the schema.** Every table/column change needs a migration in
+  `services/api-python/alembic/versions/` **and** the matching `app/db/models.py` update. `env.py` reads
+  `KODO_DATABASE_URL` at runtime — never hard-code a DSN in `alembic.ini` — and keeps
+  `render_as_batch` on SQLite. Revisions are `NNNN_slug.py` with a fixed `revision`/`down_revision`
+  pair; `0001_initial_schema` is the baseline and must keep matching the Phase 8/10 schema.
+- **Legacy databases must upgrade, never crash.** `run_migrations(engine)` keeps its two branches: a
+  database with `users` but no `alembic_version` is **stamped** at `0001_initial_schema` before
+  `upgrade head`; a fresh database upgrades directly. Additive migrations must be nullable or carry a
+  server default so existing rows survive. `tests/test_saas_hardening.py` covers both paths and must
+  stay green.
+- **Sandbox containment is absolute.** Quota accounting, deletions and TTL cleanup resolve every path
+  and require it to be **strictly inside** `<KODO_WORKSPACES_DIR>/<user_id>/`; a symlink is refused,
+  never resolved-and-followed. `compute_dir_size_bytes` walks with
+  `os.scandir(follow_symlinks=False)`. A row pointing at a local host folder may be forgotten, never
+  deleted.
+- **Quotas fail loud and actionable.** Pre-clone: `413 WORKSPACE_QUOTA_EXCEEDED` (count cap) /
+  `507 WORKSPACE_QUOTA_EXCEEDED` (disk full). Post-clone: delete the clone immediately and return
+  `413 CLONE_SIZE_LIMIT_EXCEEDED` or `413 WORKSPACE_QUOTA_EXCEEDED`. Messages must tell the user how
+  to recover ("delete a workspace in the Workspace Switcher").
+- **TTL cleanup is SaaS-only and audited.** It runs only when `KODO_MODE=saas` and
+  `KODO_WORKSPACE_TTL_HOURS > 0`, from the cancellable `asyncio` task in the FastAPI lifespan, and
+  records a `workspace_ttl_cleanup` audit event per removal. Scan, file read, apply and Git export must
+  refresh `last_accessed_at` (`repository.touch_workspace`) so active workspaces are never collected.
+- **Rate limiting lives inside the auth gate.** Middleware order is
+  `tenant_guard -> CORSMiddleware -> RateLimitMiddleware -> routes`: the limiter runs **after**
+  authentication (so it can key by user id) and **inside** CORS (so a `429` stays readable from a
+  split-origin dev UI). The instance is `app.state.rate_limiter` (`SlidingWindowRateLimiter`) and must
+  stay replaceable/resettable for deterministic tests. Buckets and `KODO_RL_*_PER_MIN` limits belong in
+  `app/config.py`; the 429 body is `{ code, message, retryAfterSeconds }` plus `Retry-After` and
+  `X-RateLimit-*` headers. Never add a Redis dependency for the single-instance deployment — keep the
+  limiter interface swappable instead.
+- **TLS/edge config is deployment, not code.** `deploy/caddy/Caddyfile` keeps HSTS, nosniff,
+  frame-deny, referrer-policy, the 32 MB body cap and `flush_interval -1` on
+  `/api/v1/build/verify/stream`; `docker-compose.saas.yml` is an overlay that never publishes the
+  `web` port. `docs/SAAS_DEPLOYMENT.md` is the runbook — keep it in sync with new env vars.
+- **Deterministic tests.** `tests/test_saas_hardening.py` is hermetic (temp SQLite files, temp
+  sandboxes, reset limiter, no network/Docker); `tests/conftest.py` boots the throwaway DB with
+  `KODO_DB_AUTO_MIGRATE=false` for speed, so the migration path is covered explicitly there.
 
 ## 4. Filesystem safety
 

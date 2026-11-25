@@ -1,0 +1,40 @@
+# Kodo production reverse proxy (Caddy 2).
+#
+# Automatic HTTPS via Let's Encrypt for {$KODO_DOMAIN}: Caddy obtains and renews the certificate as
+# long as ports 80 and 443 are reachable and the DNS record points at this host. Set KODO_DOMAIN in
+# `.env` (e.g. KODO_DOMAIN=kodo.example.com) and keep an A/AAAA record for it.
+#
+# This file is mounted read-only at /etc/caddy/Caddyfile by docker-compose.saas.yml.
+
+{$KODO_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# Generated Dockerfiles/Compose files and source payloads are posted as JSON; 32 MB mirrors the
+	# API and Nginx limits so an oversized body fails fast at the edge.
+	request_body {
+		max_size 32MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# SSE build-log streaming must never be buffered: flush each event as it arrives.
+	handle /api/v1/build/verify/stream* {
+		reverse_proxy web:8080 {
+			flush_interval -1
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# Everything else: the UI bundle and the same-origin API proxy.
+	handle {
+		reverse_proxy web:8080 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

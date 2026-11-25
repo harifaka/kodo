@@ -42,6 +42,7 @@ import type {
   DeleteWorkspaceResponse,
   UserSettingsResponse,
   WorkspaceListResponse,
+  WorkspaceStorage,
 } from '../types/account';
 import type {
   BuildResult,
@@ -94,7 +95,9 @@ export class ApiError extends Error {
 }
 
 async function toApiError(response: Response): Promise<ApiError> {
-  const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as
+    | { detail?: unknown; code?: unknown; message?: unknown; retryAfterSeconds?: unknown }
+    | null;
   const detail = body?.detail;
 
   if (detail && typeof detail === 'object') {
@@ -102,11 +105,37 @@ async function toApiError(response: Response): Promise<ApiError> {
     const message =
       typeof record.message === 'string' ? record.message : `Request failed with status ${response.status}`;
     const code = typeof record.code === 'string' ? record.code : undefined;
+    // 413/507 quota rejections already carry an actionable message; surface the code for the UI.
     return new ApiError(message, response.status, code, record);
   }
 
-  const message = typeof detail === 'string' ? detail : `Request failed with status ${response.status}`;
-  return new ApiError(message, response.status);
+  // Rate limiting answers with a top-level { code, message, retryAfterSeconds } body and a
+  // Retry-After header (Phase 13) rather than FastAPI's `detail` envelope.
+  const headerRetryAfter = Number(response.headers.get('Retry-After') ?? '');
+  const bodyRetryAfter = Number(body?.retryAfterSeconds ?? '');
+  const retryAfter = Number.isFinite(headerRetryAfter) && headerRetryAfter > 0
+    ? headerRetryAfter
+    : Number.isFinite(bodyRetryAfter) && bodyRetryAfter > 0
+      ? bodyRetryAfter
+      : 60;
+  if (response.status === 429 || body?.code === 'RATE_LIMITED') {
+    const seconds = Math.ceil(retryAfter);
+    return new ApiError(
+      `Rate limit exceeded. Try again in ${seconds}s.`,
+      response.status || 429,
+      'RATE_LIMITED',
+      { retryAfterSeconds: seconds },
+    );
+  }
+
+  const message =
+    typeof detail === 'string'
+      ? detail
+      : typeof body?.message === 'string'
+        ? body.message
+        : `Request failed with status ${response.status}`;
+  const code = typeof body?.code === 'string' ? body.code : undefined;
+  return new ApiError(message, response.status, code);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -232,6 +261,11 @@ export const api = {
 
   fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceListResponse> {
     return request<WorkspaceListResponse>('/api/v1/workspaces', { signal });
+  },
+
+  /** Per-user disk usage and quota; `enabled` is false in local mode (zero-friction). */
+  getWorkspaceStorage(signal?: AbortSignal): Promise<WorkspaceStorage> {
+    return request<WorkspaceStorage>('/api/v1/workspaces/storage', { signal });
   },
 
   deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponse> {

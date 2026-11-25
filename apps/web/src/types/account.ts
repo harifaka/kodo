@@ -27,10 +27,23 @@ export interface WorkspaceSummary {
   lastHealthScore: number | null;
   lastScannedAt: string | null;
   createdAt: string;
+  /** Cached disk footprint of the cloned folder (Phase 13 storage quotas). */
+  sizeBytes: number;
+  lastAccessedAt: string | null;
 }
 
 export interface WorkspaceListResponse {
   workspaces: WorkspaceSummary[];
+}
+
+/** GET /api/v1/workspaces/storage — per-user quota (enabled is false in local mode). */
+export interface WorkspaceStorage {
+  enabled: boolean;
+  usedBytes: number;
+  quotaBytes: number;
+  workspaceCount: number;
+  maxWorkspaces: number;
+  ttlHours: number;
 }
 
 /** DELETE /api/v1/workspaces/{id} */
@@ -38,6 +51,7 @@ export interface DeleteWorkspaceResponse {
   ok: boolean;
   workspaceId: string;
   directoryRemoved: boolean;
+  storage: WorkspaceStorage;
 }
 
 /** GET/PUT /api/v1/user/settings */

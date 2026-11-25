@@ -18,18 +18,19 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 12** is shipped as **v0.7.0 (Full Python Stack Support)** — Tree-sitter Python Core IR,
   Python-aware audit, byte-offset patching, a FastAPI/Pydantic/SQLAlchemy generator, a Python deploy
   template and the offline `kodo-builder-python` image.
+- **Phase 13** is shipped as **v0.8.0 (Production SaaS Hardening)** — Alembic migrations with safe
+  legacy-DB upgrades, per-user disk quotas / clone caps / TTL cleanup, per-bucket API rate limiting and
+  a Caddy TLS + PostgreSQL VPS deployment overlay.
 
-> **Next evolution (v0.8+) is planned, not delivered.** Phase 13 — Production SaaS Hardening
-> (Alembic migrations, per-user quotas/TTL cleanup, API rate limiting) — is recorded at the end of this
-> file. It is **not** part of the v0.7.0 contract and is not active implementation scope until a future
-> session starts it.
+> **The v0.6+ roadmap (Phases 11–13) is complete.** All thirteen phases are delivered; Phase 13 is
+> recorded at the end of this file with its Definition-of-Done evidence. There is no active planned
+> phase — future work starts from a new roadmap item.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8–12 are delivered (v0.3.0–v0.7.0); **all twelve delivered phases of the
-> roadmap are complete**. Phases 1–12 stay below as delivered history, and the planned Phase 13 track
-> is recorded at the end.
+> by local and SaaS. Phases 8–13 are delivered (v0.3.0–v0.8.0); **all thirteen delivered phases of the
+> roadmap are complete**. Phases 1–13 stay below as delivered history.
 
 ---
 
@@ -510,11 +511,10 @@ large repositories.
 
 ---
 
-## Next Evolution — Python Stack (v0.7.0 delivered) & SaaS Hardening (planned)
+## Delivered — Python Stack (v0.7.0) & Production SaaS Hardening (v0.8.0)
 
-**Status: Phase 12 delivered (v0.7.0); Phase 13 is planned — not delivered.** Phases 1–12 above
-remain the active delivered contract (v0.1.0–v0.7.0). Phase 13 starts only when a session explicitly
-takes it on.
+**Status: Phases 12 and 13 delivered (v0.7.0, v0.8.0).** Phases 1–13 are the active delivered
+contract; the v0.6+ roadmap (Phases 11–13) is complete.
 
 ### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) ✅ (v0.7.0)
 **Goal:** Elevate Python web applications from "visible in the graph" to a first-class stack across the
@@ -576,17 +576,68 @@ whole Blueprint -> Audit -> Edit -> Verify -> Deploy loop.
 
 ---
 
-### Phase 13: Production SaaS Hardening (Migrations, Quotas & Rate Limiting) ⬜
+### Phase 13: Production SaaS Hardening (Migrations, Quotas & Rate Limiting) ✅ (v0.8.0)
 **Goal:** Make `KODO_MODE=saas` safe to operate for real tenants: upgradeable schemas, bounded storage
 and abuse-resistant endpoints.
 
-- [ ] Introduce **Alembic** database migrations alongside SQLAlchemy (replacing bare `create_all()` for
+**Status:** Delivered — Alembic-owned schema with safe legacy upgrades, per-user storage governance with
+TTL cleanup, per-bucket rate limiting, and a Caddy TLS + PostgreSQL Compose overlay with a full VPS
+runbook. Every guard defaults to *off/inert* in `KODO_MODE=local`.
+
+- [x] Introduce **Alembic** database migrations alongside SQLAlchemy (replacing bare `create_all()` for
       safe schema upgrades on existing SQLite/PostgreSQL instances).
-- [ ] Add per-user workspace disk quotas, clone size caps, and automatic TTL cleanup for stale cloned
+  - `services/api-python/alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`; `env.py` reads
+    `KODO_DATABASE_URL` through `app.config` (or the API's injected live connection), imports
+    `Base.metadata` from `app.db.models`, and enables `render_as_batch` on SQLite.
+  - `alembic/versions/0001_initial_schema.py` (all Phase 8/10 tables) and
+    `alembic/versions/0002_workspace_size_and_activity.py` (`workspaces.size_bytes`,
+    `workspaces.last_accessed_at`).
+  - `app/db/engine.py::run_migrations(engine)` replaces `create_all()` at startup
+    (`KODO_DB_AUTO_MIGRATE=true` default): a legacy database (tables present, no `alembic_version`) is
+    stamped at `0001_initial_schema` first, then upgraded to `head`; a fresh database upgrades directly.
+  - The API Dockerfile copies `alembic.ini` + `alembic/` so `alembic upgrade head` works in-container.
+- [x] Add per-user workspace disk quotas, clone size caps, and automatic TTL cleanup for stale cloned
       workspaces in `KODO_MODE=saas`.
-- [ ] Add API rate limiting on expensive endpoints (`/scan`, `/git/clone`, `/build/verify`, `/ai/*`) and
+  - `app/services/quota.py`: symlink-safe `compute_dir_size_bytes`, `get_user_storage_usage`,
+    `enforce_pre_clone_quota` (`413`/`507 WORKSPACE_QUOTA_EXCEEDED`), `enforce_post_clone_size`
+    (`413 CLONE_SIZE_LIMIT_EXCEEDED`, oversized clone deleted immediately) and
+    `cleanup_stale_workspaces` (SaaS-only, sandbox-only, audited as `workspace_ttl_cleanup`).
+  - `GET /api/v1/workspaces/storage` plus an extended `DELETE /api/v1/workspaces/{id}` returning the
+    updated usage and auditing `workspace_delete`; only folders strictly inside
+    `<KODO_WORKSPACES_DIR>/<user_id>/` are ever removed.
+  - Cancellable `asyncio` cleanup task in the FastAPI lifespan every
+    `KODO_CLEANUP_INTERVAL_MINUTES`; scan/read/apply/export refresh `last_accessed_at`.
+  - Config: `KODO_QUOTA_ENABLED`, `KODO_USER_QUOTA_MB` (500), `KODO_MAX_CLONE_SIZE_MB` (200),
+    `KODO_MAX_WORKSPACES_PER_USER` (10), `KODO_WORKSPACE_TTL_HOURS` (72),
+    `KODO_CLEANUP_INTERVAL_MINUTES` (30).
+- [x] Add API rate limiting on expensive endpoints (`/scan`, `/git/clone`, `/build/verify`, `/ai/*`) and
       document TLS reverse-proxy deployment (Caddy/Traefik) + optional GitHub App / encrypted
       short-lived token flow for private repo operations.
+  - `app/middleware/rate_limit.py`: thread-safe `SlidingWindowRateLimiter` (injectable on
+    `app.state.rate_limiter`), buckets `scan`/`clone`/`build`/`ai`/`auth`, per-user keys (client IP for
+    auth routes, `X-Forwarded-For` only when trusted), `429 RATE_LIMITED` + `Retry-After` and
+    `X-RateLimit-*` headers on limited responses. Off by default in local mode.
+  - `deploy/caddy/Caddyfile` (automatic HTTPS, HSTS/nosniff/frame-deny/referrer-policy, 32 MB bodies,
+    `flush_interval -1` for the SSE stream), `docker-compose.saas.yml` (Caddy + healthchecked
+    PostgreSQL + SaaS defaults, `web` port unpublished) and `docs/SAAS_DEPLOYMENT.md` (DNS, secrets,
+    OAuth callback, migration verification, managed PostgreSQL, backups, Traefik snippet, future GitHub
+    App token flow).
+  - Frontend: Workspace Switcher usage bar (`120 / 500 MB · 3/10 repos`), per-repo size, confirmed
+    delete, and readable `429`/`413`/`507` messages in `apps/web/src/lib/api.ts`.
 - **Definition of Done:** Existing SQLite/PostgreSQL databases upgrade cleanly via
   `alembic upgrade head`, SaaS mode enforces per-user storage quotas and rate limits, and a production
   VPS deployment guide is verified end-to-end.
+  - `tests/test_saas_hardening.py` (24 hermetic cases): fresh `alembic upgrade head`, legacy
+    `create_all` database stamped + upgraded with users/ADR rows preserved, a partial Phase 8 schema
+    converging on the full table set, `init_db` migration bootstrap, storage/quota/clone-cap/delete
+    tenant isolation, TTL cleanup (stale removed + audited, fresh kept, host folders untouched, local
+    mode inert), the cancellable cleanup loop and rate limiting (429 body/headers + CORS, per-user
+    buckets, local-mode default off).
+  - `pytest` **295 passed / 5 skipped** (only the environment-dependent Roslyn-container skips),
+    `ruff check app tests`, `npm run build`, `dotnet build services/analyzer-csharp --configuration
+    Release`, and `docker compose config` for the base, prod, builders and new
+    `docker-compose.saas.yml` overlay are green.
+  - Alembic CLI verified end-to-end: `alembic upgrade head` → `current` = head → `downgrade
+    0001_initial_schema` removes both columns on SQLite (batch mode).
+  - Zero-friction local mode preserved: quotas/rate limits default off, TTL cleanup never runs, and
+    deleting a workspace bookmark in local mode never removes the folder.

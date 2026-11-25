@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js, Python/FastAPI) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and four optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Python Stack](https://img.shields.io/badge/Status%20v0.7%20%C2%B7%20Phases%201--12%20delivered-brightgreen.svg)
+![Status: SaaS Hardening](https://img.shields.io/badge/Status%20v0.8%20%C2%B7%20Phases%201--13%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -24,6 +24,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **System 1 Decision Layer (Phase 10):** **Laya** — a local, non-autoregressive 421M decision model — runs over `/v1/systemone` (Ollama or `laya-serve`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek (System 2), and pre-screen proposed diffs in milliseconds. Every decision becomes an inspectable, tenant-scoped **ADR** with accept/override feedback and a JSONL training export. It is **advisory only**: it never writes to disk and degrades cleanly to deterministic rules + manual DeepSeek triggers when offline.
 - **Dual-Mode Folder Browser & Large-Repo Ergonomics (Phase 11):** a **Browse…** modal lists your real host folders **in place — zero uploads, zero copies** — whether Kodo runs natively (Windows drives, `~`, `/`) or in Docker (the `/projects` mount, with an actionable hint when the mount is still the empty `.kodo-empty` placeholder). Immediate child folders are badged by marker files (`Spring Boot / Java`, `C# / .NET`, `Node.js`, `Python`) with monorepo drill-down. The Macro Graph gains `Ctrl+K` search, layer/stack filter pills, **Issues Only**, and a **1-Hop Focus** mode; the Mermaid UML view renders the same filtered subset and guards diagrams over 60 classes. Browsing is **local-only — always `403` in `KODO_MODE=saas`**.
 - **Full Python Stack Support (Phase 12):** Python web apps are a first-class stack end to end. The **Tree-sitter Python** analyzer maps FastAPI `APIRouter`/`FastAPI`, Flask `Blueprint` and Django `APIView`/`views.py` modules onto the Macro Graph as `router` components, plus Pydantic v2 DTOs, SQLAlchemy 2 / Django ORM entities, repositories and services with package-root-aware `import` relations. The deterministic audit recognises Pydantic `Field(...)` validation, Python layer leaks and circular imports; the byte-offset patcher edits attributes and decorators while preserving docstrings and methods; the Builder renders a **FastAPI + Pydantic + SQLAlchemy** vertical slice; Deploy Studio and the pre-warmed `kodo-builder-python` image complete the loop. Verified by scanning Kodo's own `services/api-python`.
+- **Production SaaS Hardening (Phase 13):** the database is now **Alembic-managed** — `alembic upgrade head` runs at startup, legacy `create_all()` databases are stamped at the baseline revision and upgraded in place, and `render_as_batch` keeps SQLite `ALTER TABLE` migrations safe. Tenants get **per-user disk quotas** (`500 MB` default), a **per-repo clone cap** (`200 MB`, oversized clones deleted immediately), a **workspace count cap** and **TTL cleanup** of untouched cloned repos with `workspace_ttl_cleanup` audit events. Expensive endpoints (`/scan`, `/git/clone`, `/git/export`, `/build/verify`, `/ai/*`, `/auth/github/*`) are protected by a **sliding-window rate limiter** returning `429 RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers, and `docker-compose.saas.yml` adds a **Caddy** TLS ingress plus PostgreSQL for one-command VPS deployment ([docs/SAAS_DEPLOYMENT.md](docs/SAAS_DEPLOYMENT.md)). All of it is **off by default in `KODO_MODE=local`**.
 
 ---
 
@@ -70,9 +71,15 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
       Always 403 FS_BROWSE_DISABLED_IN_SAAS in KODO_MODE=saas (gated before authentication).
       Filtered/1-hop IR subsets -> POST /api/v1/mermaid (pure, in-memory) -> UML view.
 
+    SaaS edge lane (Phase 13, `docker-compose.saas.yml`):
+      Internet -> Caddy :443 (Let's Encrypt, HSTS, 32 MB bodies, SSE flush_interval -1)
+               -> web:8080 (Nginx) -> api-python:8088 -> postgres:5432
+      api-python startup: validate config -> `alembic upgrade head` -> seed -> TTL cleanup loop
+      Middleware order: auth gate (tenant) -> sliding-window rate limiter -> routes.
+
 ---
 
-## Quick Start (Phases 1–12, local + SaaS)
+## Quick Start (Phases 1–13, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -197,19 +204,37 @@ such as Supabase/Neon/RDS) so you can choose local or third-party storage later 
 Host-filesystem browsing is **local-only**: `GET /api/v1/fs/browse` always answers
 `403 FS_BROWSE_DISABLED_IN_SAAS` and SaaS keeps the Workspace Switcher / Clone Repo flow.
 
+Schema upgrades are owned by **Alembic** (`KODO_DB_AUTO_MIGRATE=true` by default), so an existing
+Phase 8–12 database — SQLite or PostgreSQL — is stamped and upgraded in place on the next start:
+
+```powershell
+docker compose exec api-python alembic current      # -> 0002_workspace_size_and_activity (head)
+```
+
+SaaS governance defaults (`KODO_QUOTA_ENABLED`, `KODO_RATE_LIMIT_ENABLED`, `KODO_WORKSPACE_TTL_HOURS`,
+`KODO_RL_*`) are **off or inert in local mode** and enabled by `docker-compose.saas.yml`:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.saas.yml up -d
+```
+
+Production VPS runbook (DNS, secrets, GitHub OAuth, TLS, managed PostgreSQL, backups, Traefik
+alternative): [docs/SAAS_DEPLOYMENT.md](docs/SAAS_DEPLOYMENT.md).
+
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–12)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–13)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
 (v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0), Phase 10 is the advisory System 1
-decision layer (v0.5.0), Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0) and Phase 12
-is the full Python stack (v0.7.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit →
-Sandbox Verify → Deploy** loop for Java, C#, Node.js **and Python**, plus a
-**System 1 → System 2** AI decision path, ships as one container stack for both local self-hosting and
-multi-tenant SaaS, and can browse your real folders in place from either runtime.
+decision layer (v0.5.0), Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0), Phase 12 is
+the full Python stack (v0.7.0) and Phase 13 is production SaaS hardening (v0.8.0)** — Kodo now covers
+the full **Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop for Java, C#, Node.js
+**and Python**, plus a **System 1 → System 2** AI decision path, ships as one container stack for both
+local self-hosting and multi-tenant SaaS, can browse your real folders in place from either runtime,
+and runs a hardened multi-tenant service behind automatic HTTPS.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -371,23 +396,57 @@ multi-tenant SaaS, and can browse your real folders in place from either runtime
 
 ---
 
-## What's Next (v0.8+ Roadmap: Phase 13)
-
-**Planned — not delivered.** The v0.7.0 / Phases 1–12 contract above is unchanged; Phase 13 is
-recorded in [ROADMAP.md](ROADMAP.md) and starts only in a future session.
-
-| Phase | Track | Highlights |
-| --- | --- | --- |
-| 13 | Production SaaS Hardening | **Alembic** migrations replacing `create_all()` for safe SQLite/PostgreSQL upgrades; per-user disk quotas, clone size caps and TTL cleanup of stale cloned workspaces; rate limiting on `/scan`, `/git/clone`, `/build/verify` and `/ai/*`; TLS reverse-proxy (Caddy/Traefik) guide with optional GitHub App short-lived tokens. |
+### Phase 13: Production SaaS Hardening (Migrations, Quotas & Rate Limiting) - Delivered (v0.8.0)
+- **Alembic owns the schema.** `services/api-python/alembic.ini` + `alembic/env.py` read
+  `KODO_DATABASE_URL` dynamically (or accept the API's live connection), import
+  `Base.metadata` from `app.db.models` and enable `render_as_batch` on SQLite. The baseline
+  `0001_initial_schema` covers all seven Phase 8/10 tables and `0002_workspace_size_and_activity` adds
+  `workspaces.size_bytes` + `workspaces.last_accessed_at` — a real, additive schema evolution.
+- **Legacy databases upgrade safely.** `app/db/engine.py::run_migrations` inspects the connection: if
+  `users` exists without `alembic_version` (a Phase 8/10 `create_all` database) it stamps
+  `0001_initial_schema` first, then runs `upgrade head`. Fresh databases upgrade directly.
+  `KODO_DB_AUTO_MIGRATE=false` falls back to `create_all` for exotic setups. The Docker image ships
+  `alembic.ini` + `alembic/` so `docker compose exec api-python alembic upgrade head` works.
+- **Per-user storage governance.** `app/services/quota.py` measures `<KODO_WORKSPACES_DIR>/<user_id>/`
+  with `os.scandir(follow_symlinks=False)`, enforces `KODO_USER_QUOTA_MB` (500),
+  `KODO_MAX_CLONE_SIZE_MB` (200), `KODO_MAX_WORKSPACES_PER_USER` (10) and deletes an oversized clone
+  immediately (`413 CLONE_SIZE_LIMIT_EXCEEDED` / `WORKSPACE_QUOTA_EXCEEDED`). New endpoints:
+  `GET /api/v1/workspaces/storage` and an extended `DELETE /api/v1/workspaces/{id}` that returns the
+  updated usage, logs `workspace_delete`, and **only ever removes folders strictly inside the caller's
+  sandbox** (local host folders are just forgotten).
+- **TTL cleanup.** A cancellable `asyncio` task in the FastAPI lifespan runs
+  `cleanup_stale_workspaces` every `KODO_CLEANUP_INTERVAL_MINUTES` (30) in SaaS mode only, removing
+  workspaces untouched for `KODO_WORKSPACE_TTL_HOURS` (72) and auditing each removal. Scan, file read,
+  apply and Git export all refresh `last_accessed_at`.
+- **Sliding-window rate limiting.** `app/middleware/rate_limit.py` adds a thread-safe
+  `SlidingWindowRateLimiter` (injectable on `app.state.rate_limiter`) wired inside the auth gate for
+  buckets `scan`/`clone`/`build`/`ai`/`auth` with `KODO_RL_*_PER_MIN` defaults, per-user keys (client
+  IP for auth), `429 RATE_LIMITED` + `Retry-After`, and `X-RateLimit-Limit/Remaining/Reset` on every
+  limited response.
+- **TLS deployment.** `deploy/caddy/Caddyfile` (automatic Let's Encrypt, HSTS/nosniff/frame-deny/
+  referrer-policy headers, 32 MB bodies, `flush_interval -1` for the SSE build stream),
+  `docker-compose.saas.yml` (Caddy + healthchecked PostgreSQL + SaaS defaults, `web` port unpublished)
+  and `docs/SAAS_DEPLOYMENT.md` (DNS, secrets, OAuth callback, migrations, managed PostgreSQL,
+  backup/restore, Traefik alternative, future GitHub App token flow).
+- **Frontend UX.** The Workspace Switcher shows a compact usage bar (`120 / 500 MB · 3/10 repos`),
+  per-workspace size and a confirmed trash action; `api.ts` maps `429` and `413`/`507` to readable
+  messages.
+- **Evidence:** `tests/test_saas_hardening.py` (24 hermetic cases: fresh + legacy Alembic upgrade,
+  partial Phase 8 schema convergence, `init_db` migration bootstrap, storage/quota/clone-cap/delete
+  isolation, TTL cleanup with host-folder safety, the cancellable cleanup loop, and rate-limit headers,
+  per-user buckets, CORS on `429` and the local-mode default). `pytest` **295 passed / 5 skipped**,
+  `ruff check app tests`, `npm run build`, `dotnet build services/analyzer-csharp`, and all
+  `docker compose config` variants (including the new SaaS overlay) are green.
 
 ---
 
-## Roadmap Complete (Phases 1–12 delivered)
+## Roadmap Complete (Phases 1–13 delivered)
 
-All twelve phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+All thirteen phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
 AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
 SaaS foundation, ephemeral builders, the Laya System 1 decision layer, the local dual-mode folder
-browser with large-repo graph ergonomics, and full Python stack support (FastAPI / Django / Flask).
+browser with large-repo graph ergonomics, full Python stack support (FastAPI / Django / Flask), and
+production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment).
 Full detail and DoD evidence: [ROADMAP.md](ROADMAP.md).
 
 ## License

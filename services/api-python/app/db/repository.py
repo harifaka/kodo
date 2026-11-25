@@ -77,6 +77,8 @@ class WorkspaceRecord:
     last_health_score: int | None
     last_scanned_at: datetime | None
     created_at: datetime
+    size_bytes: int | None = None
+    last_accessed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,8 @@ def _to_workspace(row: Workspace) -> WorkspaceRecord:
         last_health_score=row.last_health_score,
         last_scanned_at=row.last_scanned_at,
         created_at=row.created_at,
+        size_bytes=row.size_bytes,
+        last_accessed_at=row.last_accessed_at,
     )
 
 
@@ -328,6 +332,7 @@ def remember_workspace(
     local_path: str,
     repo_url: str | None = None,
     branch: str | None = None,
+    size_bytes: int | None = None,
 ) -> WorkspaceRecord:
     with session_scope() as session:
         row = session.scalar(
@@ -335,6 +340,7 @@ def remember_workspace(
                 Workspace.user_id == user_id, Workspace.local_path == str(local_path)
             )
         )
+        now = utcnow()
         if row is None:
             row = Workspace(
                 id=uuid.uuid4().hex,
@@ -343,7 +349,9 @@ def remember_workspace(
                 local_path=str(local_path),
                 repo_url=repo_url,
                 branch=branch,
-                created_at=utcnow(),
+                size_bytes=size_bytes,
+                last_accessed_at=now,
+                created_at=now,
             )
             session.add(row)
         else:
@@ -352,6 +360,9 @@ def remember_workspace(
                 row.repo_url = repo_url
             if branch:
                 row.branch = branch
+            if size_bytes is not None:
+                row.size_bytes = size_bytes
+            row.last_accessed_at = now
         session.flush()
         return _to_workspace(row)
 
@@ -374,6 +385,7 @@ def record_workspace_scan(
                 local_path=str(local_path),
                 last_health_score=health_score,
                 last_scanned_at=now,
+                last_accessed_at=now,
                 created_at=now,
             )
             session.add(row)
@@ -381,8 +393,34 @@ def record_workspace_scan(
             row.name = name
             row.last_health_score = health_score
             row.last_scanned_at = now
+            row.last_accessed_at = now
         session.flush()
         return _to_workspace(row)
+
+
+def touch_workspace(
+    user_id: str,
+    local_path: str,
+    *,
+    size_bytes: int | None = None,
+) -> None:
+    """Refresh ``last_accessed_at`` (and optionally the cached size) for an existing bookmark.
+
+    Read/apply/export paths call this so TTL cleanup never collects a workspace that is still in use.
+    Unknown paths are ignored: reading a file must not create a bookmark.
+    """
+    with session_scope() as session:
+        row = session.scalar(
+            select(Workspace).where(
+                Workspace.user_id == user_id, Workspace.local_path == str(local_path)
+            )
+        )
+        if row is None:
+            return
+        row.last_accessed_at = utcnow()
+        if size_bytes is not None:
+            row.size_bytes = size_bytes
+        session.flush()
 
 
 def list_workspaces(user_id: str) -> list[WorkspaceRecord]:

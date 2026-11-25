@@ -41,10 +41,19 @@ def _isolated_database(tmp_path: Path) -> Iterator[None]:
         "KODO_PUBLIC_URL",
         "KODO_GITHUB_CLIENT_ID",
         "KODO_GITHUB_CLIENT_SECRET",
+        "KODO_DB_AUTO_MIGRATE",
+        "KODO_QUOTA_ENABLED",
+        "KODO_RATE_LIMIT_ENABLED",
+        "KODO_WORKSPACE_TTL_HOURS",
+        "KODO_TRUST_PROXY",
     )
     previous = {key: os.environ.get(key) for key in keys}
     os.environ["KODO_DATABASE_URL"] = f"sqlite:///{(tmp_path / 'kodo.db').as_posix()}"
     os.environ["KODO_MODE"] = "local"
+    # The suite bootstraps each throwaway SQLite file with create_all: ~70 ms faster per test and
+    # identical DDL to the Alembic baseline. `test_saas_hardening.py` opts in to the migration path
+    # explicitly (fresh + legacy upgrade), so both code paths stay covered.
+    os.environ["KODO_DB_AUTO_MIGRATE"] = "false"
     for key in (
         "KODO_JWT_SECRET",
         "KODO_JWT_TTL_HOURS",
@@ -52,6 +61,10 @@ def _isolated_database(tmp_path: Path) -> Iterator[None]:
         "KODO_PUBLIC_URL",
         "KODO_GITHUB_CLIENT_ID",
         "KODO_GITHUB_CLIENT_SECRET",
+        "KODO_QUOTA_ENABLED",
+        "KODO_RATE_LIMIT_ENABLED",
+        "KODO_WORKSPACE_TTL_HOURS",
+        "KODO_TRUST_PROXY",
     ):
         os.environ.pop(key, None)
     reset_engine()

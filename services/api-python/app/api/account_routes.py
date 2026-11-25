@@ -1,9 +1,8 @@
-"""Account-scoped endpoints: workspaces, saved blueprints and non-secret user settings."""
+"""Account-scoped endpoints: workspaces, storage usage, saved blueprints and user settings."""
 
 from __future__ import annotations
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,9 +12,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.auth.dependencies import CurrentUser
+from app.config import get_settings
 from app.db import repository
 from app.db.repository import WorkspaceRecord
-from app.services.paths import is_inside_sandbox
+from app.services.audit_log import AUDIT_ACTION_WORKSPACE_DELETE, record_event
+from app.services.quota import (
+    StorageUsage,
+    get_user_storage_usage,
+    remove_workspace_dir,
+)
 
 router = APIRouter()
 
@@ -33,6 +38,8 @@ class WorkspaceModel(AccountModel):
     last_health_score: int | None = None
     last_scanned_at: str | None = None
     created_at: str
+    size_bytes: int = 0
+    last_accessed_at: str | None = None
 
 
 class WorkspaceListResponse(AccountModel):
@@ -43,6 +50,7 @@ class DeleteWorkspaceResponse(AccountModel):
     ok: bool = True
     workspace_id: str
     directory_removed: bool = False
+    storage: StorageUsage
 
 
 class BlueprintSummary(AccountModel):
@@ -81,6 +89,8 @@ def _workspace_payload(row: WorkspaceRecord) -> WorkspaceModel:
         last_health_score=row.last_health_score,
         last_scanned_at=_iso(row.last_scanned_at),
         created_at=_iso(row.created_at) or "",
+        size_bytes=int(row.size_bytes or 0),
+        last_accessed_at=_iso(row.last_accessed_at),
     )
 
 
@@ -97,6 +107,12 @@ def list_workspaces(user: CurrentUser) -> WorkspaceListResponse:
     return WorkspaceListResponse(workspaces=[_workspace_payload(row) for row in rows])
 
 
+@router.get("/api/v1/workspaces/storage", response_model=StorageUsage, tags=["workspaces"])
+def workspace_storage(user: CurrentUser) -> StorageUsage:
+    """Disk usage vs. quota for the current user. ``enabled`` is false in local mode."""
+    return get_user_storage_usage(user.id)
+
+
 @router.delete(
     "/api/v1/workspaces/{workspace_id}",
     response_model=DeleteWorkspaceResponse,
@@ -106,7 +122,11 @@ def delete_workspace(
     workspace_id: str,
     user: CurrentUser,
 ) -> DeleteWorkspaceResponse:
-    """Delete one of the current user's workspaces (and its sandbox directory when owned)."""
+    """Delete one of the current user's workspaces (and its sandbox directory when owned).
+
+    Only the cloned folder inside ``<KODO_WORKSPACES_DIR>/<user_id>/`` is ever removed. Bookmarks
+    that point at a local host folder are simply forgotten, so local self-hosting never loses data.
+    """
     try:
         record = repository.get_workspace(user.id, workspace_id)
     except Exception as exc:
@@ -121,17 +141,21 @@ def delete_workspace(
         )
 
     directory_removed = False
-    if is_inside_sandbox(Path(record.local_path), user.id):
-        try:
-            shutil.rmtree(record.local_path)
-            directory_removed = True
-        except OSError:
-            directory_removed = False
+    if get_settings().is_saas:
+        directory_removed = remove_workspace_dir(Path(record.local_path), user.id)
 
     repository.delete_workspace(user.id, workspace_id)
+    record_event(
+        AUDIT_ACTION_WORKSPACE_DELETE,
+        record.local_path,
+        f"Deleted workspace '{record.name}'"
+        + (" and its cloned files" if directory_removed else " (bookmark only)"),
+        user_id=user.id,
+    )
     return DeleteWorkspaceResponse(
         workspace_id=workspace_id,
         directory_removed=directory_removed,
+        storage=get_user_storage_usage(user.id),
     )
 
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -24,6 +27,7 @@ from app.config import (
     ConfigurationError,
     cors_origins,
     get_settings,
+    ttl_cleanup_enabled,
     validate_startup,
 )
 from app.db import init_db
@@ -31,33 +35,70 @@ from app.db.repository import LOCAL_USER_ID
 from app.decision.routes import router as decision_router
 from app.deploy.routes import router as deploy_router
 from app.llm.routes import router as ai_router
+from app.middleware.rate_limit import RateLimitMiddleware, SlidingWindowRateLimiter
+from app.services.quota import run_cleanup_loop
+
+logger = logging.getLogger("kodo.main")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # Fail fast on unsafe SaaS configuration, then create tables and seed the local user.
+    # Fail fast on unsafe SaaS configuration, then migrate/create tables and seed the local user.
     validate_startup()
     init_db()
-    yield
+    cleanup_stop: asyncio.Event | None = None
+    cleanup_task: asyncio.Task[None] | None = None
+    if ttl_cleanup_enabled():
+        # SaaS only: periodic TTL sweep, cancelled cleanly when the process shuts down.
+        cleanup_stop = asyncio.Event()
+        cleanup_task = asyncio.create_task(
+            run_cleanup_loop(cleanup_stop), name="kodo-workspace-ttl-cleanup"
+        )
+        cleanup_task.add_done_callback(_log_cleanup_failure)
+    try:
+        yield
+    finally:
+        if cleanup_task is not None and cleanup_stop is not None:
+            cleanup_stop.set()
+            cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await cleanup_task
+
+
+def _log_cleanup_failure(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.warning("Workspace TTL cleanup stopped unexpectedly", exc_info=error)
 
 
 app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–11. "
-        "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
-        "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
-        "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
-        "triages/routes/screens with an advisory local System 1 (Laya) decision layer backed by "
-        "tenant-scoped ADRs, generates production Docker artifacts (reviewed through the same diff), "
-        "verifies proposed code in network-isolated ephemeral builder containers, controls local Docker "
-        "Compose, exports Git branches/pull requests, and browses local host/mount folders in place "
-        "(zero-copy, SaaS-disabled) — all applied to disk behind path-containment, "
-        "SHA-256 optimistic concurrency and Git working-tree guards."
+        "Kodo Architecture Control Center — Phases 1–13. "
+        "Analyzes Spring Boot, Node.js, .NET and Python workspaces into the Core IR, runs the "
+        "deterministic audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical "
+        "slices from a versioned blueprint, proposes AI patches through an OpenAI-compatible "
+        "DeepSeek/Ollama client, triages/routes/screens with an advisory local System 1 (Laya) "
+        "decision layer backed by tenant-scoped ADRs, generates production Docker artifacts (reviewed "
+        "through the same diff), verifies proposed code in network-isolated ephemeral builder "
+        "containers, controls local Docker Compose, exports Git branches/pull requests, and browses "
+        "local host/mount folders in place (zero-copy, SaaS-disabled) — all applied to disk behind "
+        "path-containment, SHA-256 optimistic concurrency and Git working-tree guards. SaaS mode adds "
+        "Alembic migrations, per-user storage quotas, TTL cleanup and per-bucket rate limiting."
     ),
     version=__version__,
 )
+
+# Middleware order (outermost first): tenant_guard -> CORS -> rate limiter -> routes.
+# The limiter instance is injectable: tests replace `app.state.rate_limiter` for deterministic
+# buckets. It is registered *before* CORS so CORS stays outermost of the two and a 429 still carries
+# the CORS headers a split-origin dev deployment needs; it sits inside `tenant_guard`, so the
+# authenticated user is already known when the bucket key is computed.
+app.state.rate_limiter = SlidingWindowRateLimiter()
+app.add_middleware(RateLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -179,6 +220,7 @@ async def root() -> dict[str, str]:
         "gitExport": "POST /api/v1/git/export",
         "authMe": "GET /api/v1/auth/me",
         "workspaces": "GET /api/v1/workspaces",
+        "workspaceStorage": "GET /api/v1/workspaces/storage",
         "blueprints": "GET /api/v1/blueprints",
         "userSettings": "GET /api/v1/user/settings",
         "systemOneTest": "POST /api/v1/decision/test-connection",

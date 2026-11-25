@@ -49,6 +49,10 @@ WORKDIR /app
 
 COPY --from=build --chown=kodo:kodo /opt/venv /opt/venv
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+# Alembic migrations ship with the image so `docker compose exec api-python alembic upgrade head`
+# (and the startup KODO_DB_AUTO_MIGRATE path) works inside the container.
+COPY --chown=kodo:kodo alembic.ini ./
+COPY --chown=kodo:kodo alembic ./alembic
 COPY --chown=kodo:kodo app ./app
 
 # Nothing in the runtime reads packages/core-ir; the schema copies are only used by the test suite.

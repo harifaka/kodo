@@ -80,6 +80,31 @@ DEFAULT_SYSTEMONE_AUTO_THRESHOLD = 0.78
 DEFAULT_DOCKER_BROWSE_ROOT = "/projects"
 MAX_BROWSE_ENTRIES = 500
 
+# Phase 13 production SaaS hardening. Everything here is inert in local mode: quotas and rate
+# limiting default to off, and TTL cleanup only ever runs in `saas`.
+DEFAULT_USER_QUOTA_MB = 500
+DEFAULT_MAX_CLONE_SIZE_MB = 200
+DEFAULT_MAX_WORKSPACES_PER_USER = 10
+DEFAULT_WORKSPACE_TTL_HOURS = 72
+DEFAULT_CLEANUP_INTERVAL_MINUTES = 30
+
+# Requests per 60-second sliding window for each rate-limit bucket.
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+DEFAULT_RATE_LIMITS = {
+    "scan": 30,
+    "clone": 10,
+    "build": 10,
+    "ai": 20,
+    "auth": 20,
+}
+_RATE_LIMIT_ENV = {
+    "scan": "KODO_RL_SCAN_PER_MIN",
+    "clone": "KODO_RL_CLONE_PER_MIN",
+    "build": "KODO_RL_BUILD_PER_MIN",
+    "ai": "KODO_RL_AI_PER_MIN",
+    "auth": "KODO_RL_AUTH_PER_MIN",
+}
+
 
 class ConfigurationError(RuntimeError):
     """Raised when the process is configured in a way that cannot be served safely."""
@@ -247,6 +272,64 @@ def browse_roots_configured() -> list[str]:
     host drives / home directory natively).
     """
     return [entry.strip() for entry in browse_roots().split(",") if entry.strip()]
+
+
+# --------------------------------------------------------------------------- Phase 13 hardening
+
+
+def db_auto_migrate() -> bool:
+    """Run ``alembic upgrade head`` at startup (default). ``false`` keeps the legacy create_all."""
+    return _env_flag("KODO_DB_AUTO_MIGRATE", True)
+
+
+def quota_enabled() -> bool:
+    """Per-user disk quotas: on for SaaS tenants, off (zero friction) for local self-hosting."""
+    return _env_flag("KODO_QUOTA_ENABLED", _mode() == MODE_SAAS)
+
+
+def user_quota_mb() -> int:
+    return _env_int("KODO_USER_QUOTA_MB", DEFAULT_USER_QUOTA_MB)
+
+
+def max_clone_size_mb() -> int:
+    return _env_int("KODO_MAX_CLONE_SIZE_MB", DEFAULT_MAX_CLONE_SIZE_MB)
+
+
+def max_workspaces_per_user() -> int:
+    return _env_int("KODO_MAX_WORKSPACES_PER_USER", DEFAULT_MAX_WORKSPACES_PER_USER)
+
+
+def workspace_ttl_hours() -> int:
+    """Hours before an untouched cloned workspace becomes cleanup-eligible; ``0`` disables TTL."""
+    return _env_int("KODO_WORKSPACE_TTL_HOURS", DEFAULT_WORKSPACE_TTL_HOURS, minimum=0)
+
+
+def cleanup_interval_minutes() -> int:
+    return _env_int("KODO_CLEANUP_INTERVAL_MINUTES", DEFAULT_CLEANUP_INTERVAL_MINUTES)
+
+
+def ttl_cleanup_enabled() -> bool:
+    """TTL cleanup is a SaaS-only safety net; local host folders are never touched."""
+    return _mode() == MODE_SAAS and workspace_ttl_hours() > 0
+
+
+def rate_limit_enabled() -> bool:
+    """API rate limiting: on for SaaS abuse protection, off (zero friction) for local mode."""
+    return _env_flag("KODO_RATE_LIMIT_ENABLED", _mode() == MODE_SAAS)
+
+
+def rate_limit_per_minute(bucket: str) -> int:
+    """Configured requests-per-minute for one rate-limit bucket (``scan``, ``clone``, …)."""
+    default = DEFAULT_RATE_LIMITS.get(bucket)
+    env_name = _RATE_LIMIT_ENV.get(bucket)
+    if default is None or env_name is None:
+        return 0
+    return _env_int(env_name, default)
+
+
+def trust_proxy_headers() -> bool:
+    """Trust ``X-Forwarded-For`` for client IPs (default: only behind a SaaS reverse proxy)."""
+    return _env_flag("KODO_TRUST_PROXY", _mode() == MODE_SAAS)
 
 
 _ephemeral_jwt_secret: str | None = None

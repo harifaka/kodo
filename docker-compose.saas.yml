@@ -1,0 +1,87 @@
+# Kodo SaaS overlay — production TLS ingress + bundled PostgreSQL + SaaS hardening defaults.
+#
+# Compose it on top of the base and production files (order matters):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.saas.yml up -d
+#
+# What this adds:
+#   * caddy:2-alpine terminates HTTPS (Let's Encrypt) and is the only published web port.
+#   * postgres:16-alpine is always started and healthchecked (no `--profile saas` needed).
+#   * KODO_MODE=saas with quotas, rate limiting, TTL cleanup and automatic migrations enabled.
+#   * `web` no longer publishes :3000 — all traffic enters through Caddy over TLS.
+#
+# See docs/SAAS_DEPLOYMENT.md for the full VPS runbook (DNS, secrets, backups, managed Postgres).
+name: kodo
+
+services:
+  api-python:
+    environment:
+      # Fail-closed multi-tenancy. KODO_JWT_SECRET (>=32 chars) is mandatory in this mode.
+      KODO_MODE: saas
+      KODO_DATABASE_URL: ${KODO_DATABASE_URL:-postgresql+psycopg://${KODO_POSTGRES_USER:-kodo}:${KODO_POSTGRES_PASSWORD:-kodo}@postgres:5432/${KODO_POSTGRES_DB:-kodo}}
+      KODO_PUBLIC_URL: ${KODO_PUBLIC_URL:-https://${KODO_DOMAIN:-localhost}}
+      KODO_COOKIE_SECURE: "true"
+      # Schema upgrades run through Alembic at startup (`alembic upgrade head`).
+      KODO_DB_AUTO_MIGRATE: "true"
+      # Per-user storage governance.
+      KODO_QUOTA_ENABLED: "true"
+      KODO_USER_QUOTA_MB: ${KODO_USER_QUOTA_MB:-500}
+      KODO_MAX_CLONE_SIZE_MB: ${KODO_MAX_CLONE_SIZE_MB:-200}
+      KODO_MAX_WORKSPACES_PER_USER: ${KODO_MAX_WORKSPACES_PER_USER:-10}
+      KODO_WORKSPACE_TTL_HOURS: ${KODO_WORKSPACE_TTL_HOURS:-72}
+      KODO_CLEANUP_INTERVAL_MINUTES: ${KODO_CLEANUP_INTERVAL_MINUTES:-30}
+      # Per-bucket rate limits (requests per 60s window).
+      KODO_RATE_LIMIT_ENABLED: "true"
+      KODO_TRUST_PROXY: "true"
+      KODO_RL_SCAN_PER_MIN: ${KODO_RL_SCAN_PER_MIN:-30}
+      KODO_RL_CLONE_PER_MIN: ${KODO_RL_CLONE_PER_MIN:-10}
+      KODO_RL_BUILD_PER_MIN: ${KODO_RL_BUILD_PER_MIN:-10}
+      KODO_RL_AI_PER_MIN: ${KODO_RL_AI_PER_MIN:-20}
+      KODO_RL_AUTH_PER_MIN: ${KODO_RL_AUTH_PER_MIN:-20}
+    restart: unless-stopped
+
+  web:
+    # Caddy owns :80/:443; the UI/Nginx port is never exposed on the host.
+    ports: !reset []
+    restart: unless-stopped
+
+  postgres:
+    # Drop the `saas` profile: the overlay always runs the database.
+    profiles: !reset []
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${KODO_POSTGRES_DB:-kodo}
+      POSTGRES_USER: ${KODO_POSTGRES_USER:-kodo}
+      POSTGRES_PASSWORD: ${KODO_POSTGRES_PASSWORD:-kodo}
+    volumes:
+      - kodo-pgdata:/var/lib/postgresql/data
+    networks:
+      - kodo-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      KODO_DOMAIN: ${KODO_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - kodo-net
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
