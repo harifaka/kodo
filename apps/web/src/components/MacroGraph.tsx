@@ -20,6 +20,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   edgeTouchesNode,
+  NODE_WIDTH,
   type ComponentNodeData,
   type LayerHeaderData,
   type RelationEdgeData,
@@ -53,6 +54,8 @@ interface MacroGraphProps {
   onResetDraft: () => void;
   onPreviewDiff: () => void;
   previewBusy: boolean;
+  /** Smoothly centers/fits the viewport on a node picked from the quick search (Phase 11). */
+  centerRequest?: { id: string; token: number } | null;
 }
 
 export function MacroGraph({
@@ -73,6 +76,7 @@ export function MacroGraph({
   onResetDraft,
   onPreviewDiff,
   previewBusy,
+  centerRequest = null,
 }: MacroGraphProps) {
   return (
     <ReactFlowProvider>
@@ -94,6 +98,7 @@ export function MacroGraph({
         onResetDraft={onResetDraft}
         onPreviewDiff={onPreviewDiff}
         previewBusy={previewBusy}
+        centerRequest={centerRequest}
       />
     </ReactFlowProvider>
   );
@@ -117,20 +122,43 @@ function MacroGraphCanvas({
   onResetDraft,
   onPreviewDiff,
   previewBusy,
+  centerRequest = null,
 }: MacroGraphProps) {
-  const { fitView } = useReactFlow();
+  const { fitView, setCenter } = useReactFlow();
   const initialized = useNodesInitialized();
+
+  const visibleSignature = useMemo(() => nodes.map((node) => node.id).join('|'), [nodes]);
 
   useEffect(() => {
     if (!initialized) {
       return;
     }
     // Fit only once the custom nodes have measured themselves, otherwise edges/labels are clipped.
+    // Also re-fits when a layer/stack/issues/focus filter changes the visible set.
     const frame = window.requestAnimationFrame(() => {
       void fitView({ padding: 0.12, maxZoom: 1.05, minZoom: 0.15, duration: 180 });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [initialized, fitView]);
+  }, [initialized, fitView, visibleSignature]);
+
+  useEffect(() => {
+    if (!centerRequest) {
+      return;
+    }
+    const target = flowNodes.find((node) => node.id === centerRequest.id);
+    if (!target) {
+      return;
+    }
+    const width = typeof target.width === 'number' ? target.width : NODE_WIDTH;
+    const height = typeof target.height === 'number' ? target.height : 96;
+    const frame = window.requestAnimationFrame(() => {
+      void setCenter(target.position.x + width / 2, target.position.y + height / 2, {
+        zoom: 1,
+        duration: 420,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [centerRequest, flowNodes, setCenter]);
 
   const auditByNode = useMemo(() => nodeAuditIndex(audit), [audit]);
   const flaggedEdges = useMemo(() => auditedEdgeKeys(audit), [audit]);

@@ -73,6 +73,10 @@ services:
       KODO_SYSTEMONE_API_KEY: ${KODO_SYSTEMONE_API_KEY:-}
       KODO_SYSTEMONE_TIMEOUT_SECONDS: ${KODO_SYSTEMONE_TIMEOUT_SECONDS:-10}
       KODO_SYSTEMONE_AUTO_THRESHOLD: ${KODO_SYSTEMONE_AUTO_THRESHOLD:-0.78}
+      # Phase 11 local-only folder browser. Empty => auto-detect: the `/projects` bind mount (from
+      # KODO_LOCAL_PROJECTS_DIR) plus KODO_WORKSPACES_DIR. Set a comma-separated list of absolute
+      # container folders to allow-list different mounts. Always 403 in KODO_MODE=saas.
+      KODO_BROWSE_ROOTS: ${KODO_BROWSE_ROOTS:-}
     volumes:
       - kodo-data:/data/kodo
       # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.

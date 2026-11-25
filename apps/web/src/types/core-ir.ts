@@ -115,3 +115,10 @@ export interface FileContent {
   language: string;
   size: number;
 }
+
+/** Response of the stateless `POST /api/v1/mermaid` subset renderer (Phase 11). */
+export interface MermaidResponse {
+  diagram: string;
+  nodeCount: number;
+  relationCount: number;
+}

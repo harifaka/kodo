@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api.account_routes import router as account_router
+from app.api.fs_routes import FS_BROWSE_DISABLED_IN_SAAS
+from app.api.fs_routes import router as fs_router
 from app.api.git_routes import router as git_router
 from app.api.routes import router
 from app.auth.context import reset_current_user_id, set_current_user_id
@@ -43,14 +45,15 @@ app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–10. "
+        "Kodo Architecture Control Center — Phases 1–11. "
         "Analyzes Spring Boot, Node.js and .NET workspaces into the Core IR, runs the deterministic "
         "audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical slices from a "
         "versioned blueprint, proposes AI patches through an OpenAI-compatible DeepSeek/Ollama client, "
         "triages/routes/screens with an advisory local System 1 (Laya) decision layer backed by "
         "tenant-scoped ADRs, generates production Docker artifacts (reviewed through the same diff), "
         "verifies proposed code in network-isolated ephemeral builder containers, controls local Docker "
-        "Compose, and exports Git branches/pull requests — all applied to disk behind path-containment, "
+        "Compose, exports Git branches/pull requests, and browses local host/mount folders in place "
+        "(zero-copy, SaaS-disabled) — all applied to disk behind path-containment, "
         "SHA-256 optimistic concurrency and Git working-tree guards."
     ),
     version=__version__,
@@ -78,6 +81,21 @@ async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-
         return JSONResponse(
             status_code=503,
             content={"detail": {"code": "CONFIGURATION_ERROR", "message": str(exc)}},
+        )
+
+    if settings.is_saas and path.startswith("/api/v1/fs/browse"):
+        # Phase 11 is local-only. Gate before authentication so SaaS can never reach the browser.
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": {
+                    "code": FS_BROWSE_DISABLED_IN_SAAS,
+                    "message": (
+                        "Browsing the server filesystem is disabled in SaaS mode. Sign in and use "
+                        "the Workspace Switcher or Clone Repo instead."
+                    ),
+                }
+            },
         )
 
     if settings.is_saas and path.startswith("/api/v1/deploy/docker/"):
@@ -117,6 +135,7 @@ async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-
 
 
 app.include_router(router)
+app.include_router(fs_router)
 app.include_router(ai_router)
 app.include_router(build_router)
 app.include_router(deploy_router)
@@ -134,6 +153,8 @@ async def root() -> dict[str, str]:
         "docs": "/docs",
         "scan": "POST /api/v1/scan",
         "audit": "POST /api/v1/audit",
+        "mermaid": "POST /api/v1/mermaid",
+        "browse": "GET /api/v1/fs/browse",
         "dryRun": "POST /api/v1/dry-run",
         "blueprint": "GET /api/v1/blueprint",
         "scaffoldDryRun": "POST /api/v1/scaffold/dry-run",

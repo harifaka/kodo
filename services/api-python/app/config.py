@@ -73,6 +73,13 @@ DEFAULT_SYSTEMONE_TIMEOUT_SECONDS = 10.0
 DEFAULT_SYSTEMONE_AUTO_THRESHOLD = 0.78
 
 
+# Phase 11 local-only folder browser. Browsing is zero-copy and in place: the API lists real
+# directories on the backend host/mount and never uploads, copies or writes a file. In Docker the
+# default root is the `/projects` bind mount; native runs enumerate hosts drives/home instead.
+DEFAULT_DOCKER_BROWSE_ROOT = "/projects"
+MAX_BROWSE_ENTRIES = 500
+
+
 class ConfigurationError(RuntimeError):
     """Raised when the process is configured in a way that cannot be served safely."""
 
@@ -225,6 +232,21 @@ def systemone_auto_threshold() -> float:
     )
 
 
+def browse_roots() -> str:
+    """Raw ``KODO_BROWSE_ROOTS`` value (comma-separated allow-list; empty means auto-detect)."""
+    return os.getenv("KODO_BROWSE_ROOTS", "").strip()
+
+
+def browse_roots_configured() -> list[str]:
+    """Explicit browse roots, order preserved, blanks dropped.
+
+    When this list is non-empty the browser is strictly contained to these directories. When it is
+    empty the service falls back to the runtime defaults (the ``/projects`` mount in Docker, or the
+    host drives / home directory natively).
+    """
+    return [entry.strip() for entry in browse_roots().split(",") if entry.strip()]
+
+
 _ephemeral_jwt_secret: str | None = None
 
 
@@ -247,6 +269,7 @@ class Settings:
     github_client_id: str
     github_client_secret: str
     github_scopes: str
+    browse_roots: str = ""
 
     @property
     def is_saas(self) -> bool:
@@ -297,6 +320,7 @@ def get_settings() -> Settings:
         github_client_id=os.getenv("KODO_GITHUB_CLIENT_ID", "").strip(),
         github_client_secret=os.getenv("KODO_GITHUB_CLIENT_SECRET", "").strip(),
         github_scopes=os.getenv("KODO_GITHUB_SCOPES", DEFAULT_GITHUB_SCOPES).strip() or DEFAULT_GITHUB_SCOPES,
+        browse_roots=browse_roots(),
     )
 
 

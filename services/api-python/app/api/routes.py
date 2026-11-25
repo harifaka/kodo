@@ -44,6 +44,7 @@ from app.services.apply_service import (
 )
 from app.services.csharp_client import check_health
 from app.services.git_safety import GitStatus, inspect_git_status
+from app.services.mermaid import generate_class_diagram
 from app.services.paths import enforce_workspace_access
 from app.services.scaffold_service import build_scaffold_plan
 from app.services.workspace import WorkspaceNotFoundError, build_workspace
@@ -64,6 +65,23 @@ class AuditRequest(BaseModel):
 
     nodes: list[ComponentNode] = Field(..., max_length=MAX_AUDIT_NODES)
     relations: list[ComponentRelation] = Field(..., max_length=MAX_AUDIT_RELATIONS)
+
+
+class MermaidRequest(BaseModel):
+    """A filtered Core IR subset to re-render as a Mermaid classDiagram. No disk access."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    nodes: list[ComponentNode] = Field(..., max_length=MAX_AUDIT_NODES)
+    relations: list[ComponentRelation] = Field(..., max_length=MAX_AUDIT_RELATIONS)
+
+
+class MermaidResponse(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    diagram: str
+    node_count: int
+    relation_count: int
 
 
 class FileContent(BaseModel):
@@ -178,17 +196,35 @@ def _remember_scan(user_id: str, workspace: WorkspaceIR) -> None:
 @router.post("/api/v1/audit", response_model=AuditReport, tags=["analysis"])
 async def audit_preview(request: AuditRequest) -> AuditReport:
     """Re-score an edited (draft) IR so the UI can preview the impact of macro edits."""
-    node_ids = {node.id for node in request.nodes}
-    relations: list[ComponentRelation] = []
+    return run_audit(request.nodes, _live_relations(request.nodes, request.relations))
+
+
+@router.post("/api/v1/mermaid", response_model=MermaidResponse, tags=["analysis"])
+async def mermaid_preview(request: MermaidRequest) -> MermaidResponse:
+    """Re-render the classDiagram for a filtered / 1-hop Core IR subset (Phase 11 ergonomics)."""
+    relations = _live_relations(request.nodes, request.relations)
+    return MermaidResponse(
+        diagram=generate_class_diagram(request.nodes, relations),
+        node_count=len(request.nodes),
+        relation_count=len(relations),
+    )
+
+
+def _live_relations(
+    nodes: list[ComponentNode],
+    relations: list[ComponentRelation],
+) -> list[ComponentRelation]:
+    """Drop dangling and duplicate relations exactly like the scan pipeline does."""
+    node_ids = {node.id for node in nodes}
+    live: list[ComponentRelation] = []
     seen: set[tuple[str, str, str]] = set()
-    for relation in request.relations:
+    for relation in relations:
         key = (relation.source_id, relation.target_id, relation.type)
-        # Mirror the scan pipeline: dangling and duplicate relations never reach the rules.
         if relation.source_id not in node_ids or relation.target_id not in node_ids or key in seen:
             continue
         seen.add(key)
-        relations.append(relation)
-    return run_audit(request.nodes, relations)
+        live.append(relation)
+    return live
 
 
 @router.post("/api/v1/dry-run", response_model=DryRunResponse, tags=["patching"])

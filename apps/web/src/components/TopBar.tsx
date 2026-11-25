@@ -13,6 +13,8 @@ interface TopBarProps {
   onPathChange: (value: string) => void;
   onScan: () => void;
   scanning: boolean;
+  /** Opens the local-only, zero-copy folder browser (never rendered in SaaS mode). */
+  onBrowse: () => void;
   health: HealthState;
   workspace: WorkspaceIR | null;
   /** Provider label shown on the AI Copilot pill (DeepSeek Cloud / Local On-Prem / Not Configured). */
@@ -39,6 +41,7 @@ export function TopBar({
   onPathChange,
   onScan,
   scanning,
+  onBrowse,
   health,
   workspace,
   aiLabel,
@@ -111,6 +114,16 @@ export function TopBar({
               className="w-full rounded-lg border border-ink-600 bg-ink-950/80 py-2 pl-9 pr-3 font-mono text-[12px] text-slate-200 shadow-inner outline-none transition placeholder:text-slate-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/15"
             />
           </div>
+          <button
+            type="button"
+            onClick={onBrowse}
+            disabled={scanning}
+            title="Browse folders on the API host or Docker mount — read in place, nothing is copied"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-ink-600 bg-ink-850/70 px-3 py-2 text-[12px] font-medium text-slate-300 transition enabled:hover:border-sky-500/60 enabled:hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FolderIcon className="h-4 w-4" />
+            Browse…
+          </button>
           <button
             type="submit"
             disabled={scanning || !path.trim()}

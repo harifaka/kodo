@@ -6,6 +6,8 @@ import { CodeInspector } from './components/CodeInspector';
 import { DeployStudio } from './components/DeployStudio';
 import { DiffPreview } from './components/DiffPreview';
 import { EmptyState } from './components/EmptyState';
+import { FolderBrowserModal } from './components/FolderBrowserModal';
+import { GraphFilterBar } from './components/GraphFilterBar';
 import { LoginScreen } from './components/LoginScreen';
 import { MacroGraph } from './components/MacroGraph';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
@@ -27,9 +29,11 @@ import {
 import { useAuditTriage } from './hooks/useAuditTriage';
 import { useDraftAudit } from './hooks/useDraftAudit';
 import { useAiSettings } from './hooks/useAiSettings';
+import { useGraphFilter } from './hooks/useGraphFilter';
 import { useHealth } from './hooks/useHealth';
 import { useSystemOneSettings } from './hooks/useSystemOneSettings';
 import { ApiError, api } from './lib/api';
+import { applyGraphFilter, searchComponents } from './lib/graphFilter';
 import { isAiConfigured, providerLabel, toLlmOverride } from './lib/aiSettings';
 import { systemOneLabel } from './lib/decisionSettings';
 import {
@@ -86,6 +90,10 @@ export default function App() {
   const [plan, setPlan] = useState<PlanPreview | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [centerRequest, setCenterRequest] = useState<{ id: string; token: number } | null>(null);
+  const [subsetDiagram, setSubsetDiagram] = useState<string | null>(null);
+  const [subsetLoading, setSubsetLoading] = useState(false);
   const [aiServerConfigured, setAiServerConfigured] = useState(false);
   const [aiFixingId, setAiFixingId] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
@@ -176,10 +184,84 @@ export default function App() {
     [workspace, selectedId],
   );
 
-  const graph = useMemo(
-    () => (view ? buildGraph(view.nodes, view.relations) : { nodes: [], edges: [] }),
-    [view],
+  const graphFilter = useGraphFilter(view?.rootPath ?? null);
+
+  const filtered = useMemo<ReturnType<typeof applyGraphFilter> | null>(
+    () =>
+      view
+        ? applyGraphFilter(view.nodes, view.relations, view.audit, graphFilter.filter, selectedId)
+        : null,
+    [view, graphFilter.filter, selectedId],
   );
+
+  const searchResults = useMemo(
+    () => searchComponents(view?.nodes ?? NO_NODES, graphFilter.filter.query),
+    [view, graphFilter.filter.query],
+  );
+
+  const graph = useMemo(
+    () =>
+      filtered
+        ? buildGraph(filtered.nodes, filtered.relations)
+        : { nodes: [], edges: [] },
+    [filtered],
+  );
+
+  // The UML tab re-renders the Mermaid classDiagram server-side for the filtered/1-hop subset, so
+  // the diagram always matches what the graph shows.
+  useEffect(() => {
+    if (!filtered?.active || tab !== 'uml') {
+      setSubsetDiagram(null);
+      setSubsetLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSubsetLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .mermaidSubset(filtered.nodes, filtered.relations, controller.signal)
+        .then((result) => {
+          if (!controller.signal.aborted) {
+            setSubsetDiagram(result.diagram);
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setSubsetDiagram(null);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setSubsetLoading(false);
+          }
+        });
+    }, 140);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filtered, tab]);
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (filtered?.focusActive) {
+      parts.push('1-hop focus');
+    }
+    if (graphFilter.filter.issuesOnly) {
+      parts.push('issues only');
+    }
+    if (graphFilter.filter.layers.length > 0) {
+      parts.push(`layers: ${graphFilter.filter.layers.join(', ')}`);
+    }
+    if (graphFilter.filter.stacks.length > 0) {
+      parts.push(`stacks: ${graphFilter.filter.stacks.join(', ')}`);
+    }
+    const query = graphFilter.filter.query.trim();
+    if (query) {
+      parts.push(`search: ${query}`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : null;
+  }, [filtered?.focusActive, graphFilter.filter]);
 
   const handleSelect = useCallback((node: ComponentNode | null) => {
     setSelectedId(node?.id ?? null);
@@ -187,6 +269,12 @@ export default function App() {
 
   const handleSelectNodeId = useCallback((nodeId: string) => {
     setSelectedId(nodeId);
+  }, []);
+
+  const handlePickSearchResult = useCallback((nodeId: string) => {
+    setSelectedId(nodeId);
+    setTab('graph');
+    setCenterRequest((current) => ({ id: nodeId, token: (current?.token ?? 0) + 1 }));
   }, []);
 
   const handleConnect = useCallback(
@@ -272,28 +360,44 @@ export default function App() {
     [health.refresh, resetTriage],
   );
 
+  const runScan = useCallback(
+    async (target: string) => {
+      setScanning(true);
+      setError(null);
+      try {
+        const result = await scanWorkspace(target, { resetView: true });
+        // A manual scan of a different folder makes the previous rollback banner meaningless.
+        if (lastApply && lastApply.rootPath !== result.rootPath) {
+          setLastApply(null);
+          setRollbackConflict(null);
+          setNotice(null);
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setScanning(false);
+      }
+    },
+    [lastApply, scanWorkspace],
+  );
+
   const handleScan = useCallback(async () => {
     const target = path.trim();
     if (!target || scanning) {
       return;
     }
+    await runScan(target);
+  }, [path, scanning, runScan]);
 
-    setScanning(true);
-    setError(null);
-    try {
-      const result = await scanWorkspace(target, { resetView: true });
-      // A manual scan of a different folder makes the previous rollback banner meaningless.
-      if (lastApply && lastApply.rootPath !== result.rootPath) {
-        setLastApply(null);
-        setRollbackConflict(null);
-        setNotice(null);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setScanning(false);
-    }
-  }, [path, scanning, scanWorkspace, lastApply]);
+  const handleBrowseSelect = useCallback(
+    async (target: string) => {
+      setBrowseOpen(false);
+      setPath(target);
+      setNotice(null);
+      await runScan(target);
+    },
+    [runScan],
+  );
 
   const handleApplied = useCallback(
     async (applyId: string, appliedFiles: string[]) => {
@@ -528,6 +632,7 @@ export default function App() {
         onPathChange={setPath}
         onScan={() => void handleScan()}
         scanning={scanning}
+        onBrowse={() => setBrowseOpen(true)}
         health={health}
         workspace={view}
         aiLabel={aiLabel}
@@ -638,33 +743,65 @@ export default function App() {
               <WarningsBar warnings={view.warnings} />
               <div className="min-h-0 flex-1">
                 {tab === 'graph' && (
-                  <MacroGraph
-                    key={view.rootPath}
-                    nodes={view.nodes}
-                    relations={view.relations}
-                    flowNodes={graph.nodes}
-                    flowEdges={graph.edges}
-                    audit={view.audit}
-                    selectedId={selectedId}
-                    onSelect={handleSelect}
-                    draft={draft}
-                    auditPending={draftAudit.pending}
-                    auditError={draftAudit.error}
-                    newRelationType={newRelationType}
-                    onNewRelationTypeChange={setNewRelationType}
-                    onConnect={handleConnect}
-                    onDisconnect={handleDisconnect}
-                    onResetDraft={handleResetDraft}
-                    onPreviewDiff={handlePreviewDiff}
-                    previewBusy={false}
-                  />
+                  <div className="flex h-full min-h-0 flex-col">
+                    <GraphFilterBar
+                      filter={graphFilter.filter}
+                      active={graphFilter.active}
+                      visibleCount={filtered?.nodes.length ?? 0}
+                      totalCount={view.nodes.length}
+                      findingsCount={view.audit.findings.length}
+                      focusEnabled={selectedId !== null}
+                      availableStacks={view.detectedStacks}
+                      searchResults={searchResults}
+                      onQueryChange={graphFilter.setQuery}
+                      onToggleLayer={graphFilter.toggleLayer}
+                      onToggleStack={graphFilter.toggleStack}
+                      onToggleIssuesOnly={graphFilter.toggleIssuesOnly}
+                      onToggleFocus={graphFilter.toggleFocusOneHop}
+                      onReset={graphFilter.reset}
+                      onPickResult={handlePickSearchResult}
+                    />
+                    <div className="min-h-0 flex-1">
+                      <MacroGraph
+                        key={view.rootPath}
+                        nodes={filtered?.nodes ?? NO_NODES}
+                        relations={filtered?.relations ?? NO_RELATIONS}
+                        flowNodes={graph.nodes}
+                        flowEdges={graph.edges}
+                        audit={view.audit}
+                        selectedId={selectedId}
+                        onSelect={handleSelect}
+                        draft={draft}
+                        auditPending={draftAudit.pending}
+                        auditError={draftAudit.error}
+                        newRelationType={newRelationType}
+                        onNewRelationTypeChange={setNewRelationType}
+                        onConnect={handleConnect}
+                        onDisconnect={handleDisconnect}
+                        onResetDraft={handleResetDraft}
+                        onPreviewDiff={handlePreviewDiff}
+                        previewBusy={false}
+                        centerRequest={centerRequest}
+                      />
+                    </div>
+                  </div>
                 )}
                 {tab === 'uml' && (
                   <UmlDiagram
                     key={`${view.rootPath}-uml`}
-                    diagram={view.mermaidClassDiagram}
-                    componentCount={view.nodes.length}
+                    diagram={filtered?.active ? (subsetDiagram ?? '') : view.mermaidClassDiagram}
+                    componentCount={filtered?.active ? (filtered?.nodes.length ?? 0) : view.nodes.length}
+                    totalComponentCount={view.nodes.length}
                     draftPending={draftDirty}
+                    filterActive={filtered?.active ?? false}
+                    focusActive={filtered?.focusActive ?? false}
+                    filterSummary={filterSummary}
+                    subsetLoading={subsetLoading}
+                    findingsCount={view.audit.findings.length}
+                    canFocusSelected={selectedId !== null}
+                    onFocusSelected={() => graphFilter.setFocusOneHop(true)}
+                    onShowIssuesOnly={() => graphFilter.setIssuesOnly(true)}
+                    onResetFilters={graphFilter.reset}
                   />
                 )}
                 {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}
@@ -759,6 +896,11 @@ export default function App() {
       </div>
 
       <AiSettingsModal open={aiModalOpen} onClose={() => setAiModalOpen(false)} />
+      <FolderBrowserModal
+        open={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        onSelect={(target) => void handleBrowseSelect(target)}
+      />
     </div>
   );
 }

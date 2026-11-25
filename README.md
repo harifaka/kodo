@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and three optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Laya Decision Layer](https://img.shields.io/badge/Status%20v0.5%20%C2%B7%20Phases%201--10%20delivered-brightgreen.svg)
+![Status: Large-Repo UX](https://img.shields.io/badge/Status%20v0.6%20%C2%B7%20Phases%201--11%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -22,6 +22,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Deploy Studio:** Generates non-root multi-stage `Dockerfile`s, a healthchecked `docker-compose.yml` (PostgreSQL / Redis / RabbitMQ on a `kodo-net` bridge) and a placeholder-only `.env.example` — then controls local Docker (compose up/down, live health, filterable logs), exports Git branches and GitHub PRs, and records every apply/rollback/deploy/Git action in a local append-only audit log.
 - **Ephemeral Build Verification (Phase 9):** **Verify Build (Sandbox)** compiles — and optionally unit-tests — the exact proposed patches before they reach disk, inside a disposable, non-root, `--network=none` container built from pre-warmed Maven 3.9/JDK 21, .NET 8 SDK or Node 22 images. The workspace is streamed in as an in-memory tar snapshot (never mounted), output streams live into the UI, diagnostics are parsed per compiler, and a failing build can hand its errors to the AI Copilot for a reviewed fix.
 - **System 1 Decision Layer (Phase 10):** **Laya** — a local, non-autoregressive 421M decision model — runs over `/v1/systemone` (Ollama or `laya-serve`) to triage audit findings, route work between deterministic AST/Builder paths and DeepSeek (System 2), and pre-screen proposed diffs in milliseconds. Every decision becomes an inspectable, tenant-scoped **ADR** with accept/override feedback and a JSONL training export. It is **advisory only**: it never writes to disk and degrades cleanly to deterministic rules + manual DeepSeek triggers when offline.
+- **Dual-Mode Folder Browser & Large-Repo Ergonomics (Phase 11):** a **Browse…** modal lists your real host folders **in place — zero uploads, zero copies** — whether Kodo runs natively (Windows drives, `~`, `/`) or in Docker (the `/projects` mount, with an actionable hint when the mount is still the empty `.kodo-empty` placeholder). Immediate child folders are badged by marker files (`Spring Boot / Java`, `C# / .NET`, `Node.js`, `Python`) with monorepo drill-down. The Macro Graph gains `Ctrl+K` search, layer/stack filter pills, **Issues Only**, and a **1-Hop Focus** mode; the Mermaid UML view renders the same filtered subset and guards diagrams over 60 classes. Browsing is **local-only — always `403` in `KODO_MODE=saas`**.
 
 ---
 
@@ -61,9 +62,16 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
               -> System 2 DeepSeek only when Laya's calibrated confidence says so
       Laya never generates text, never writes to disk and never replaces the deterministic gates.
 
+    Local UX lane (Phase 11, local modes only):
+      Kodo UI "Browse…" -> GET /api/v1/fs/browse?path=...&showHidden=...
+                        -> app/services/fs_browser.py (scandir only; zero-copy, in place)
+                        -> roots: KODO_BROWSE_ROOTS | Docker /projects + workspaces | host drives
+      Always 403 FS_BROWSE_DISABLED_IN_SAAS in KODO_MODE=saas (gated before authentication).
+      Filtered/1-hop IR subsets -> POST /api/v1/mermaid (pure, in-memory) -> UML view.
+
 ---
 
-## Quick Start (Phases 1–10, local + SaaS)
+## Quick Start (Phases 1–11, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -90,9 +98,13 @@ KODO_LOCAL_PROJECTS_DIR=C:/work
 KODO_WEB_PORT=3000
 ```
 
-Scan `/projects` (or `/projects/<subfolder>`) in the UI. `docker-compose.override.yml.example` shows
-the extra host mounts and how to expose FastAPI on `:8088` for `/docs`. Production hosts pull the
-prebuilt GHCR images instead of building:
+Then press **Browse…** in the top bar: it lists `/projects` in place (zero-copy — nothing is uploaded
+or copied) with stack badges and monorepo drill-down, and **Select & Scan Current Folder** fills the
+path and scans immediately. If `/projects` is still the committed empty placeholder, the modal tells
+you exactly which `KODO_LOCAL_PROJECTS_DIR` line to add and to run `docker compose up -d`. Need more
+than one mount? Set `KODO_BROWSE_ROOTS=/projects,/mnt/other` (comma-separated, absolute container
+paths). `docker-compose.override.yml.example` shows the extra host mounts and how to expose FastAPI on
+`:8088` for `/docs`. Production hosts pull the prebuilt GHCR images instead of building:
 
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -117,7 +129,9 @@ cd apps/web ; npm install ; npm run dev
 In dev the UI defaults to `http://localhost:8088` (override with `VITE_API_BASE_URL`); production
 bundles default to same-origin relative paths behind Nginx. Docker Desktop is only needed for the
 Roslyn container, the whole-stack mode and the **Deploy** tab; scanning, auditing, editing and Git
-export all work against a local uvicorn too.
+export all work against a local uvicorn too. A natively running API can **Browse…** your real
+filesystem in place — Windows drive roots (`C:\`, `D:\`, …) or `~` / `/` on POSIX — with no bind
+mounts and no copying.
 
 Paste an absolute project path, hit **Scan Project**, and explore the Macro Graph, UML diagram and
 read-only Code Inspector. Select a component to draft business-field and annotation edits, then click
@@ -125,6 +139,13 @@ read-only Code Inspector. Select a component to draft business-field and annotat
 **Git Safety & Apply** bar shows whether the working tree is clean, lets you pick which files to write,
 and applies them atomically after a SHA-256 freshness check — with a one-click **Undo / Rollback** and
 an automatic re-scan. Dirty or non-Git workspaces require an explicit risk confirmation.
+
+Large repositories stay readable: **Ctrl+K** (⌘K) searches components by name, file path and
+annotations and centers the canvas on the match, layer/stack pills narrow the view with a live
+`Showing N / M components` badge, **Issues Only** keeps just what the audit flagged, and **Focus 1-Hop**
+restricts the graph to the selected component plus its direct neighbours. The **UML** tab renders the
+same filtered subset (server-side `POST /api/v1/mermaid`) and, above 60 classes, offers 1-hop focus,
+issues-only or an explicit **Render Full Diagram Anyway**.
 
 The **Builder** tab scaffolds whole projects: pick a stack, describe slices and business fields (or load
 the *Order + Customer + Payment* demo), then **Preview Generated Files (Dry-Run)**. Every generated file
@@ -171,18 +192,21 @@ Monaco diff. Build them once with `docker compose --profile builders build`; see
 `KODO_WORKSPACES_DIR/<user_id>/` while host Docker control is disabled. The database is just an env
 var — `KODO_DATABASE_URL` accepts SQLite or any PostgreSQL URL (bundled profile or a managed service
 such as Supabase/Neon/RDS) so you can choose local or third-party storage later in `.env`.
+Host-filesystem browsing is **local-only**: `GET /api/v1/fs/browse` always answers
+`403 FS_BROWSE_DISABLED_IN_SAAS` and SaaS keeps the Workspace Switcher / Clone Repo flow.
 
 Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.md).
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–10)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–11)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
-(v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0) and Phase 10 is the advisory System 1
-decision layer (v0.5.0)** — Kodo now covers the full **Blueprint → Audit → Safe Edit → Sandbox Verify →
-Deploy** loop plus a **System 1 → System 2** AI decision path, and ships as one container stack for both
-local self-hosting and multi-tenant SaaS.
+(v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0), Phase 10 is the advisory System 1
+decision layer (v0.5.0) and Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0)** — Kodo now
+covers the full **Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop plus a
+**System 1 → System 2** AI decision path, ships as one container stack for both local self-hosting and
+multi-tenant SaaS, and can browse your real folders in place from either runtime.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -272,24 +296,60 @@ local self-hosting and multi-tenant SaaS.
 
 ---
 
-## What's Next (v0.6+ Roadmap: Phases 11–13)
+### Phase 11: Local UX, Dual-Mode Folder Browser & Large-Repo Ergonomics - Delivered (v0.6.0)
+- **Zero-copy, in-place browsing:** `GET /api/v1/fs/browse?path=…&showHidden=…` lists one directory
+  level with `scandir` only — no uploads, no copies, no writes. Roots resolve from an explicit
+  `KODO_BROWSE_ROOTS` allow-list, or auto-detect: Docker uses the `/projects` mount (from
+  `KODO_LOCAL_PROJECTS_DIR`) plus `KODO_WORKSPACES_DIR`; native runs expose Windows drive roots or
+  `~` / `/`. Strict containment rejects `..` and escaping symlinks with
+  `403 BROWSE_PATH_OUTSIDE_ROOTS`.
+- **SaaS lockout:** `KODO_MODE=saas` answers `403 FS_BROWSE_DISABLED_IN_SAAS` for every browse request —
+  gated in the auth middleware *before* authentication — and the Browse button is never rendered.
+- **Project badges without an AST:** immediate-child marker detection only (`pom.xml` /
+  `build.gradle[.kts]`, `*.csproj` / `*.sln`, `package.json`, `pyproject.toml` / `requirements.txt` /
+  `setup.py`, `.git`) plus `hasSubdirectories` for monorepo drill-down. Python is labelled `preview`
+  (Phase 12 brings the real analyzer). Noise folders (`.git`, `node_modules`, `target`, `bin`, `obj`,
+  `.venv`, `venv`, `__pycache__`, `.idea`, `.vscode`, recycle-bin/system folders) are skipped unless
+  `showHidden` is set, and listings cap at 500 entries with `truncated: true`.
+- **Empty Docker mount helper:** browsing `/projects` while it still holds only the `.kodo-empty` →
+  `.gitkeep` placeholder returns `emptyMountHint: true` plus copyable `.env` lines
+  (`KODO_LOCAL_PROJECTS_DIR=C:\Projects` / `~/projects`) and the `docker compose up -d` command.
+- **Browse modal:** runtime badge (`Docker Mount` / `Local Filesystem`), root pills, Up + breadcrumbs,
+  instant folder filter, `Show hidden`, current-folder banner with **Select & Scan Current Folder**, and
+  a per-row hover **Scan**. Picking a folder fills the path input and immediately runs `Scan Project`.
+- **Large-repo ergonomics:** `Ctrl+K` / `⌘K` search over name, file path and annotations with
+  smooth `setCenter` navigation; layer pills (Controller, Service, Repository, Entity, DTO, UI, Other)
+  and detected-stack pills; a live `Showing N / M components` badge; **Issues Only**; **Focus 1-Hop**;
+  and **Reset Filters**. The UML tab renders the same subset via the stateless
+  `POST /api/v1/mermaid` and shows a filtered/1-hop indicator, with a >60-class guard offering 1-hop
+  focus, issues-only or **Render Full Diagram Anyway**.
+- **Evidence:** `tests/test_fs_browser.py` (12 hermetic cases: SaaS 403 anonymous + authenticated,
+  sorted listings/noise skipping, `showHidden`, marker/monorepo detection, drill-down, `..` and
+  escaping-link containment via a Windows junction fallback, empty-mount hint, unreadable-child
+  tolerance, missing-root 409) plus the subset Mermaid case in `tests/test_mermaid.py`; `pytest`
+  **249 passed / 5 skipped**, `ruff check app tests`, `npm run build` and all three
+  `docker compose config` variants green.
 
-**Planned — not delivered.** The v0.5.0 / Phases 1–10 contract above is unchanged; these three tracks
+---
+
+## What's Next (v0.7+ Roadmap: Phases 12–13)
+
+**Planned — not delivered.** The v0.6.0 / Phases 1–11 contract above is unchanged; these two tracks
 are recorded in [ROADMAP.md](ROADMAP.md) and start only in a future session.
 
 | Phase | Track | Highlights |
 | --- | --- | --- |
-| 11 | Dual-Mode Local Folder Browser & Large-Repo UX | Local-only zero-copy `GET /api/v1/fs/browse` (in-place, `403` in `KODO_MODE=saas`); `KODO_BROWSE_ROOTS` serving Docker-mounted `/projects` (from `KODO_LOCAL_PROJECTS_DIR`) **and** native host drives (`C:\`, `D:\`, `~`, `/`); **Browse Folder** modal with root switcher, breadcrumbs, stack-detection badges and monorepo sub-project picking; graph/UML quick search (`Ctrl+K`), layer/stack filters, **Issues Only** toggle and 1-hop neighborhood focus. |
 | 12 | Full Python Stack Support (FastAPI / Django / Flask) | Tree-sitter Python Core IR extraction (routers/views, services, repositories, Pydantic/SQLAlchemy/Django models, decorators, cross-module relations); Python audit rules (router-to-DB leakage, missing Pydantic validation, god classes, circular imports); byte-offset AST patching for Python; FastAPI vertical-slice plugin, Python deploy template and a pre-warmed offline `kodo-builder-python` (`ruff` + `mypy` + `pytest`) image. |
 | 13 | Production SaaS Hardening | **Alembic** migrations replacing `create_all()` for safe SQLite/PostgreSQL upgrades; per-user disk quotas, clone size caps and TTL cleanup of stale cloned workspaces; rate limiting on `/scan`, `/git/clone`, `/build/verify` and `/ai/*`; TLS reverse-proxy (Caddy/Traefik) guide with optional GitHub App short-lived tokens. |
 
 ---
 
-## Roadmap Complete (Phases 1–10 delivered)
+## Roadmap Complete (Phases 1–11 delivered)
 
-All ten phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+All eleven phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
 AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
-SaaS foundation, ephemeral builders and the Laya System 1 decision layer. Full detail and DoD evidence:
+SaaS foundation, ephemeral builders, the Laya System 1 decision layer and the local dual-mode folder
+browser with large-repo graph ergonomics. Full detail and DoD evidence:
 [ROADMAP.md](ROADMAP.md).
 
 ## License

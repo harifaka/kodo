@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–10: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer)
+# Kodo — Developer Setup (Phases 1–11: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript and C# sources onto the Core IR, runs a deterministic audit over that IR, and
@@ -44,13 +44,20 @@ every decision is persisted as a tenant-scoped **ADR** with accept/override feed
 offline or disabled the whole platform keeps working on deterministic rules and manual DeepSeek
 triggers.
 
+Phase 11 adds **local UX and large-repo ergonomics**: a local-only, zero-copy
+`GET /api/v1/fs/browse` (scandir only, `403` in SaaS) that lists the Docker `/projects` mount or the
+native host drives for one-click project picking, and Macro Graph / UML search, layer-stack filters,
+**Issues Only** and **1-Hop Focus** so 100+ component repositories stay readable. See
+[§11](#11-local-ux-folder-browser--large-repo-ergonomics-phase-11).
+
 ```
 Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root nginx)
                      │  same-origin: /api/ and /health
                      ▼
              services/api-python (FastAPI :8088)   ← Core IR, audit, dry-run + scaffold orchestrator,
                      │  HTTP/JSON                    blueprint store, AI Copilot, Deploy Studio,
-                     │  HTTPS/JSON (OpenAI-compatible) guarded apply (the only writer)
+                     │  HTTPS/JSON (OpenAI-compatible) guarded apply (the only writer),
+                     │                              local-only zero-copy folder browser (Phase 11)
                      ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
                      ├──▶ Docker CLI + daemon (compose up/down/ps/logs, list args, shell=False)
                      ├──▶ GitHub API (pull requests, only when you provide a session token)
@@ -739,6 +746,7 @@ docker compose down                                   # add -v to drop the kodo-
 | `KODO_SYSTEMONE_API_KEY` | FastAPI process | *(empty)* | Optional key for hosted `/v1/systemone`; never logged or persisted |
 | `KODO_SYSTEMONE_TIMEOUT_SECONDS` | FastAPI process | `10` | Per-decision HTTP timeout (clamped 0.5?120) |
 | `KODO_SYSTEMONE_AUTO_THRESHOLD` | FastAPI process | `0.78` | Calibrated confidence below which Kodo escalates to System 2 / human review |
+| `KODO_BROWSE_ROOTS` | FastAPI process (Compose passes it through) | *(empty = auto-detect)* | Phase 11 local-only folder browser allow-list: comma-separated **absolute** folders. Empty ⇒ Docker uses `/projects` + `KODO_WORKSPACES_DIR`, native uses host drives / `~` / `/`. Browsing is always `403` in `KODO_MODE=saas` |
 
 ---
 
@@ -751,8 +759,9 @@ docker compose down                                   # add -v to drop the kodo-
 # (generated Spring Boot / Node.js projects must score 100/100; the C# check runs when Roslyn is up),
 # the Phase 5 AI Copilot suite (httpx.MockTransport only — no network or API key needed),
 # the Phase 6 Deploy Studio suite (Docker CLI + GitHub API mocked; only local `git` runs),
-# the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required)
-# and the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed)
+# the Phase 9 builder suite (Docker CLI + LLM mocked; no daemon or network required),
+# the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed)
+# and the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -1088,14 +1097,127 @@ python -m ruff check app tests
 
 ---
 
-## 11. Repository layout
+## 11. Local UX, folder browser & large-repo ergonomics (Phase 11)
+
+### Zero-copy, in-place browsing (local modes only)
+
+`GET /api/v1/fs/browse?path=<optional>&showHidden=false` lists **one** directory level of the real
+backend filesystem using `scandir` only: no file bytes are read, nothing is uploaded or copied, and
+nothing is written. The UI uses it to fill the existing workspace path input, so the normal
+`POST /api/v1/scan` pipeline stays the only way a workspace is analysed.
+
+```powershell
+# Default start folder for the current runtime
+curl http://localhost:8088/api/v1/fs/browse
+
+# A specific folder + hidden/noise entries
+curl "http://localhost:8088/api/v1/fs/browse?path=/projects/acme-shop&showHidden=true"
+```
+
+Response shape (camelCase):
+
+```json
+{
+  "runtime": "docker",
+  "currentPath": "/projects",
+  "parentPath": null,
+  "roots": [{ "label": "Projects (/projects)", "path": "/projects" }],
+  "currentMarkers": { "stacks": [], "isGitRepo": false },
+  "entries": [
+    { "name": "acme-shop", "path": "/projects/acme-shop", "stacks": ["java"], "isGitRepo": true, "hasSubdirectories": true }
+  ],
+  "truncated": false,
+  "emptyMountHint": false,
+  "hintMessage": null
+}
+```
+
+**Root resolution (no configuration needed).**
+
+1. **`KODO_BROWSE_ROOTS`** (comma-separated, absolute): the explicit allow-list. Only existing folders
+   are offered, and the browser is **strictly contained** to them.
+2. **Docker local mode** (detected via `/.dockerenv` or the `/projects` mount): `/projects` (mapped
+   from `KODO_LOCAL_PROJECTS_DIR`) plus `KODO_WORKSPACES_DIR` when it exists — strict containment.
+3. **Native**: Windows drive roots (`C:\`, `D:\`, …) with `Path.home()` as the start folder, or
+   `~` and `/` on POSIX. No container-style containment beyond your own machine, exactly like typing a
+   path by hand.
+
+**Docker specifics.**
+
+```powershell
+# .env  (host folder -> /projects)
+KODO_LOCAL_PROJECTS_DIR=C:/work
+# optional: allow-list several mounted folders (absolute container paths)
+# KODO_BROWSE_ROOTS=/projects,/mnt/second-disk
+docker compose up -d
+```
+
+If `/projects` is still the committed `.kodo-empty` placeholder (only `.gitkeep`), the browse response
+returns `emptyMountHint: true` and the modal shows copyable `.env` lines plus
+`docker compose up -d` instead of an empty list.
+
+**Security contract.**
+
+- `KODO_MODE=saas` ⇒ **always** `403 { "code": "FS_BROWSE_DISABLED_IN_SAAS" }`, enforced in the auth
+  middleware **before** authentication, and the Browse button is not rendered.
+- With an explicit `KODO_BROWSE_ROOTS` or Docker mode, any requested path (or symlink target) outside
+  the allowed roots is `403 { "code": "BROWSE_PATH_OUTSIDE_ROOTS" }`; `..` traversal resolves first and
+  is rejected the same way. `parentPath` is `null` at a root boundary.
+- Unreadable children and broken symlinks are skipped (never a 500); unreadable *current* folders
+  answer `403 BROWSE_PERMISSION_DENIED`.
+- Noise folders (`.git`, `node_modules`, `target`, `bin`, `obj`, `.venv`, `venv`, `__pycache__`,
+  `.idea`, `.vscode`, `$RECYCLE.BIN`, `System Volume Information`) and dot-folders are hidden unless
+  `showHidden=true`; listings are alphabetically sorted and capped at **500** entries with
+  `truncated: true`.
+
+### Marker badges (no AST)
+
+Immediate children (and the current folder) are inspected for marker **filenames only**:
+`pom.xml` / `build.gradle` / `build.gradle.kts` → `java`; `*.csproj` / `*.sln` → `csharp`;
+`package.json` → `nodejs`; `pyproject.toml` / `requirements.txt` / `setup.py` → `python`; plus `.git`
+→ `isGitRepo` and `hasSubdirectories` for monorepo drill-down. Python carries a `preview` label —
+Phase 11 does **not** add a Python analyzer.
+
+### Graph & UML ergonomics
+
+- **Browse…** (local mode only) sits next to the path input; picking a folder fills the input and
+  immediately runs **Scan Project**.
+- **Ctrl+K / ⌘K** focuses the Macro Graph search (name, file path, annotations). `Enter` or a click
+  selects the component and smoothly centers the viewport.
+- **Layer pills** (Controller, Service, Repository, Entity, DTO, UI, Other), **stack pills** for the
+  detected stacks, a live `Showing N / M components` badge and **Reset Filters**.
+- **Issues Only** keeps only the components and relations named by audit findings.
+- **Focus 1-Hop** (enabled once a component is selected) keeps the selection plus its direct in/out
+  neighbours and the edges between them.
+- The **UML** tab requests the filtered subset from the stateless `POST /api/v1/mermaid`
+  (`{ nodes, relations }` → `{ diagram, nodeCount, relationCount }`, pure in-memory) and shows a
+  `filtered subset · N of M classes` / `1-hop focus` indicator.
+- **Large-graph guard:** above **60** classes with no active filter, the UML view asks you to focus a
+  1-hop neighbourhood, show issues only, or **Render Full Diagram Anyway** instead of silently
+  rendering an unreadable diagram.
+
+### Verify it
+
+```powershell
+python -m pytest tests/test_fs_browser.py tests/test_mermaid.py -q
+python -m ruff check app tests
+```
+
+Manual pass: start the stack, press **Browse…**, drill into a monorepo parent, click the hover
+**Scan** button on a sub-project, confirm the graph appears, then press `Ctrl+K`, type a component
+name, press `Enter` and check the canvas centers on it. Toggle **Issues Only** and **Focus 1-Hop** and
+switch to the UML tab to see the filtered indicator (and the >60-class guard on a large repo).
+
+---
+
+## 12. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
 docker-compose.yml                Local Docker stack: web (Nginx :3000→8080), api-python, analyzer-csharp
 docker-compose.prod.yml           GHCR-image override (publishes only the web port)
 docker-compose.override.yml.example  Optional extra mounts / published FastAPI :8088
-.env.example                      KODO_WEB_PORT, KODO_LOCAL_PROJECTS_DIR, KODO_LLM_*, GHCR coordinates
+.env.example                      KODO_WEB_PORT, KODO_LOCAL_PROJECTS_DIR, KODO_BROWSE_ROOTS, KODO_LLM_*, GHCR coordinates
 .kodo-empty/                      Placeholder bind-mount source so `docker compose up` works untouched
 .github/workflows/ci.yml          pytest + ruff, dotnet build, npm build, Docker build matrix
 .github/workflows/docker-publish.yml  semver/latest/sha images to GHCR on v* tags
@@ -1137,14 +1259,17 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   git_safety.py (read-only git), apply_service.py (the only writer),
                                   scaffold_service.py (blueprint → create-only dry-run),
                                   audit_log.py (append-only JSONL), git_remote.py (clone/export),
-                                  github_client.py (pull requests), git_errors.py
+                                  github_client.py (pull requests), git_errors.py,
+                                  fs_browser.py (Phase 11 zero-copy scandir browser + root containment)
   app/api/git_routes.py           /git/clone and /git/export endpoints
+  app/api/fs_routes.py            /fs/browse endpoint (always 403 in SaaS)
   tests/                          pytest suite incl. audit rules, schema conformance, dry-run patching,
                                   guarded apply/rollback, stack generators + 100/100 self-audit,
                                   AI Copilot (mocked httpx transport), Deploy Studio (mocked Docker CLI
                                   + GitHub API, real local git), ephemeral builders (mocked Docker CLI
-                                  and LLM, in-memory tar staging) and the System 1 decision layer
-                                  (mocked /v1/systemone, ADR isolation, training export)
+                                  and LLM, in-memory tar staging), the System 1 decision layer
+                                  (mocked /v1/systemone, ADR isolation, training export) and the
+                                  Phase 11 folder browser (temp roots, mocked Docker mount)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
   nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
@@ -1152,7 +1277,8 @@ apps/web/                         React + TypeScript + Vite + Tailwind UI
                                   DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
                                   AiSettingsModal, MethodsSection, BuildVerificationPanel,
-                                  DecisionsPanel (Phase 10 ADR tab)
+                                  DecisionsPanel (Phase 10 ADR tab), FolderBrowserModal +
+                                  GraphFilterBar + ProjectStackBadges (Phase 11)
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,

@@ -4,6 +4,7 @@ import type {
   ComponentRelation,
   FileContent,
   HealthResponse,
+  MermaidResponse,
   WorkspaceIR,
 } from '../types/core-ir';
 import type {
@@ -62,6 +63,7 @@ import type {
   TriageAuditRequest,
   TriageAuditResponse,
 } from '../types/decision';
+import type { BrowseResponse } from '../types/fs';
 
 // Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
 // paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
@@ -276,6 +278,39 @@ export const api = {
       body: JSON.stringify({ nodes, relations }),
       signal,
     });
+  },
+
+  /** Re-render the Mermaid classDiagram for a filtered / 1-hop Core IR subset (Phase 11). */
+  mermaidSubset(
+    nodes: ComponentNode[],
+    relations: ComponentRelation[],
+    signal?: AbortSignal,
+  ): Promise<MermaidResponse> {
+    return request<MermaidResponse>('/api/v1/mermaid', {
+      method: 'POST',
+      body: JSON.stringify({ nodes, relations }),
+      signal,
+    });
+  },
+
+  /**
+   * Zero-copy folder browsing (local modes only). The API lists the real directory on the backend
+   * host/mount; nothing is uploaded or copied. SaaS always answers 403.
+   */
+  browseFilesystem(
+    path?: string | null,
+    showHidden = false,
+    signal?: AbortSignal,
+  ): Promise<BrowseResponse> {
+    const params = new URLSearchParams();
+    if (path) {
+      params.set('path', path);
+    }
+    if (showHidden) {
+      params.set('showHidden', 'true');
+    }
+    const query = params.toString();
+    return request<BrowseResponse>(`/api/v1/fs/browse${query ? `?${query}` : ''}`, { signal });
   },
 
   dryRun(rootPath: string, operations: PatchOperation[], signal?: AbortSignal): Promise<DryRunResponse> {

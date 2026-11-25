@@ -1,4 +1,5 @@
 import type { Layer, RelationType, Stack } from '../types/core-ir';
+import type { ProjectStackTag } from '../types/fs';
 
 /** Column order of the Macro Graph, from inbound boundary to internals. */
 export const LAYER_ORDER: Layer[] = [
@@ -50,3 +51,39 @@ export const KIND_LABEL: Record<string, string> = {
   enum: 'enum',
   module: 'module',
 };
+
+/**
+ * Folder-browser badges (Phase 11). These come from marker files in a directory listing, not from
+ * an AST scan — Python in particular is detection-only until Phase 12 lands the real analyzer.
+ */
+export const PROJECT_STACK_META: Record<
+  ProjectStackTag,
+  { label: string; short: string; color: string; title: string }
+> = {
+  java: {
+    label: 'Spring Boot / Java',
+    short: 'Java',
+    color: '#6ee7b7',
+    title: 'Detected pom.xml / build.gradle',
+  },
+  csharp: {
+    label: 'C# / .NET',
+    short: 'C#/.NET',
+    color: '#c084fc',
+    title: 'Detected *.csproj / *.sln',
+  },
+  nodejs: {
+    label: 'Node.js',
+    short: 'Node.js',
+    color: '#facc15',
+    title: 'Detected package.json',
+  },
+  python: {
+    label: 'Python',
+    short: 'Python',
+    color: '#38bdf8',
+    title: 'Marker detection only (pyproject.toml / requirements.txt / setup.py) — full Python analysis arrives in Phase 12.',
+  },
+};
+
+export const PROJECT_STACK_ORDER: ProjectStackTag[] = ['java', 'csharp', 'nodejs', 'python'];

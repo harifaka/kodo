@@ -12,19 +12,22 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 10** is shipped as **v0.5.0 (Laya Decision Layer)** — an advisory local System 1 that
   triages findings, routes work between deterministic tools and DeepSeek, pre-screens diffs and records
   every decision as a tenant-scoped ADR.
+- **Phase 11** is shipped as **v0.6.0 (Local UX & Large-Repo Ergonomics)** — a local-only,
+  zero-copy folder browser for both Docker and native runtimes, plus Macro Graph / UML search,
+  filters, Issues Only and 1-hop focus for 100+ component repositories.
 
-> **Next evolution (v0.6+) is planned, not delivered.** Phases 11–13 — Local UX / Dual-Mode Browse
-> Folder, Full Python Stack Support and Production SaaS Hardening — are recorded in the
-> [Next Evolution](#next-evolution-v06--local-ux-python-stack--saas-hardening) section below. They are
-> **not** part of the v0.5.0 contract and are not active implementation scope until a future session
+> **Next evolution (v0.7+) is planned, not delivered.** Phases 12–13 — Full Python Stack Support and
+> Production SaaS Hardening — are recorded in the
+> [Next Evolution](#next-evolution-v07--python-stack--saas-hardening) section below. They are
+> **not** part of the v0.6.0 contract and are not active implementation scope until a future session
 > starts them.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8, 9 and 10 are delivered (v0.3.0, v0.4.0 and v0.5.0); **all ten phases of
-> the roadmap are complete**. Phases 1–10 stay below as delivered history, and the planned v0.6+ tracks
-> (Phases 11–13) are recorded at the end under *Next Evolution*.
+> by local and SaaS. Phases 8, 9, 10 and 11 are delivered (v0.3.0, v0.4.0, v0.5.0 and v0.6.0); **all
+> eleven delivered phases of the roadmap are complete**. Phases 1–11 stay below as delivered history,
+> and the planned v0.7+ tracks (Phases 12–13) are recorded at the end under *Next Evolution*.
 
 ---
 
@@ -429,38 +432,87 @@ accept/override feedback, JSONL training export and a documented degradation pat
 
 ---
 
-## Next Evolution (v0.6+ — Local UX, Python Stack & SaaS Hardening)
+## Phase 11: Local UX, Dual-Mode Folder Browser & Large-Repo Ergonomics ✅
 
-**Status: planned — not delivered.** Phases 1–10 above remain the active delivered contract
-(v0.1.0–v0.5.0). The three phases below are recorded for future sessions; implementation starts only
-when a session explicitly takes them on.
+**Status:** Delivered — v0.6.0. Local-only zero-copy browsing in both local runtimes, plus Macro Graph
+and UML ergonomics that keep 100+ component repositories usable.
 
-### Phase 11: Local UX, Dual-Mode Folder Browser & Large-Repo Ergonomics ⬜
 **Goal:** Make pointing Kodo at a real workspace on the user's own machine a one-click, zero-copy
 experience in **both** local runtimes (Docker and native), and keep the Macro Graph / UML readable on
 large repositories.
 
-- [ ] Add a local-only, **zero-copy (in-place)** server-side directory browser API
+- [x] Add a local-only, **zero-copy (in-place)** server-side directory browser API
       (`GET /api/v1/fs/browse`) that operates directly on real workspace directories without uploading
       or copying files — strictly disabled in `KODO_MODE=saas` (`403`).
-- [ ] Support both local runtimes seamlessly via configurable `KODO_BROWSE_ROOTS`:
-  - [ ] **Docker local mode:** auto-detects mounted host folders (defaulting to `/projects` mapped from
-        `KODO_LOCAL_PROJECTS_DIR`, with support for multiple mounted roots); if `/projects` is empty
-        (default `.kodo-empty`), return a clear setup hint showing how to point
-        `KODO_LOCAL_PROJECTS_DIR` in `.env` to the user's host projects directory.
-  - [ ] **Native (bare-metal) mode:** lists real host roots (Windows drive letters `C:\`, `D:\`, or
-        POSIX `~` / `/`) for direct local filesystem navigation.
-- [ ] Build a **Browse Folder** modal in the Web UI with root/drive switcher, breadcrumb navigation,
+  - [x] `app/services/fs_browser.py` + `app/api/fs_routes.py`: one `scandir` level per request, no
+        file bytes read, no writes. The UI only fills the existing path input and reuses `/scan`.
+  - [x] SaaS lockout is enforced twice: the `tenant_guard` middleware answers `403`
+        `FS_BROWSE_DISABLED_IN_SAAS` **before** authentication (so an anonymous SaaS request never sees
+        `401`), and the route re-checks `get_settings().is_saas`.
+- [x] Support both local runtimes seamlessly via configurable `KODO_BROWSE_ROOTS`:
+  - [x] **Docker local mode** (auto-detected via `/.dockerenv` or the `/projects` mount): roots default
+        to `/projects` (mapped from `KODO_LOCAL_PROJECTS_DIR`) plus `KODO_WORKSPACES_DIR` when it exists;
+        strict root containment is enforced.
+  - [x] **Empty mount detection:** browsing `/projects` when it holds no real subdirectory (only the
+        `.kodo-empty` → `.gitkeep` placeholder) returns `emptyMountHint: true` plus an actionable
+        `KODO_LOCAL_PROJECTS_DIR=C:\Projects` / `~/projects` + `docker compose up -d` snippet.
+  - [x] **Native (bare-metal) mode:** Windows drive roots (`C:\`, `D:\`, …) with `Path.home()` as the
+        start folder; POSIX exposes `~` and `/`. No container-style containment beyond the user's own
+        machine, matching the existing manual-path trust level.
+  - [x] `KODO_BROWSE_ROOTS` (comma-separated, resolved, existing folders only) is the explicit
+        allow-list and switches the browser to strict containment; `docker-compose.yml` and
+        `.env.example` pass/document it next to `KODO_LOCAL_PROJECTS_DIR`.
+- [x] Build a **Browse Folder** modal in the Web UI with root/drive switcher, breadcrumb navigation,
       automatic project/stack detection badges (`Spring Boot`, `C#/.NET`, `Node.js`, `Python`), and
       monorepo sub-project selection.
-- [ ] Improve large-codebase ergonomics in Macro Graph & UML: quick node search (`Ctrl+K`), layer/stack
+  - [x] `apps/web/src/components/FolderBrowserModal.tsx`: runtime badge (`Docker Mount` /
+        `Local Filesystem`), root pills, Up button + clickable breadcrumbs, instant client-side folder
+        filter, `Show hidden` toggle, current-folder banner with **Select & Scan Current Folder**, and a
+        per-row hover **Scan** button. Marker badges come from `pom.xml` / `*.csproj|*.sln` /
+        `package.json` / `pyproject.toml|requirements.txt|setup.py` + `.git` (Python is labelled
+        `preview` — marker detection only, no Python AST in this phase).
+  - [x] `TopBar` renders **Browse…** next to the path input in `local` mode only (never in `saas`), and
+        a selection fills the input and immediately runs `Scan Project`.
+- [x] Improve large-codebase ergonomics in Macro Graph & UML: quick node search (`Ctrl+K`), layer/stack
       filters, an **"Issues Only"** toggle, and a **1-hop Neighborhood Focus** mode so Mermaid diagrams
       stay readable on 100+ component repos.
-- **Definition of Done:** In both local Docker (`KODO_LOCAL_PROJECTS_DIR` -> `/projects`) and native
-  mode, a user can click **Browse**, navigate host folders without copying files, pick a detected
-  project or monorepo subfolder with one click, and smoothly filter/focus a 100+ node graph.
+  - [x] `lib/graphFilter.ts` + `hooks/useGraphFilter.ts` + `components/GraphFilterBar.tsx`: search
+        across name / file path / annotations (`Ctrl+K` / `⌘K` focus, Enter or click selects and
+        smoothly centers via `setCenter`), multi-select layer pills (Controller, Service, Repository,
+        Entity, DTO, UI, Other) and detected-stack pills, a live `Showing N / M components` badge, and
+        `Reset Filters`.
+  - [x] **Issues Only** keeps only the components and relations referenced by Phase 2 Audit findings;
+        **Focus 1-Hop** (enabled when a node is selected) keeps the selection, its direct in/out
+        neighbours and the edges between them.
+  - [x] `UmlDiagram` receives the filtered/1-hop subset — rendered server-side by the new stateless
+        `POST /api/v1/mermaid` (pure reuse of `generate_class_diagram`, no disk access) — and shows a
+        `filtered subset · N of M classes` / `1-hop focus` indicator. A large-graph guard intercepts
+        > 60 classes when no filter is active with **Focus Selected Node (1-Hop)**,
+        **Show Issues Only** and **Render Full Diagram Anyway** actions.
+- **Definition of Done (evidence):** In both local Docker (`KODO_LOCAL_PROJECTS_DIR` -> `/projects`)
+  and native mode, a user can click **Browse**, navigate host folders without copying files, pick a
+  detected project or monorepo subfolder with one click, and smoothly filter/focus a 100+ node graph.
+  - `tests/test_fs_browser.py` (12 hermetic cases): SaaS `403 FS_BROWSE_DISABLED_IN_SAAS` anonymous
+    **and** authenticated, sorted subdirectories with `.git`/`node_modules`/`target`/`__pycache__`/…
+    skipped, `showHidden`, stack markers + `isGitRepo` + `hasSubdirectories` (monorepo parent),
+    drill-down/up, `..` traversal and escaping-symlink (Windows junction fallback) `403
+    BROWSE_PATH_OUTSIDE_ROOTS`, `/projects` empty-mount hint, no-hint when a project is mounted,
+    `PermissionError` on an unreadable child skipped without failing the request, and
+    `409 BROWSE_NO_ROOTS` for missing configured roots.
+  - `tests/test_mermaid.py` gained the filtered-subset render case. `pytest` **249 passed / 5 skipped**
+    (only the environment-dependent Roslyn-container skips), `ruff check app tests`, `npm run build`,
+    `docker compose config`, `docker compose --profile ai-local --profile builders config` and
+    `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` are green.
+  - Security posture unchanged: browsing is read-only, tenant-gated and SaaS-disabled; no new write
+    path was added and every apply still goes through the Phase 3c pipeline.
 
 ---
+
+## Next Evolution (v0.7+ — Python Stack & SaaS Hardening)
+
+**Status: planned — not delivered.** Phases 1–11 above remain the active delivered contract
+(v0.1.0–v0.6.0). The two phases below are recorded for future sessions; implementation starts only
+when a session explicitly takes them on.
 
 ### Phase 12: Full Python Stack Support (FastAPI / Django / Flask) ⬜
 **Goal:** Elevate Python web applications from "visible in the graph" to a first-class stack across the

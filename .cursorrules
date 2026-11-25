@@ -42,14 +42,18 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - **Phase 8 (SaaS foundation) is active** — multi-tenancy, persistence and auth rules live in §3h.
 - **Phase 9 (ephemeral builders) is active** — sandboxed compile/test verification rules live in §3i.
 - **Phase 10 (Laya System 1 decision layer, `/v1/systemone`) is active** — rules live in §3j.
-- **Phases 1–10 (v0.5.0) are the active delivered contract.** Everything below them is binding:
-  do not regress the Core IR, the guarded apply, the sandbox verifier or the advisory System 1 lane.
-- **Phases 11–13 (v0.6+) are planned, NOT active.** Dual-Mode Browse Folder & Large-Repo UX (zero-copy
-  `GET /api/v1/fs/browse`, `KODO_BROWSE_ROOTS`), Full Python Stack Support (Tree-sitter Python IR,
+- **Phase 11 (local UX, dual-mode folder browser & large-repo ergonomics) is active** — rules live in
+  §3k. `GET /api/v1/fs/browse` is zero-copy, local-only and **always 403 in `KODO_MODE=saas`**.
+- **Phases 1–11 (v0.6.0) are the active delivered contract.** Everything below them is binding:
+  do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane or the
+  local-only folder browser.
+- **Phases 12–13 (v0.7+) are planned, NOT active.** Full Python Stack Support (Tree-sitter Python IR,
   Python audit rules, byte-offset patching, Python builder image) and Production SaaS Hardening
   (Alembic migrations, per-user quotas/TTL, rate limiting, TLS reverse proxy) are recorded in
   `ROADMAP.md` only. Do not add their endpoints, config, migrations, images, compose profiles or UI
-  until a task explicitly asks for them.
+  until a task explicitly asks for them. Marker-file detection for `pyproject.toml` /
+  `requirements.txt` / `setup.py` as a **Browse badge** is part of Phase 11 and does **not** authorise
+  Python AST scanning.
 
 ## 3. Write policy (hard rule)
 
@@ -372,6 +376,46 @@ Allowed:
   `app.decision.client.set_transport_override`; CI must never require Ollama, `laya-serve`, a Docker
   daemon or network access.
 
+## 3k. Local-only folder browser & graph ergonomics rules (Phase 11 — active)
+
+- **Zero-copy, in place, read-only.** `GET /api/v1/fs/browse` (`app/services/fs_browser.py`,
+  `app/api/fs_routes.py`) lists **one** directory level with `scandir` and marker filenames only. It
+  never reads file contents, never uploads, copies, moves or writes anything, and never becomes a scan
+  shortcut: the UI fills the path input and calls the ordinary `POST /api/v1/scan`.
+- **SaaS is always locked out.** `KODO_MODE=saas` must answer
+  `403 { "code": "FS_BROWSE_DISABLED_IN_SAAS" }` for every browse request — enforced in the
+  `tenant_guard` middleware **before** authentication (so an anonymous SaaS request never sees `401`)
+  and re-checked in the route. The Browse button is never rendered in SaaS mode.
+- **Roots.** `KODO_BROWSE_ROOTS` (comma-separated, resolved, existing folders) is the explicit
+  allow-list. When it is empty: Docker local mode (`/.dockerenv` or the `/projects` mount) uses
+  `/projects` plus `KODO_WORKSPACES_DIR`; native mode exposes Windows drive roots or `~` + `/`. Never
+  add a root implicitly from a client-supplied value, and never accept a client-supplied root list.
+- **Strict containment when configured or in Docker.** Reject any requested path (or symlink target)
+  outside the allowed roots with `403 BROWSE_PATH_OUTSIDE_ROOTS`; `resolve()` first so `..` and symlink
+  escapes are rejected the same way; `parentPath` is `null` at a root boundary. A symlink that escapes
+  a root is never listed.
+- **Degradation, never crashing.** Unreadable children, broken symlinks and unreadable marker files are
+  skipped (no 500, no exception); an unreadable *current* folder is `403 BROWSE_PERMISSION_DENIED`.
+  Missing configured roots are `409 BROWSE_NO_ROOTS` with a setup message.
+- **Noise + bounds.** Hidden/system/heavy folders (`.git`, `node_modules`, `target`, `bin`, `obj`,
+  `.venv`, `venv`, `__pycache__`, `.idea`, `.vscode`, `$RECYCLE.BIN`, `System Volume Information`, and
+  any dot-folder) stay hidden unless `showHidden=true`; listings are sorted and capped at **500**
+  entries with `truncated: true`. Keep marker detection immediate-children only — no recursion.
+- **Empty Docker mount is actionable, not silent.** Browsing `/projects` with no real subdirectory
+  returns `emptyMountHint: true` + a `hintMessage` naming `KODO_LOCAL_PROJECTS_DIR` and
+  `docker compose up -d`. Keep both fields in the response contract.
+- **Filtering is client-side and non-destructive.** `lib/graphFilter.ts` / `useGraphFilter.ts` derive a
+  *view* of the Core IR for the graph and UML only. The draft editor, the audit re-score and the guarded
+  apply must keep operating on the full IR; never persist or apply a filtered subset. 1-hop focus is
+  depth 1 (selected + direct in/out neighbours + edges between them) and must be inert without a
+  selection.
+- **UML subsets stay server-side.** The filtered/1-hop diagram comes from the stateless
+  `POST /api/v1/mermaid` (`app/services/mermaid.py` reuse, no disk access, no new writes). Do not
+  re-implement Mermaid generation in `apps/web`.
+- **Deterministic tests.** `tests/test_fs_browser.py` uses temporary roots and monkeypatches the Docker
+  mount / runtime detection; no test may browse a real host folder, need a Docker daemon or touch the
+  network.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -462,3 +506,11 @@ Allowed:
   banner and the **Decisions (ADR)** tab. Kill the local Laya server and confirm triage/screen routes
   still answer 200 with `available: false`, the audit panel and diff preview keep working, and no
   dialogue ever reaches disk without the normal Apply → SHA-256 → rollback path.
+- For folder-browser / graph-UX changes: `pytest services/api-python/tests/test_fs_browser.py` and
+  `tests/test_mermaid.py` must pass with no Docker daemon and no real host folder (temp roots only).
+  In `KODO_MODE=saas` confirm `GET /api/v1/fs/browse` answers `403 FS_BROWSE_DISABLED_IN_SAAS`
+  **with and without** a session token and that no Browse button renders. In `local` mode press
+  **Browse…**, drill into a monorepo parent, scan a sub-project, then use `Ctrl+K` + Enter, the layer
+  pills, **Issues Only** and **Focus 1-Hop** and confirm the UML tab matches the filtered subset
+  (including the >60-class guard). Confirm nothing was uploaded/copied (file mtimes unchanged) and
+  that `GET /api/v1/fs/browse` never returns a path outside the configured roots.

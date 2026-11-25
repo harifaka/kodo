@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.models.ir import (
     ComponentField,
     ComponentNode,
@@ -67,3 +70,45 @@ def test_diagram_drops_dangling_edges_and_dangerous_member_chars() -> None:
 
     assert "Missing" not in diagram
     assert "C0 : +Map value" in diagram
+
+
+def test_mermaid_route_renders_a_filtered_subset_in_memory() -> None:
+    """Phase 11 sends the 1-hop/filtered Core IR subset here; the route is stateless."""
+    client = TestClient(app)
+    controller = _node("OrderController", "OrderController", Layer.CONTROLLER)
+    service = _node("OrderService", "OrderService", Layer.SERVICE)
+    repository = _node("OrderRepository", "OrderRepository", Layer.REPOSITORY)
+
+    full = client.post(
+        "/api/v1/mermaid",
+        json={
+            "nodes": [controller.model_dump(by_alias=True), service.model_dump(by_alias=True), repository.model_dump(by_alias=True)],
+            "relations": [
+                {"sourceId": "OrderController", "targetId": "OrderService", "type": "depends_on"},
+                {"sourceId": "OrderService", "targetId": "OrderRepository", "type": "depends_on"},
+                {"sourceId": "OrderService", "targetId": "Missing", "type": "depends_on"},
+            ],
+        },
+    )
+
+    assert full.status_code == 200, full.text
+    body = full.json()
+    assert body["nodeCount"] == 3
+    assert body["relationCount"] == 2
+    assert "OrderRepository" in body["diagram"]
+
+    subset = client.post(
+        "/api/v1/mermaid",
+        json={
+            "nodes": [controller.model_dump(by_alias=True), service.model_dump(by_alias=True)],
+            "relations": [
+                {"sourceId": "OrderController", "targetId": "OrderService", "type": "depends_on"},
+                {"sourceId": "OrderService", "targetId": "OrderRepository", "type": "depends_on"},
+            ],
+        },
+    )
+
+    assert subset.status_code == 200, subset.text
+    assert subset.json()["nodeCount"] == 2
+    assert subset.json()["relationCount"] == 1
+    assert "Repositories" not in subset.json()["diagram"]
