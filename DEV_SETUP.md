@@ -100,7 +100,9 @@ Open **<http://localhost:3000>**. Nginx serves the static Vite bundle and proxie
 - `KODO_WEB_PORT` changes the published UI port (default `3000`).
 - Containers can only read mounted folders. Set `KODO_LOCAL_PROJECTS_DIR` in `.env` to expose a host
   folder as `/projects` (default: the committed empty `./.kodo-empty`), then scan `/projects` or
-  `/projects/<subfolder>` in the UI.
+  `/projects/<subfolder>` in the UI. Mounts are fixed when a container is created, so after editing
+  `.env` run `docker compose up -d` (or `docker compose up -d --no-deps api-python` to recreate only
+  the API) and confirm the bind with `docker inspect kodo-api-python-1 --format "{{json .Mounts}}"`.
 - Persistent state lives in the `kodo-data` volume (`/data/kodo`: SQLite database, local audit-log
   mirror + cloned workspaces; PostgreSQL uses the separate `kodo-pgdata` volume under the `saas`
   profile). `docker compose down -v` deletes it.
