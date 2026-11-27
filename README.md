@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js, Python/FastAPI) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and four optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: SaaS Hardening](https://img.shields.io/badge/Status%20v0.8%20%C2%B7%20Phases%201--13%20delivered-brightgreen.svg)
+![Status: Layered Diagrams](https://img.shields.io/badge/Status%20v0.9%20%C2%B7%20Phases%201--14%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -25,6 +25,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Dual-Mode Folder Browser & Large-Repo Ergonomics (Phase 11):** a **Browse…** modal lists your real host folders **in place — zero uploads, zero copies** — whether Kodo runs natively (Windows drives, `~`, `/`) or in Docker (the `/projects` mount, with an actionable hint when the mount is still the empty `.kodo-empty` placeholder). Immediate child folders are badged by marker files (`Spring Boot / Java`, `C# / .NET`, `Node.js`, `Python`) with monorepo drill-down. The Macro Graph gains `Ctrl+K` search, layer/stack filter pills, **Issues Only**, and a **1-Hop Focus** mode; the Mermaid UML view renders the same filtered subset and guards diagrams over 60 classes. Browsing is **local-only — always `403` in `KODO_MODE=saas`**.
 - **Full Python Stack Support (Phase 12):** Python web apps are a first-class stack end to end. The **Tree-sitter Python** analyzer maps FastAPI `APIRouter`/`FastAPI`, Flask `Blueprint` and Django `APIView`/`views.py` modules onto the Macro Graph as `router` components, plus Pydantic v2 DTOs, SQLAlchemy 2 / Django ORM entities, repositories and services with package-root-aware `import` relations. The deterministic audit recognises Pydantic `Field(...)` validation, Python layer leaks and circular imports; the byte-offset patcher edits attributes and decorators while preserving docstrings and methods; the Builder renders a **FastAPI + Pydantic + SQLAlchemy** vertical slice; Deploy Studio and the pre-warmed `kodo-builder-python` image complete the loop. Verified by scanning Kodo's own `services/api-python`.
 - **Production SaaS Hardening (Phase 13):** the database is now **Alembic-managed** — `alembic upgrade head` runs at startup, legacy `create_all()` databases are stamped at the baseline revision and upgraded in place, and `render_as_batch` keeps SQLite `ALTER TABLE` migrations safe. Tenants get **per-user disk quotas** (`500 MB` default), a **per-repo clone cap** (`200 MB`, oversized clones deleted immediately), a **workspace count cap** and **TTL cleanup** of untouched cloned repos with `workspace_ttl_cleanup` audit events. Expensive endpoints (`/scan`, `/git/clone`, `/git/export`, `/build/verify`, `/ai/*`, `/auth/github/*`) are protected by a **sliding-window rate limiter** returning `429 RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers, and `docker-compose.saas.yml` adds a **Caddy** TLS ingress plus PostgreSQL for one-command VPS deployment ([docs/SAAS_DEPLOYMENT.md](docs/SAAS_DEPLOYMENT.md)). All of it is **off by default in `KODO_MODE=local`**.
+- **Layered Diagrams & Image Export (Phase 14):** diagrams are now presentation-ready artifacts. The Mermaid `classDiagram` groups every component into fixed architectural **namespaces** — `UI`, `Controllers`, `Services`, `Repositories`, `Entities`, `DTOs`, `Other` (the same order, and the same layer/kind mapping, as the Macro Graph and the filter pills) — with deterministic ordering, `TB`/`LR` direction and **Full / Compact / Names Only** member density, while `POST /api/v1/mermaid` stays backward compatible (`{ nodes, relations }` still works). The Macro Graph renders the same bands as **swimlanes** (wide layers wrap into a tidy grid) with an **Auto-Arrange** button and a direction toggle, and both diagrams export in one click to **SVG**, **2× PNG** and raw **`.mmd`** — with a **Dark/Light** background and the active filter / **1-Hop Focus** respected. Export is a pure browser download: **zero new write paths**, nothing ever touches the scanned workspace.
 
 ---
 
@@ -71,6 +72,14 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
       Always 403 FS_BROWSE_DISABLED_IN_SAAS in KODO_MODE=saas (gated before authentication).
       Filtered/1-hop IR subsets -> POST /api/v1/mermaid (pure, in-memory) -> UML view.
 
+    Diagram lane (Phase 14, read-only, no write path):
+      Visible (filtered / 1-hop) Core IR subset
+        -> POST /api/v1/mermaid { nodes, relations, groupByLayer, direction, memberDetail }
+        -> app/services/mermaid.py (7 fixed namespaces, deterministic order) -> Mermaid render
+      Macro Graph swimlanes: apps/web/src/lib/graphLayout.ts (pure, TB or LR)
+      Export: apps/web/src/lib/diagramExport.ts (+ html-to-image for React Flow)
+        -> the browser saves an SVG / 2x PNG / .mmd Blob; nothing is uploaded or written.
+
     SaaS edge lane (Phase 13, `docker-compose.saas.yml`):
       Internet -> Caddy :443 (Let's Encrypt, HSTS, 32 MB bodies, SSE flush_interval -1)
                -> web:8080 (Nginx) -> api-python:8088 -> postgres:5432
@@ -79,7 +88,7 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
 
 ---
 
-## Quick Start (Phases 1–13, local + SaaS)
+## Quick Start (Phases 1–14, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -225,16 +234,18 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–13)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–14)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
 (v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0), Phase 10 is the advisory System 1
 decision layer (v0.5.0), Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0), Phase 12 is
-the full Python stack (v0.7.0) and Phase 13 is production SaaS hardening (v0.8.0)** — Kodo now covers
+the full Python stack (v0.7.0), Phase 13 is production SaaS hardening (v0.8.0) and Phase 14 is
+structured layered diagrams with image export (v0.9.0)** — Kodo now covers
 the full **Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop for Java, C#, Node.js
 **and Python**, plus a **System 1 → System 2** AI decision path, ships as one container stack for both
 local self-hosting and multi-tenant SaaS, can browse your real folders in place from either runtime,
-and runs a hardened multi-tenant service behind automatic HTTPS.
+runs a hardened multi-tenant service behind automatic HTTPS, and produces shareable layered
+architecture diagrams.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -440,28 +451,66 @@ and runs a hardened multi-tenant service behind automatic HTTPS.
 
 ---
 
-## Roadmap Complete (Phases 1–13 delivered)
+### Phase 14: Structured Layered UML/Graph Layout & Diagram Image Export - Delivered (v0.9.0)
+- **Layer-grouped Mermaid namespaces.** `app/services/mermaid.py::generate_class_diagram` now buckets
+  every component into the fixed order `UI → Controllers → Services → Repositories → Entities → DTOs →
+  Other` (`namespace` blocks, empty buckets omitted), sorts classes by `(name.lower(), id)`, emits
+  members and relations **after** all namespaces (one declaration per class) and sorts relations by
+  `(sourceId, targetId, type)` with duplicates collapsed. `layer_bucket()` shares the exact layer/kind
+  roll-up used by the Macro Graph, and DTOs are classified by name (`*Dto`/`*DTO`/`*Request`/
+  `*Response`) first, so Python/TS payloads (`Layer.OTHER`) always cluster.
+- **Readable at any size.** New knobs: `direction` (`TB` default / `LR`) and `member_detail`
+  (`full` / `compact` = 3 key fields + `+N more fields, M methods` / `names_only`), plus Mermaid
+  `<<annotation>>` stereotypes.
+- **Backward-compatible API.** `POST /api/v1/mermaid` accepts optional `groupByLayer`, `direction` and
+  `memberDetail`; the legacy `{ nodes, relations }` payload renders identically to the explicit
+  defaults, and `POST /api/v1/scan` uses those defaults so the first scan is already grouped.
+- **Macro Graph swimlanes.** `lib/graphLayout.ts` computes a deterministic layered swimlane layout
+  (fixed band order, alphabetical inside a band, ≤5 per row in `TB` / ≤8 per column in `LR`, short last
+  rows centred) with non-interactive band guides; `lib/layout.ts::buildGraph(nodes, relations, {
+  direction })` stays pure. **Auto-Arrange** drops manual drag offsets and re-fits, and a **TB/LR**
+  toggle re-lays out the visible set — filters, selection and draft edits survive.
+- **One-click export.** `lib/diagramExport.ts` builds a standalone SVG (explicit `xmlns`, `viewBox`,
+  `width`/`height`, solid background rect) and a 2× PNG with blank-render / tainted-canvas detection;
+  `html-to-image` captures the Macro Graph viewport. The UML toolbar adds **Grouped/Flat**, **TB/LR**,
+  **Full/Compact/Names Only**, **Dark/Light** and **Export SVG / PNG (2x) / .mmd**; the graph adds
+  **Auto-Arrange**, **TB/LR** and **Export PNG (2x) / SVG**. Macro Graph images cover the full
+  bounding box of every visible node (`getNodesBounds` + `getViewportForBounds`) instead of the current
+  pan/zoom window, and never include the minimap/controls. Files download as
+  `<project>-uml.svg|png|mmd` and `<project>-graph[-1hop|-issues|-filtered].png|svg`.
+- **Zero-write.** Layout and export are read-only: the browser saves a Blob, no workspace file, sandbox
+  or audit-log entry is created.
+- **Evidence:** `tests/test_mermaid.py` (12 cases: namespace order, empty-namespace omission,
+  relation placement + single declaration, `LR`, flat mode, `compact`/`names_only`, DTO clustering,
+  Python subscript/parameter sanitisation, clipping at a word boundary, route backward compatibility +
+  overrides + `422`), every generated variant parsed with Mermaid 11,
+  `pytest` **303 passed / 5 skipped**, `ruff check app tests`, `npm run build`,
+  `dotnet build services/analyzer-csharp --configuration Release` and `docker compose config` green.
 
-All thirteen phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+---
+
+## Roadmap Complete (Phases 1–14 delivered)
+
+All fourteen phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
 AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
 SaaS foundation, ephemeral builders, the Laya System 1 decision layer, the local dual-mode folder
-browser with large-repo graph ergonomics, full Python stack support (FastAPI / Django / Flask), and
-production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment).
+browser with large-repo graph ergonomics, full Python stack support (FastAPI / Django / Flask),
+production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment) and structured
+layered diagrams with SVG/PNG/MMD export.
 Full detail and DoD evidence: [ROADMAP.md](ROADMAP.md).
 
-## What's Next (v0.9+ Roadmap: Phases 14–15)
+## What's Next (v1.0 Roadmap: Phase 15)
 
 The next evolution track is **planned, not shipped** — it is recorded in [ROADMAP.md](ROADMAP.md) with
-unchecked sub-tasks and Definitions of Done, and nothing from it is available in this release.
-**Phases 1–13 (v0.8.0) remain the active delivered contract.**
+unchecked sub-tasks and a Definition of Done, and nothing from it is available in this release.
+**Phases 1–14 (v0.9.0) remain the active delivered contract.**
 
 | Phase | Track | What it adds | Status |
 | --- | --- | --- | --- |
-| **14** | Structured Layered UML/Graph Layout & Diagram Image Export | Layer-grouped Mermaid `classDiagram` `namespace` blocks (Controllers / Services / Repositories / Entities / DTOs / UI / Other) with deterministic ordering inside each group, a compact-vs-full member-density toggle and `TB`/`LR` layout direction; layer-aligned React Flow swimlanes with an **Auto-Arrange** button; one-click **SVG** / high-DPI **PNG** / raw `.mmd` export for both the UML diagram and the Macro Graph, respecting active filters and **1-Hop Focus**, with a light/dark export background. | 📋 Planned |
 | **15** | Kodo MCP Server | A standards-compliant **MCP Server** (Streamable HTTP `/mcp` in FastAPI plus an optional local `stdio` bridge) exposing read-only, zero-write tools — `kodo_scan_workspace`, `kodo_audit_workspace`, `kodo_get_component`, `kodo_route_task`, `kodo_screen_diff`, `kodo_dry_run_patch`, `kodo_verify_build` — behind the Phase 8 auth model and Phase 13 rate limits, with copy-paste Cursor / Claude Code setup snippets in the UI and `DEV_SETUP.md`. | 📋 Planned |
 
-Full scope, sub-tasks and Definitions of Done:
-[ROADMAP.md → Next Evolution (v0.9+)](ROADMAP.md#next-evolution-v09--structured-diagrams-image-export--mcp-server).
+Full scope, sub-tasks and the Definition of Done:
+[ROADMAP.md → Next Evolution (v1.0)](ROADMAP.md#next-evolution-v10--kodo-mcp-server).
 
 ## License
 

@@ -49,18 +49,19 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   the Python deploy template and the `kodo-builder-python` image.
 - **Phase 13 (production SaaS hardening: Alembic, quotas, TTL cleanup, rate limiting, TLS) is
   active** — rules live in §3m.
-- **Phases 1–13 (v0.8.0) are the active delivered contract.** Everything below them is binding:
+- **Phase 14 (structured layered UML/Graph layout + SVG/PNG/MMD diagram export) is active** — rules
+  live in §3n.
+- **Phases 1–14 (v0.9.0) are the active delivered contract.** Everything below them is binding:
   do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane,
-  the local-only folder browser, the Python stack or the SaaS migrations/quotas/rate limits.
-  The v0.6+ roadmap (Phases 11–13) is **complete**.
-- **Phases 14–15 (v0.9+) are planned only — not active for implementation.** Structured layered
-  UML/Graph layout with SVG/PNG image export (Phase 14) and the Kodo MCP Server (Phase 15) are recorded
-  in [ROADMAP.md](ROADMAP.md) as the next evolution track. Their unchecked sub-tasks and Definitions of
-  Done are **design intent, not a contract**: do not scaffold `/mcp` endpoints or MCP tools, export UI,
-  layout rewrites, a `stdio` bridge or any dependency for them until a future session explicitly
-  activates the phase (update §2 here and mark the roadmap task in progress at that point). When
-  activated they must **extend** — never bypass — the §3 write policy and guarded apply, §3h auth and
-  sandbox containment, §3j advisory System 1 rules and §3m SaaS guards/rate limits.
+  the local-only folder browser, the Python stack, the SaaS migrations/quotas/rate limits or the
+  layered diagrams/export. The v0.6+ roadmap (Phases 11–13) is **complete**.
+- **Phase 15 (v1.0 — Kodo MCP Server) is planned only — not active for implementation.** The MCP
+  Server is recorded in [ROADMAP.md](ROADMAP.md) as the next evolution track. Its unchecked sub-tasks
+  and Definition of Done are **design intent, not a contract**: do not scaffold `/mcp` endpoints or MCP
+  tools, a `stdio` bridge or any dependency for them until a future session explicitly activates the
+  phase (update §2 here and mark the roadmap task in progress at that point). When activated it must
+  **extend** — never bypass — the §3 write policy and guarded apply, §3h auth and sandbox containment,
+  §3j advisory System 1 rules, §3m SaaS guards/rate limits and §3n read-only diagram rules.
 
 ## 3. Write policy (hard rule)
 
@@ -511,6 +512,40 @@ Allowed:
   sandboxes, reset limiter, no network/Docker); `tests/conftest.py` boots the throwaway DB with
   `KODO_DB_AUTO_MIGRATE=false` for speed, so the migration path is covered explicitly there.
 
+## 3n. Layered diagram & export rules (Phase 14 — active)
+
+- **One taxonomy, three renderers.** The seven architectural buckets
+  (`UI`, `Controllers`, `Services`, `Repositories`, `Entities`, `DTOs`, `Other`) and their order are
+  identical in `app/services/mermaid.py::LAYER_BUCKETS`, `apps/web/src/lib/graphLayout.ts::ARCH_BAND_ORDER`
+  and `graphFilter.ts::layerGroupOf`. DTOs are classified by name (`*Dto` / `*DTO` / `*Request` /
+  `*Response`) **before** the Core IR layer, because Python/TS payloads are analysed as `other`.
+  Change the mapping in all three places or not at all.
+- **The Core IR is still the only source.** Buckets derive from `ComponentNode.layer` + `.kind`; never
+  add a `dto`/`ui` layer to the contract just for rendering, and never let the frontend re-implement
+  Mermaid generation.
+- **Mermaid emission is deterministic and duplicate-free.** Classes are declared exactly once (inside a
+  `namespace` block when grouped), sorted by `(name.lower(), id)`; members and relations are emitted
+  **after** all namespace blocks; relations sort by `(sourceId, targetId, type)` and are deduplicated.
+  Empty buckets are omitted. `classDiagram` is always followed by `direction TB|LR`.
+- **Backward-compatible API.** `POST /api/v1/mermaid` keeps `{ nodes, relations }` working and defaults
+  to `groupByLayer=true`, `direction=TB`, `memberDetail=full`. `/api/v1/scan` uses the same defaults.
+  Additive optional fields only — never rename or repurpose `nodes`/`relations`.
+- **Export is a browser download, never a write path.** `apps/web/src/lib/diagramExport.ts` and
+  `html-to-image` only produce `Blob`s the browser saves. Export must never call
+  `/api/v1/apply`, touch the workspace root, the sandbox or the audit log, and must never upload the
+  diagram anywhere. PNG export must fail with a readable message (never a blank file or an uncaught
+  tainted-canvas error) when the browser blocks rasterisation; SVG and `.mmd` always stay available.
+- **Exports respect the active view.** The UML export re-renders the *currently displayed* Mermaid
+  source (filtered / 1-hop subset included); the Macro Graph export bounds every *visible* node
+  (`getNodesBounds` + `getViewportForBounds`) instead of the current pan/zoom window, and excludes
+  React Flow controls, the minimap and the app toolbars.
+- **Layout stays derived state.** `buildGraph(nodes, relations, { direction })` is a pure function of
+  the filtered IR; Auto-Arrange only drops manual drag offsets and re-fits. Filters, draft edits,
+  selection, `Ctrl+K` search and relation editing must survive a re-layout.
+- **Deterministic tests.** `tests/test_mermaid.py` covers namespace order, empty-namespace omission,
+  relation placement/declaration uniqueness, direction, flat mode, member detail and route backward
+  compatibility without any disk or network access.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -619,3 +654,14 @@ Allowed:
   methods are untouched; apply and roll back to byte-identical content. Generate a `python-fastapi`
   blueprint and confirm the self-scan reports 100/100, then generate the Python Docker artifacts and
   confirm `docker compose config` accepts the interpolated healthcheck.
+- For layered-diagram / export changes: `pytest services/api-python/tests/test_mermaid.py` must pass
+  with no disk or network access, then scan a multi-layer project and confirm the UML tab clusters
+  DTOs, Controllers, Services, Repositories and Entities into their own namespaces in the fixed order.
+  Toggle **Grouped/Flat**, **TB/LR** and **Full/Compact/Names Only** (with and without an active
+  filter / 1-Hop Focus) and confirm each change re-renders the *visible* subset. Export SVG, PNG (2x)
+  and `.mmd` from both the UML view and the Macro Graph in **Dark** and **Light**: files must download
+  with `<project>-uml.*` / `<project>-graph[-hint].*` names, the Macro Graph image must contain every
+  visible node (not just the current viewport) and no minimap/controls, and `git status` plus every
+  workspace file mtime must stay unchanged (export is a browser download, never a write path).
+  Press **Auto-Arrange** after dragging nodes and confirm the layered layout returns with a smooth
+  `fitView` while filters, selection and draft edits survive.

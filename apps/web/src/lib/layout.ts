@@ -1,38 +1,43 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import { LAYER_META, LAYER_ORDER, RELATION_META } from './layers';
-import type { ComponentNode, ComponentRelation, Layer, RelationType, Severity } from '../types/core-ir';
+import { RELATION_META } from './layers';
+import { computeSwimlaneLayout, NODE_WIDTH, type GraphDirection } from './graphLayout';
+import type { ComponentNode, ComponentRelation, RelationType, Severity } from '../types/core-ir';
 
 export type ComponentNodeData = {
   component: ComponentNode;
   relationCount: number;
   audit?: { severity: Severity; count: number };
 };
-export type LayerHeaderData = { label: string; color: string; count: number };
+/** Non-interactive swimlane background for one architectural band (Phase 14). */
+export type LayerBandData = {
+  label: string;
+  color: string;
+  count: number;
+  direction: GraphDirection;
+};
 
-export const NODE_WIDTH = 248;
-const NODE_HEIGHT = 96;
-const COLUMN_GAP = 84;
-const SUBCOLUMN_GAP = 28;
-const ROW_GAP = 26;
-const TOP_OFFSET = 28;
-const MAX_ROWS_PER_SUBCOLUMN = 8;
+export { NODE_WIDTH, type GraphDirection };
 
 export interface RelationEdgeData extends Record<string, unknown> {
   relation: RelationType;
   onCut?: () => void;
 }
 
+export interface BuildGraphOptions {
+  direction?: GraphDirection;
+}
+
+/**
+ * Build the Macro Graph: layered swimlane bands (fixed architectural order, alphabetical inside a
+ * band, wide bands wrapped into a grid) plus the Core IR relations as edges.
+ */
 export function buildGraph(
   nodes: ComponentNode[],
   relations: ComponentRelation[],
+  options: BuildGraphOptions = {},
 ): { nodes: Node[]; edges: Edge[] } {
-  const byLayer = new Map<Layer, ComponentNode[]>();
-  for (const layer of LAYER_ORDER) {
-    byLayer.set(layer, []);
-  }
-  for (const node of nodes) {
-    byLayer.get(node.layer)?.push(node);
-  }
+  const direction = options.direction ?? 'TB';
+  const layout = computeSwimlaneLayout(nodes, direction);
 
   const degree = new Map<string, number>();
   for (const relation of relations) {
@@ -41,54 +46,49 @@ export function buildGraph(
   }
 
   const flowNodes: Node[] = [];
-  let cursorX = 0;
 
-  for (const layer of LAYER_ORDER) {
-    const layerNodes = (byLayer.get(layer) ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    if (layerNodes.length === 0) {
-      continue;
-    }
-
-    // Large layers wrap into sub-columns so the graph stays roughly viewport-shaped.
-    const subColumns = Math.ceil(layerNodes.length / MAX_ROWS_PER_SUBCOLUMN);
-    const layerWidth = subColumns * NODE_WIDTH + (subColumns - 1) * SUBCOLUMN_GAP;
-    const meta = LAYER_META[layer];
-
+  // Band guides first so they paint behind the component cards.
+  for (const band of layout.bands) {
     flowNodes.push({
-      id: `layer:${layer}`,
-      type: 'layerHeader',
-      position: { x: cursorX, y: -52 },
+      id: `band:${band.id}`,
+      type: 'layerBand',
+      position: { x: band.x, y: band.y },
       data: {
-        label: meta.label,
-        color: meta.color,
-        count: layerNodes.length,
-      } satisfies LayerHeaderData,
+        label: band.label,
+        color: band.color,
+        count: band.count,
+        direction,
+      } satisfies LayerBandData,
+      width: band.width,
+      height: band.height,
+      style: { width: band.width, height: band.height, pointerEvents: 'none' },
       selectable: false,
       draggable: false,
+      connectable: false,
+      deletable: false,
       focusable: false,
+      zIndex: 0,
     });
+  }
 
-    layerNodes.forEach((component, index) => {
-      const subColumn = Math.floor(index / MAX_ROWS_PER_SUBCOLUMN);
-      const row = index % MAX_ROWS_PER_SUBCOLUMN;
-      flowNodes.push({
-        id: component.id,
-        type: 'component',
-        position: {
-          x: cursorX + subColumn * (NODE_WIDTH + SUBCOLUMN_GAP),
-          y: TOP_OFFSET + row * (NODE_HEIGHT + ROW_GAP),
-        },
-        data: {
-          component,
-          relationCount: degree.get(component.id) ?? 0,
-        } satisfies ComponentNodeData,
-        width: NODE_WIDTH,
-        // Phase 3a edits relations only: components are never added or removed from the draft.
-        deletable: false,
-      });
+  for (const component of nodes) {
+    const position = layout.positions.get(component.id);
+    if (!position) {
+      continue;
+    }
+    flowNodes.push({
+      id: component.id,
+      type: 'component',
+      position,
+      data: {
+        component,
+        relationCount: degree.get(component.id) ?? 0,
+      } satisfies ComponentNodeData,
+      width: NODE_WIDTH,
+      selectable: true,
+      // Phase 3a edits relations only: components are never added or removed from the draft.
+      deletable: false,
     });
-
-    cursorX += layerWidth + COLUMN_GAP;
   }
 
   const edges: Edge[] = relations.map((relation) => {

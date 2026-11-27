@@ -1,7 +1,7 @@
 {
   "name": "kodo-web",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.9.0",
   "type": "module",
   "description": "Kodo — Architecture Control Center (scan, audit, guarded apply, multi-stack builder)",
   "scripts": {
@@ -12,6 +12,7 @@
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
     "@xyflow/react": "^12.3.6",
+    "html-to-image": "^1.11.13",
     "mermaid": "^11.4.1",
     "monaco-editor": "^0.52.0",
     "react": "^18.3.1",

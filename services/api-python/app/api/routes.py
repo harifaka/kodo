@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,12 +70,19 @@ class AuditRequest(BaseModel):
 
 
 class MermaidRequest(BaseModel):
-    """A filtered Core IR subset to re-render as a Mermaid classDiagram. No disk access."""
+    """A filtered Core IR subset to re-render as a Mermaid classDiagram. No disk access.
+
+    The Phase 14 layout options are optional so older callers that only send
+    ``{ nodes, relations }`` keep getting the same grouped, top-to-bottom, full-member diagram.
+    """
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
     nodes: list[ComponentNode] = Field(..., max_length=MAX_AUDIT_NODES)
     relations: list[ComponentRelation] = Field(..., max_length=MAX_AUDIT_RELATIONS)
+    group_by_layer: bool = True
+    direction: Literal["TB", "LR"] = "TB"
+    member_detail: Literal["full", "compact", "names_only"] = "full"
 
 
 class MermaidResponse(BaseModel):
@@ -210,10 +218,20 @@ async def audit_preview(request: AuditRequest) -> AuditReport:
 
 @router.post("/api/v1/mermaid", response_model=MermaidResponse, tags=["analysis"])
 async def mermaid_preview(request: MermaidRequest) -> MermaidResponse:
-    """Re-render the classDiagram for a filtered / 1-hop Core IR subset (Phase 11 ergonomics)."""
+    """Re-render the classDiagram for a filtered / 1-hop Core IR subset (Phase 11 ergonomics).
+
+    Phase 14 adds the optional layered-layout knobs; omitting them keeps the backward-compatible
+    grouped / ``TB`` / ``full`` defaults.
+    """
     relations = _live_relations(request.nodes, request.relations)
     return MermaidResponse(
-        diagram=generate_class_diagram(request.nodes, relations),
+        diagram=generate_class_diagram(
+            request.nodes,
+            relations,
+            group_by_layer=request.group_by_layer,
+            direction=request.direction,
+            member_detail=request.member_detail,
+        ),
         node_count=len(request.nodes),
         relation_count=len(relations),
     )

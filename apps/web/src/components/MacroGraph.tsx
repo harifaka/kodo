@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -9,6 +9,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getViewportForBounds,
   useNodesInitialized,
   useReactFlow,
   type Connection,
@@ -16,20 +17,31 @@ import {
   type Node,
   type NodeProps,
   type NodeTypes,
+  type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { toPng, toSvg } from 'html-to-image';
 import {
   edgeTouchesNode,
   NODE_WIDTH,
   type ComponentNodeData,
-  type LayerHeaderData,
+  type GraphDirection,
+  type LayerBandData,
   type RelationEdgeData,
 } from '../lib/layout';
 import { KIND_LABEL, LAYER_META, RELATION_META } from '../lib/layers';
 import { SEVERITY_META, auditedEdgeKeys, edgeKey, nodeAuditIndex } from '../lib/audit';
 import { keyOf, relationKey, type Draft } from '../lib/draft';
+import {
+  DiagramExportError,
+  EXPORT_BACKGROUND,
+  dataUrlToBlob,
+  downloadBlob,
+  slugifyFilename,
+  type ExportTheme,
+} from '../lib/diagramExport';
 import type { AuditReport, ComponentNode, ComponentRelation, RelationType } from '../types/core-ir';
-import { GraphIcon } from './icons';
+import { AlertIcon, DownloadIcon, FitIcon, GraphIcon } from './icons';
 import { AlertBadge } from './AuditPanel';
 import { DraftToolbar } from './DraftToolbar';
 import { edgeTypes } from './RelationEdge';
@@ -56,6 +68,12 @@ interface MacroGraphProps {
   previewBusy: boolean;
   /** Smoothly centers/fits the viewport on a node picked from the quick search (Phase 11). */
   centerRequest?: { id: string; token: number } | null;
+  /** Swimlane orientation, owned by the app so the layout survives tab switches (Phase 14). */
+  direction: GraphDirection;
+  onDirectionChange: (direction: GraphDirection) => void;
+  workspaceName: string;
+  /** e.g. `1hop` / `issues` / `filtered` — appended to exported file names. */
+  filterHint?: string | null;
 }
 
 export function MacroGraph({
@@ -77,6 +95,10 @@ export function MacroGraph({
   onPreviewDiff,
   previewBusy,
   centerRequest = null,
+  direction,
+  onDirectionChange,
+  workspaceName,
+  filterHint = null,
 }: MacroGraphProps) {
   return (
     <ReactFlowProvider>
@@ -99,6 +121,10 @@ export function MacroGraph({
         onPreviewDiff={onPreviewDiff}
         previewBusy={previewBusy}
         centerRequest={centerRequest}
+        direction={direction}
+        onDirectionChange={onDirectionChange}
+        workspaceName={workspaceName}
+        filterHint={filterHint}
       />
     </ReactFlowProvider>
   );
@@ -123,23 +149,64 @@ function MacroGraphCanvas({
   onPreviewDiff,
   previewBusy,
   centerRequest = null,
+  direction,
+  onDirectionChange,
+  workspaceName,
+  filterHint = null,
 }: MacroGraphProps) {
-  const { fitView, setCenter } = useReactFlow();
+  const { fitView, setCenter, getNodes, getNodesBounds } = useReactFlow();
   const initialized = useNodesInitialized();
 
-  const visibleSignature = useMemo(() => nodes.map((node) => node.id).join('|'), [nodes]);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [positionOverrides, setPositionOverrides] = useState<Record<string, XYPosition>>({});
+  const [arrangeToken, setArrangeToken] = useState(0);
+  const [exportTheme, setExportTheme] = useState<ExportTheme>('dark');
+  const [exporting, setExporting] = useState<'png' | 'svg' | null>(null);
+  const [exportMessage, setExportMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  const visibleSignature = useMemo(
+    () => `${direction}|${nodes.map((node) => node.id).join('|')}`,
+    [nodes, direction],
+  );
+
+  // A new layout (filter, direction, workspace) invalidates manual drag positions.
+  const layoutSignature = useMemo(
+    () => `${direction}|${flowNodes.map((node) => `${node.id}@${node.position.x},${node.position.y}`).join('|')}`,
+    [flowNodes, direction],
+  );
+  useEffect(() => {
+    setPositionOverrides({});
+  }, [layoutSignature]);
 
   useEffect(() => {
     if (!initialized) {
       return;
     }
     // Fit only once the custom nodes have measured themselves, otherwise edges/labels are clipped.
-    // Also re-fits when a layer/stack/issues/focus filter changes the visible set.
+    // Also re-fits when a layer/stack/issues/focus filter or the layout direction changes.
     const frame = window.requestAnimationFrame(() => {
       void fitView({ padding: 0.12, maxZoom: 1.05, minZoom: 0.15, duration: 180 });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [initialized, fitView, visibleSignature]);
+
+  useEffect(() => {
+    if (arrangeToken === 0) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      void fitView({ padding: 0.14, maxZoom: 1.05, minZoom: 0.15, duration: 380 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [arrangeToken, fitView]);
+
+  useEffect(() => {
+    if (!exportMessage) {
+      return;
+    }
+    const timer = window.setTimeout(() => setExportMessage(null), 7_000);
+    return () => window.clearTimeout(timer);
+  }, [exportMessage]);
 
   useEffect(() => {
     if (!centerRequest) {
@@ -168,10 +235,11 @@ function MacroGraphCanvas({
     () =>
       flowNodes.map((node) => ({
         ...node,
+        position: positionOverrides[node.id] ?? node.position,
         selected: node.id === selectedId,
-        data: { ...node.data, audit: auditByNode.get(node.id) },
+        data: node.type === 'component' ? { ...node.data, audit: auditByNode.get(node.id) } : node.data,
       })),
-    [flowNodes, selectedId, auditByNode],
+    [flowNodes, selectedId, auditByNode, positionOverrides],
   );
 
   const decoratedEdges = useMemo(
@@ -263,8 +331,87 @@ function MacroGraphCanvas({
     [onDisconnect],
   );
 
+  const handleAutoArrange = useCallback(() => {
+    setPositionOverrides({});
+    setArrangeToken((token) => token + 1);
+  }, []);
+
+  const handleExport = useCallback(
+    async (format: 'png' | 'svg') => {
+      if (exporting) {
+        return;
+      }
+      setExporting(format);
+      setExportMessage(null);
+      try {
+        const viewport = canvasRef.current?.querySelector<HTMLElement>('.react-flow__viewport');
+        if (!viewport) {
+          throw new DiagramExportError('The graph is not ready to export yet.');
+        }
+
+        // Capture every visible component (not the current pan/zoom window); swimlane bands are part
+        // of the diagram, while minimap/toolbar/controls are overlay UI outside `.react-flow__viewport`.
+        const visible = getNodes().filter((node) => node.type === 'component');
+        if (visible.length === 0) {
+          throw new DiagramExportError('There is nothing to export — no visible components.');
+        }
+        const framed = getNodes().filter(
+          (node) => node.type === 'component' || node.type === 'layerBand',
+        );
+
+        const bounds = getNodesBounds(framed);
+        const padding = 48;
+        const padded = {
+          x: bounds.x - padding,
+          y: bounds.y - padding,
+          width: bounds.width + padding * 2,
+          height: bounds.height + padding * 2,
+        };
+        const imageWidth = Math.max(320, Math.min(4096, Math.ceil(padded.width)));
+        const imageHeight = Math.max(240, Math.min(4096, Math.ceil(padded.height)));
+        const transform = getViewportForBounds(padded, imageWidth, imageHeight, 0.02, 2, 0);
+
+        const options = {
+          backgroundColor: EXPORT_BACKGROUND[exportTheme],
+          width: imageWidth,
+          height: imageHeight,
+          pixelRatio: 2,
+          style: {
+            width: `${imageWidth}px`,
+            height: `${imageHeight}px`,
+            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+          },
+        };
+
+        const slug = slugifyFilename(workspaceName);
+        const hint = filterHint ? `-${slugifyFilename(filterHint, 'filtered')}` : '';
+
+        if (format === 'png') {
+          const dataUrl = await toPng(viewport, options);
+          downloadBlob(await dataUrlToBlob(dataUrl), `${slug}-graph${hint}.png`);
+          setExportMessage({ kind: 'ok', text: 'PNG exported at 2x.' });
+        } else {
+          const dataUrl = await toSvg(viewport, options);
+          downloadBlob(await dataUrlToBlob(dataUrl), `${slug}-graph${hint}.svg`);
+          setExportMessage({ kind: 'ok', text: 'SVG exported.' });
+        }
+      } catch (reason) {
+        const text =
+          reason instanceof DiagramExportError
+            ? reason.message
+            : reason instanceof Error
+              ? reason.message
+              : 'The graph could not be exported.';
+        setExportMessage({ kind: 'error', text });
+      } finally {
+        setExporting(null);
+      }
+    },
+    [exporting, exportTheme, filterHint, getNodes, getNodesBounds, workspaceName],
+  );
+
   return (
-    <div className="relative h-full w-full bg-ink-950">
+    <div ref={canvasRef} className="relative h-full w-full bg-ink-950">
       <ReactFlow
         nodes={decoratedNodes}
         edges={interactiveEdges}
@@ -279,6 +426,11 @@ function MacroGraphCanvas({
           if (node.type === 'component') {
             onSelect((node.data as ComponentNodeData).component);
             void fitView({ nodes: [{ id: node.id }], padding: 3, duration: 220, maxZoom: 1.1 });
+          }
+        }}
+        onNodeDragStop={(_event, node) => {
+          if (node.type === 'component') {
+            setPositionOverrides((current) => ({ ...current, [node.id]: node.position }));
           }
         }}
         onPaneClick={() => onSelect(null)}
@@ -336,6 +488,34 @@ function MacroGraphCanvas({
         )}
       </div>
 
+      <div className="absolute left-4 top-[46px] z-10 flex items-center gap-1 rounded-lg border border-ink-700/80 bg-ink-900/90 p-1 backdrop-blur">
+        <button
+          type="button"
+          onClick={handleAutoArrange}
+          title="Re-apply the layered swimlane layout and fit the view"
+          className="inline-flex items-center gap-1.5 rounded-md border border-ink-600/80 px-2 py-1 text-[10.5px] text-slate-300 transition hover:border-sky-400/60 hover:text-sky-200"
+        >
+          <FitIcon className="h-3.5 w-3.5" />
+          Auto-Arrange
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <Segmented
+          value={direction}
+          options={[
+            { id: 'TB', label: 'TB', title: 'Top-to-bottom swimlanes' },
+            { id: 'LR', label: 'LR', title: 'Left-to-right columns' },
+          ]}
+          onChange={(next) => onDirectionChange(next as GraphDirection)}
+        />
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <ExportMenu
+          theme={exportTheme}
+          onThemeChange={setExportTheme}
+          busy={exporting}
+          onExport={(format) => void handleExport(format)}
+        />
+      </div>
+
       <DraftToolbar
         draft={draft}
         relationType={newRelationType}
@@ -366,6 +546,25 @@ function MacroGraphCanvas({
         ))}
       </div>
 
+      {exportMessage && (
+        <div
+          className={`absolute bottom-16 left-1/2 z-20 -translate-x-1/2 rounded-lg border px-3 py-2 text-[11px] shadow-panel backdrop-blur ${
+            exportMessage.kind === 'error'
+              ? 'border-rose-500/40 bg-rose-950/80 text-rose-100'
+              : 'border-emerald-400/40 bg-emerald-950/80 text-emerald-100'
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            {exportMessage.kind === 'error' ? (
+              <AlertIcon className="h-3.5 w-3.5" />
+            ) : (
+              <DownloadIcon className="h-3.5 w-3.5" />
+            )}
+            {exportMessage.text}
+          </span>
+        </div>
+      )}
+
       {nodes.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="rounded-xl border border-ink-700 bg-ink-900/90 px-6 py-5 text-center">
@@ -380,6 +579,117 @@ function MacroGraphCanvas({
   );
 }
 
+interface SegmentedOption {
+  id: string;
+  label: string;
+  title?: string;
+}
+
+function Segmented({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: SegmentedOption[];
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex items-center overflow-hidden rounded-md border border-ink-600/80">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          title={option.title ?? option.label}
+          onClick={() => onChange(option.id)}
+          className={`px-2 py-1 text-[10.5px] transition ${
+            value === option.id
+              ? 'bg-ink-700 text-slate-100'
+              : 'text-slate-500 hover:bg-ink-800 hover:text-slate-300'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ExportMenu({
+  theme,
+  onThemeChange,
+  busy,
+  onExport,
+}: {
+  theme: ExportTheme;
+  onThemeChange: (theme: ExportTheme) => void;
+  busy: 'png' | 'svg' | null;
+  onExport: (format: 'png' | 'svg') => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10.5px] transition ${
+          open
+            ? 'border-sky-500/60 bg-sky-500/10 text-sky-200'
+            : 'border-ink-600/80 text-slate-300 hover:border-sky-400/60 hover:text-sky-200'
+        }`}
+      >
+        <DownloadIcon className="h-3.5 w-3.5" />
+        Export
+        {busy && <span className="font-mono text-[9px] text-sky-300/80">{busy}…</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-20 mt-1.5 w-56 rounded-lg border border-ink-700 bg-ink-900/98 p-2 shadow-panel">
+            <p className="mb-1 text-[9px] uppercase tracking-[0.16em] text-slate-500">Background</p>
+            <Segmented
+              value={theme}
+              options={[
+                { id: 'dark', label: 'Dark', title: 'Dark background' },
+                { id: 'light', label: 'Light', title: 'White background for PRs and wikis' },
+              ]}
+              onChange={(next) => onThemeChange(next as ExportTheme)}
+            />
+            <div className="mt-2 flex flex-col gap-1">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  setOpen(false);
+                  onExport('png');
+                }}
+                className="rounded-md border border-ink-600 px-2 py-1.5 text-left text-[11px] text-slate-300 transition hover:border-sky-400/60 hover:text-sky-200 disabled:opacity-50"
+              >
+                Export PNG (2x)
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  setOpen(false);
+                  onExport('svg');
+                }}
+                className="rounded-md border border-ink-600 px-2 py-1.5 text-left text-[11px] text-slate-300 transition hover:border-sky-400/60 hover:text-sky-200 disabled:opacity-50"
+              >
+                Export SVG
+              </button>
+            </div>
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-500">
+              Captures every visible component at its full bounding box. Nothing is written to disk.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function relationTypeOf(edge: Edge): RelationType {
   const value = edge.data?.relation;
   return typeof value === 'string' ? (value as RelationType) : 'depends_on';
@@ -387,7 +697,7 @@ function relationTypeOf(edge: Edge): RelationType {
 
 const nodeTypes = {
   component: ComponentCard,
-  layerHeader: LayerHeaderCard,
+  layerBand: LayerBandCard,
 } satisfies NodeTypes;
 
 function ComponentCard({ data, selected }: NodeProps<Node<ComponentNodeData, 'component'>>) {
@@ -456,14 +766,19 @@ function ComponentCard({ data, selected }: NodeProps<Node<ComponentNodeData, 'co
   );
 }
 
-function LayerHeaderCard({ data }: NodeProps<Node<LayerHeaderData, 'layerHeader'>>) {
+function LayerBandCard({ data }: NodeProps<Node<LayerBandData, 'layerBand'>>) {
   return (
-    <div className="flex w-[248px] items-center gap-2 border-b pb-1.5" style={{ borderColor: `${data.color}44` }}>
-      <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: data.color }} />
-      <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: data.color }}>
-        {data.label}
-      </span>
-      <span className="rounded bg-ink-800 px-1.5 text-[10px] text-slate-400">{data.count}</span>
+    <div
+      className="h-full w-full rounded-2xl border border-dashed"
+      style={{ borderColor: `${data.color}33`, backgroundColor: `${data.color}0a` }}
+    >
+      <div className="flex items-center gap-2 px-3 py-2">
+        <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: data.color }} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: data.color }}>
+          {data.label}
+        </span>
+        <span className="rounded bg-ink-950/60 px-1.5 text-[10px] text-slate-400">{data.count}</span>
+      </div>
     </div>
   );
 }

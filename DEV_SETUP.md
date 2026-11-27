@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–13: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack, Production SaaS Hardening)
+# Kodo — Developer Setup (Phases 1–14: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack, Production SaaS Hardening, Structured Layered Diagrams & Image Export)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript, C# **and Python** sources onto the Core IR, runs a deterministic audit over that
@@ -50,6 +50,14 @@ Phase 11 adds **local UX and large-repo ergonomics**: a local-only, zero-copy
 native host drives for one-click project picking, and Macro Graph / UML search, layer-stack filters,
 **Issues Only** and **1-Hop Focus** so 100+ component repositories stay readable. See
 [§11](#11-local-ux-folder-browser--large-repo-ergonomics-phase-11).
+
+Phase 12 makes **Python a first-class stack** and Phase 13 adds **production SaaS hardening**
+(Alembic, quotas, TTL cleanup, rate limits, Caddy TLS). Phase 14 turns the diagrams into shareable
+artifacts: the Mermaid `classDiagram` is grouped into fixed architectural `namespace` blocks, the
+Macro Graph renders the same bands as swimlanes with **Auto-Arrange**, and both export to SVG,
+2× PNG and `.mmd` **entirely in the browser** (no write path). See
+[§12](#12-saas-hardening-migrations-quotas-ttl-cleanup--rate-limits-phase-13) and
+[§13](#13-layered-diagrams--image-export-phase-14).
 
 ```
 Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root nginx)
@@ -845,8 +853,10 @@ docker compose down                                   # add -v to drop the kodo-
 # the Phase 10 System 1 suite (httpx.MockTransport only ? no Ollama/laya-serve needed),
 # the Phase 11 folder-browser suite (temporary roots; Docker mount detection monkeypatched),
 # the Phase 12 Python suite (Tree-sitter analyzer, patcher, FastAPI generator, deploy template,
-# builder config; no network, Docker daemon or host toolchain) and the Phase 13 hardening suite
-# (Alembic fresh + legacy upgrades, storage quotas, clone caps, TTL cleanup, rate limits)
+# builder config; no network, Docker daemon or host toolchain), the Phase 13 hardening suite
+# (Alembic fresh + legacy upgrades, storage quotas, clone caps, TTL cleanup, rate limits) and the
+# Phase 14 Mermaid suite (namespace order, relation placement, direction, member detail, route
+# backward compatibility; no disk or network access)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -1279,7 +1289,9 @@ analyzer does the real Python AST work.
   neighbours and the edges between them.
 - The **UML** tab requests the filtered subset from the stateless `POST /api/v1/mermaid`
   (`{ nodes, relations }` → `{ diagram, nodeCount, relationCount }`, pure in-memory) and shows a
-  `filtered subset · N of M classes` / `1-hop focus` indicator.
+  `filtered subset · N of M classes` / `1-hop focus` indicator. Phase 14 adds the optional
+  `groupByLayer` / `direction` / `memberDetail` layout knobs and the SVG/PNG/MMD export toolbar —
+  see [§13](#13-layered-diagrams--image-export-phase-14).
 - **Large-graph guard:** above **60** classes with no active filter, the UML view asks you to focus a
   1-hop neighbourhood, show issues only, or **Render Full Diagram Anyway** instead of silently
   rendering an unreadable diagram.
@@ -1384,7 +1396,108 @@ then delete a workspace and confirm the bar drops by that repo's size.
 
 ---
 
-## 13. Repository layout
+## 13. Layered diagrams & image export (Phase 14)
+
+Diagrams are generated server-side from the Core IR and exported **entirely in the browser** — export
+adds **no write path**: it saves an SVG/PNG/`.mmd` file through a Blob download and never touches the
+workspace, the sandbox or the audit log.
+
+### Layered Mermaid `classDiagram`
+
+Every component is bucketed into one of seven fixed architectural namespaces, in this order:
+
+| Bucket | Rule |
+| --- | --- |
+| `UI` | `layer` in `ui` / `view` / `viewmodel` / `component`, or a `view`/`view_model` kind |
+| `Controllers` | `layer == controller` or `kind == router` |
+| `Services` | `layer == service` |
+| `Repositories` | `layer == repository` |
+| `Entities` | `layer == entity` |
+| `DTOs` | name ends with `Dto` / `DTO` / `Request` / `Response` (checked first, so Python/TS payloads on the `other` layer still cluster) |
+| `Other` | everything else |
+
+- Empty namespaces are omitted; classes sort by `(name.lower(), id)`; members and relations are emitted
+  **after** the namespace blocks so each class is declared exactly once; relations sort by
+  `(sourceId, targetId, type)`.
+- `direction` (`TB` default, `LR`) sets the Mermaid `direction` directive.
+- `member_detail`:
+  - `full` — up to 10 fields + 10 methods per class (default),
+  - `compact` — first 3 fields + a `+N more fields, M methods` summary line,
+  - `names_only` — headers and `<<annotation>>` stereotypes only.
+- DTOs/entities/services… always sit in the same namespace in the UML view **and** the Macro Graph,
+  because `app/services/mermaid.py::layer_bucket` and `apps/web/src/lib/graphFilter.ts::layerGroupOf`
+  implement the same roll-up.
+
+### API
+
+```powershell
+# Backward compatible: the Phase 11 payload still works and equals the explicit defaults
+curl -X POST http://localhost:8088/api/v1/mermaid -H "Content-Type: application/json" `
+  -d '{"nodes": [...], "relations": [...]}'
+
+# Explicit layered layout (all three fields are optional)
+curl -X POST http://localhost:8088/api/v1/mermaid -H "Content-Type: application/json" `
+  -d '{"nodes": [...], "relations": [...], "groupByLayer": true, "direction": "LR", "memberDetail": "compact"}'
+# -> { "diagram": "classDiagram\n    direction LR\n    namespace UI { ...", "nodeCount": N, "relationCount": M }
+```
+
+`POST /api/v1/scan` always uses the defaults (`groupByLayer=true`, `direction=TB`,
+`memberDetail=full`), so the very first scan renders grouped namespaces.
+
+### Macro Graph swimlanes
+
+`apps/web/src/lib/graphLayout.ts` lays the visible components out in the same seven bands:
+
+- **TB** — horizontal bands top-to-bottom, ≤5 cards per row, wide layers wrap into a centred grid.
+- **LR** — vertical columns left-to-right, ≤8 cards per column.
+- Non-interactive translucent band guides label each lane with its name and count.
+- **Auto-Arrange** (Macro Graph toolbar) drops manual drag offsets and re-applies the layout with a
+  smooth `fitView`; the **TB / LR** toggle re-lays out the visible set. Filters, `Ctrl+K` search,
+  selection, relation drafting and the audit preview all survive a re-layout.
+
+### Export (UML tab and Macro Graph)
+
+| Control | Where | Result |
+| --- | --- | --- |
+| **Grouped / Flat** | UML toolbar | `namespace` blocks vs. a flat class list |
+| **TB / LR** | UML toolbar, graph toolbar | Mermaid direction; swimlane orientation |
+| **Full / Compact / Names Only** | UML toolbar | Member density |
+| **Dark / Light** | Both toolbars | Export background (`#0b0f16` / `#ffffff`); Light uses a high-contrast print/PR palette |
+| **Export SVG** | Both | Standalone `.svg` with explicit `xmlns`, `viewBox` and background rect |
+| **Export PNG (2x)** | Both | HiDPI raster at 2× with the chosen background |
+| **Download .mmd** | UML | Raw Mermaid source |
+
+- File names: `<project>-uml.svg|png|mmd` and `<project>-graph[-1hop|-issues|-filtered].png|svg`.
+- UML exports re-render the **currently displayed** Mermaid source, so an active layer/stack/search
+  filter or **1-Hop Focus** is respected.
+- Macro Graph exports use `getNodesBounds` + `getViewportForBounds` over **every visible node** (band
+  guides included) instead of the current pan/zoom window; React Flow's minimap, controls and the app
+  toolbars live outside `.react-flow__viewport` and are never captured. `html-to-image` renders the
+  DOM (HTML cards + SVG edges) to a PNG/SVG.
+- Rasterisation is defensive: a blocked or empty render raises a readable toast (`DiagramExportError`)
+  instead of a blank file or an uncaught tainted-canvas error — SVG and `.mmd` always remain available.
+
+### Verify it
+
+```powershell
+cd services/api-python
+python -m pytest tests/test_mermaid.py -q
+python -m ruff check app tests
+
+cd ../../apps/web
+npm run build
+```
+
+Manual pass: scan a multi-layer project, open **UML** and confirm `UI`, `Controllers`, `Services`,
+`Repositories`, `Entities`, `DTOs` and `Other` appear in that order; switch **TB ↔ LR**,
+**Grouped ↔ Flat** and **Full ↔ Compact ↔ Names Only**; export SVG, PNG (2x) and `.mmd` in **Dark**
+and **Light**. Then open **Graph**, press **Auto-Arrange** after dragging a card, toggle **TB/LR**, and
+export a PNG whose bounds cover every visible card (and no minimap). `git status` in the scanned
+workspace must stay clean.
+
+---
+
+## 14. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
@@ -1456,8 +1569,9 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   + GitHub API, real local git), ephemeral builders (mocked Docker CLI
                                   and LLM, in-memory tar staging), the System 1 decision layer
                                   (mocked /v1/systemone, ADR isolation, training export) and the
-                                  Phase 11 folder browser (temp roots, mocked Docker mount) and the
+                                  Phase 11 folder browser (temp roots, mocked Docker mount), the
                                   Phase 12 Python stack (analyzer, patcher, generator, deploy, builder)
+                                  and the Phase 14 layered Mermaid/export suite (test_mermaid.py)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
   nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
@@ -1467,6 +1581,8 @@ apps/web/                         React + TypeScript + Vite + Tailwind UI
                                   AiSettingsModal, MethodsSection, BuildVerificationPanel,
                                   DecisionsPanel (Phase 10 ADR tab), FolderBrowserModal +
                                   GraphFilterBar + ProjectStackBadges (Phase 11)
+  src/lib/graphLayout.ts          Phase 14 layered swimlane geometry (fixed bands, wrapping, TB/LR)
+  src/lib/diagramExport.ts        Phase 14 SVG/PNG/MMD export helpers (standalone SVG, 2x raster, Blob download)
 ```
 
 Contract changes must be applied to `packages/core-ir/schema.json`, `app/models/ir.py`,

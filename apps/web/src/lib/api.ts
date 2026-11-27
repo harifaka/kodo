@@ -4,6 +4,7 @@ import type {
   ComponentRelation,
   FileContent,
   HealthResponse,
+  MermaidLayoutOptions,
   MermaidResponse,
   WorkspaceIR,
 } from '../types/core-ir';
@@ -318,11 +319,13 @@ export const api = {
   mermaidSubset(
     nodes: ComponentNode[],
     relations: ComponentRelation[],
+    options?: MermaidLayoutOptions,
     signal?: AbortSignal,
   ): Promise<MermaidResponse> {
     return request<MermaidResponse>('/api/v1/mermaid', {
       method: 'POST',
-      body: JSON.stringify({ nodes, relations }),
+      // Phase 14 layout options are optional: omitting them keeps the grouped/TB/full defaults.
+      body: JSON.stringify({ nodes, relations, ...(options ?? {}) }),
       signal,
     });
   },

@@ -77,15 +77,16 @@ app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–13. "
+        "Kodo Architecture Control Center — Phases 1–14. "
         "Analyzes Spring Boot, Node.js, .NET and Python workspaces into the Core IR, runs the "
         "deterministic audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical "
         "slices from a versioned blueprint, proposes AI patches through an OpenAI-compatible "
         "DeepSeek/Ollama client, triages/routes/screens with an advisory local System 1 (Laya) "
         "decision layer backed by tenant-scoped ADRs, generates production Docker artifacts (reviewed "
         "through the same diff), verifies proposed code in network-isolated ephemeral builder "
-        "containers, controls local Docker Compose, exports Git branches/pull requests, and browses "
-        "local host/mount folders in place (zero-copy, SaaS-disabled) — all applied to disk behind "
+        "containers, controls local Docker Compose, exports Git branches/pull requests, browses "
+        "local host/mount folders in place (zero-copy, SaaS-disabled) and renders layer-grouped "
+        "Mermaid/UML diagrams ready for SVG/PNG export — all applied to disk behind "
         "path-containment, SHA-256 optimistic concurrency and Git working-tree guards. SaaS mode adds "
         "Alembic migrations, per-user storage quotas, TTL cleanup and per-bucket rate limiting."
     ),

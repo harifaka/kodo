@@ -1,8 +1,19 @@
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  buildStandaloneSvg,
+  DiagramExportError,
+  downloadBlob,
+  downloadText,
+  slugifyFilename,
+  svgToPngBlob,
+  type ExportTheme,
+} from '../lib/diagramExport';
+import type { DiagramDirection, DiagramMemberDetail, MermaidLayoutOptions } from '../types/core-ir';
 import {
   AlertIcon,
   CodeIcon,
+  DownloadIcon,
   FitIcon,
   ScanIcon,
   ShieldIcon,
@@ -29,6 +40,11 @@ interface UmlDiagramProps {
   onFocusSelected?: () => void;
   onShowIssuesOnly?: () => void;
   onResetFilters?: () => void;
+  /** Layered layout knobs owned by the app so the choice survives tab switches (Phase 14). */
+  layout?: MermaidLayoutOptions;
+  onLayoutChange?: (next: MermaidLayoutOptions) => void;
+  /** Used for export file names (`<project>-uml.svg`). */
+  projectName?: string;
 }
 
 interface ViewTransform {
@@ -42,18 +58,34 @@ type MermaidApi = typeof import('mermaid').default;
 let mermaidApi: MermaidApi | null = null;
 let renderCounter = 0;
 
-async function loadMermaid(): Promise<MermaidApi> {
-  if (mermaidApi) {
-    return mermaidApi;
+const FONT_FAMILY = 'Inter, "Segoe UI", system-ui, sans-serif';
+
+/** Theme variables for on-screen rendering and for exports (dark view vs. print-friendly light). */
+function themeConfig(theme: ExportTheme) {
+  if (theme === 'light') {
+    return {
+      theme: 'default' as const,
+      themeVariables: {
+        background: '#ffffff',
+        primaryColor: '#f8fafc',
+        primaryTextColor: '#0f172a',
+        primaryBorderColor: '#cbd5e1',
+        secondaryColor: '#eef2f7',
+        tertiaryColor: '#f1f5f9',
+        lineColor: '#475569',
+        textColor: '#1e293b',
+        classText: '#0f172a',
+        clusterBkg: '#f8fafc',
+        clusterBorder: '#cbd5e1',
+        titleColor: '#0f172a',
+        edgeLabelBackground: '#ffffff',
+        fontSize: '15px',
+      },
+    };
   }
 
-  const module = await import('mermaid');
-  const instance = module.default;
-  instance.initialize({
-    startOnLoad: false,
-    theme: 'dark',
-    securityLevel: 'strict',
-    fontFamily: 'Inter, "Segoe UI", system-ui, sans-serif',
+  return {
+    theme: 'dark' as const,
     themeVariables: {
       background: '#0b0f16',
       primaryColor: '#131a25',
@@ -70,7 +102,25 @@ async function loadMermaid(): Promise<MermaidApi> {
       edgeLabelBackground: '#0b0f16',
       fontSize: '15px',
     },
+  };
+}
+
+function applyTheme(instance: MermaidApi, theme: ExportTheme): void {
+  instance.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    fontFamily: FONT_FAMILY,
+    ...themeConfig(theme),
   });
+}
+
+async function loadMermaid(): Promise<MermaidApi> {
+  if (mermaidApi) {
+    return mermaidApi;
+  }
+  const module = await import('mermaid');
+  const instance = module.default;
+  applyTheme(instance, 'dark');
   mermaidApi = instance;
   return instance;
 }
@@ -92,6 +142,9 @@ export function UmlDiagram({
   onFocusSelected,
   onShowIssuesOnly,
   onResetFilters,
+  layout,
+  onLayoutChange,
+  projectName,
 }: UmlDiagramProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
@@ -102,8 +155,12 @@ export function UmlDiagram({
   const [view, setView] = useState<ViewTransform>(viewRef.current);
   const [showSource, setShowSource] = useState(false);
   const [forceFullRender, setForceFullRender] = useState(false);
+  const [exportTheme, setExportTheme] = useState<ExportTheme>('dark');
+  const [exporting, setExporting] = useState<'svg' | 'png' | 'mmd' | null>(null);
+  const [exportMessage, setExportMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const total = totalComponentCount ?? componentCount;
+  const options = layout ?? DEFAULT_LAYOUT;
 
   useEffect(() => {
     // A different workspace starts the guard over; an active filter supersedes it.
@@ -115,6 +172,14 @@ export function UmlDiagram({
       setForceFullRender(false);
     }
   }, [filterActive]);
+
+  useEffect(() => {
+    if (!exportMessage) {
+      return;
+    }
+    const timer = window.setTimeout(() => setExportMessage(null), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [exportMessage]);
 
   const largeGraphGuard = !filterActive && total > LARGE_GRAPH_THRESHOLD && !forceFullRender;
 
@@ -290,6 +355,66 @@ export function UmlDiagram({
     });
   };
 
+  const patchOptions = (patch: Partial<MermaidLayoutOptions>) => {
+    onLayoutChange?.({ ...options, ...patch });
+  };
+
+  const handleExport = useCallback(
+    async (kind: 'svg' | 'png' | 'mmd') => {
+      if (exporting) {
+        return;
+      }
+      if (!diagram.trim()) {
+        setExportMessage({ kind: 'error', text: 'There is no diagram to export yet.' });
+        return;
+      }
+
+      setExporting(kind);
+      setExportMessage(null);
+      const slug = slugifyFilename(projectName);
+
+      try {
+        if (kind === 'mmd') {
+          downloadText(diagram, `${slug}-uml.mmd`);
+          setExportMessage({ kind: 'ok', text: 'Mermaid source downloaded.' });
+          return;
+        }
+
+        // Re-render from the Mermaid source with the chosen theme so the export is theme-faithful
+        // (the on-screen SVG is always the dark app theme).
+        const mermaid = await loadMermaid();
+        applyTheme(mermaid, exportTheme);
+        let raw: string;
+        try {
+          renderCounter += 1;
+          raw = (await mermaid.render(`kodo-uml-export-${renderCounter}`, diagram)).svg;
+        } finally {
+          applyTheme(mermaid, 'dark');
+        }
+
+        const standalone = buildStandaloneSvg(raw, exportTheme);
+        if (kind === 'svg') {
+          downloadBlob(new Blob([standalone], { type: 'image/svg+xml;charset=utf-8' }), `${slug}-uml.svg`);
+          setExportMessage({ kind: 'ok', text: 'SVG exported.' });
+        } else {
+          downloadBlob(await svgToPngBlob(standalone, exportTheme, 2), `${slug}-uml.png`);
+          setExportMessage({ kind: 'ok', text: 'PNG exported at 2x.' });
+        }
+      } catch (reason) {
+        const text =
+          reason instanceof DiagramExportError
+            ? reason.message
+            : reason instanceof Error
+              ? reason.message
+              : 'The diagram could not be exported.';
+        setExportMessage({ kind: 'error', text });
+      } finally {
+        setExporting(null);
+      }
+    },
+    [diagram, exportTheme, exporting, projectName],
+  );
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-ink-950">
       <div className="absolute inset-0 opacity-[0.55]" style={gridBackground} aria-hidden />
@@ -335,7 +460,7 @@ export function UmlDiagram({
         />
       </div>
 
-      <div className="pointer-events-none absolute left-4 top-3 flex items-center gap-3 rounded-lg border border-ink-700/70 bg-ink-900/80 px-3 py-1.5 backdrop-blur">
+      <div className="pointer-events-none absolute left-4 top-3 z-20 flex items-center gap-3 rounded-lg border border-ink-700/70 bg-ink-900/80 px-3 py-1.5 backdrop-blur">
         <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
           <ShieldIcon className="h-3.5 w-3.5 text-violet-400" />
           Generated UML
@@ -384,7 +509,49 @@ export function UmlDiagram({
         )}
       </div>
 
-      <div className="absolute right-4 top-3 flex items-center gap-2">
+      <div className="absolute left-4 top-[46px] z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-1 rounded-lg border border-ink-700/80 bg-ink-900/90 p-1 backdrop-blur">
+        <Segmented
+          value={options.groupByLayer ? 'grouped' : 'flat'}
+          options={[
+            { id: 'grouped', label: 'Grouped', title: 'Layer namespaces (UI, Controllers, Services, …)' },
+            { id: 'flat', label: 'Flat', title: 'One flat class list' },
+          ]}
+          onChange={(next) => patchOptions({ groupByLayer: next === 'grouped' })}
+        />
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <Segmented
+          value={options.direction}
+          options={[
+            { id: 'TB', label: 'TB', title: 'Top-to-bottom' },
+            { id: 'LR', label: 'LR', title: 'Left-to-right' },
+          ]}
+          onChange={(next) => patchOptions({ direction: next as DiagramDirection })}
+        />
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <select
+          value={options.memberDetail}
+          onChange={(event) => patchOptions({ memberDetail: event.target.value as DiagramMemberDetail })}
+          title="How much of each class to render"
+          className="rounded-md border border-ink-600/80 bg-ink-900 px-1.5 py-1 text-[10.5px] text-slate-300 outline-none transition hover:border-sky-400/60 focus:border-sky-400/70"
+        >
+          <option value="full">Full</option>
+          <option value="compact">Compact</option>
+          <option value="names_only">Names Only</option>
+        </select>
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <Segmented
+          value={exportTheme}
+          options={[
+            { id: 'dark', label: 'Dark', title: 'Dark export background' },
+            { id: 'light', label: 'Light', title: 'White, print/PR-friendly export' },
+          ]}
+          onChange={(next) => setExportTheme(next as ExportTheme)}
+        />
+        <span className="mx-0.5 h-4 w-px bg-ink-700" />
+        <ExportMenu busy={exporting} onExport={(kind) => void handleExport(kind)} />
+      </div>
+
+      <div className="absolute right-4 top-3 z-20 flex items-center gap-2">
         <button
           type="button"
           onClick={() => setShowSource((value) => !value)}
@@ -425,6 +592,25 @@ export function UmlDiagram({
           <FitIcon />
         </IconButton>
       </div>
+
+      {exportMessage && (
+        <div
+          className={`absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-lg border px-3 py-2 text-[11px] shadow-panel backdrop-blur ${
+            exportMessage.kind === 'error'
+              ? 'border-rose-500/40 bg-rose-950/80 text-rose-100'
+              : 'border-emerald-400/40 bg-emerald-950/80 text-emerald-100'
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            {exportMessage.kind === 'error' ? (
+              <AlertIcon className="h-3.5 w-3.5" />
+            ) : (
+              <DownloadIcon className="h-3.5 w-3.5" />
+            )}
+            {exportMessage.text}
+          </span>
+        </div>
+      )}
 
       {showSource && (
         <div className="absolute bottom-16 right-4 top-16 w-[min(560px,45%)] overflow-auto rounded-lg border border-ink-700 bg-ink-950/95 p-3 shadow-panel">
@@ -514,6 +700,110 @@ export function UmlDiagram({
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+const DEFAULT_LAYOUT: MermaidLayoutOptions = {
+  groupByLayer: true,
+  direction: 'TB',
+  memberDetail: 'full',
+};
+
+interface SegmentedOption {
+  id: string;
+  label: string;
+  title?: string;
+}
+
+function Segmented({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: SegmentedOption[];
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex items-center overflow-hidden rounded-md border border-ink-600/80">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          title={option.title ?? option.label}
+          onClick={() => onChange(option.id)}
+          className={`px-2 py-1 text-[10.5px] transition ${
+            value === option.id
+              ? 'bg-ink-700 text-slate-100'
+              : 'text-slate-500 hover:bg-ink-800 hover:text-slate-300'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ExportMenu({
+  busy,
+  onExport,
+}: {
+  busy: 'svg' | 'png' | 'mmd' | null;
+  onExport: (kind: 'svg' | 'png' | 'mmd') => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const items: Array<{ id: 'svg' | 'png' | 'mmd'; label: string; hint: string }> = useMemo(
+    () => [
+      { id: 'svg', label: 'Export SVG', hint: 'vector, scales infinitely' },
+      { id: 'png', label: 'Export PNG (2x)', hint: 'HiDPI raster with the chosen background' },
+      { id: 'mmd', label: 'Download .mmd', hint: 'raw Mermaid source' },
+    ],
+    [],
+  );
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10.5px] transition ${
+          open
+            ? 'border-sky-500/60 bg-sky-500/10 text-sky-200'
+            : 'border-ink-600/80 text-slate-300 hover:border-sky-400/60 hover:text-sky-200'
+        }`}
+      >
+        <DownloadIcon className="h-3.5 w-3.5" />
+        Export
+        {busy && <span className="font-mono text-[9px] text-sky-300/80">{busy}…</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-20 mt-1.5 w-60 rounded-lg border border-ink-700 bg-ink-900/98 p-1.5 shadow-panel">
+            {items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  setOpen(false);
+                  onExport(item.id);
+                }}
+                className="block w-full rounded-md px-2 py-1.5 text-left transition hover:bg-ink-800 disabled:opacity-50"
+              >
+                <span className="block text-[11px] text-slate-200">{item.label}</span>
+                <span className="block text-[9.5px] text-slate-500">{item.hint}</span>
+              </button>
+            ))}
+            <p className="px-2 pb-1 pt-1.5 text-[9px] leading-relaxed text-slate-500">
+              Exports the currently visible filtered / 1-hop subset. Downloads only — nothing is written to
+              the workspace.
+            </p>
+          </div>
+        </>
       )}
     </div>
   );

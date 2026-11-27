@@ -70,7 +70,14 @@ async def build_workspace(raw_path: str) -> WorkspaceIR:
         detected_stacks=detect_stacks(scan),
         nodes=nodes,
         relations=relations,
-        mermaid_class_diagram=generate_class_diagram(nodes, relations),
+        # Phase 14 defaults: layer-grouped namespaces, top-to-bottom, full members.
+        mermaid_class_diagram=generate_class_diagram(
+            nodes,
+            relations,
+            group_by_layer=True,
+            direction="TB",
+            member_detail="full",
+        ),
         warnings=warnings,
         audit=run_audit(nodes, relations),
     )

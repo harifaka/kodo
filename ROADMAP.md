@@ -21,21 +21,24 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 13** is shipped as **v0.8.0 (Production SaaS Hardening)** — Alembic migrations with safe
   legacy-DB upgrades, per-user disk quotas / clone caps / TTL cleanup, per-bucket API rate limiting and
   a Caddy TLS + PostgreSQL VPS deployment overlay.
-- **Phases 14–15** form the **planned v0.9+ evolution track** — structured layered UML/Graph layout with
-  one-click SVG/PNG image export, and a standards-compliant **Kodo MCP Server** for AI coding agents.
-  They are recorded at the end of this file as **Next Evolution (v0.9+)** and are **not yet delivered**.
+- **Phase 14** is shipped as **v0.9.0 (Structured Layered Diagrams & Image Export)** — layer-grouped
+  Mermaid `classDiagram` namespaces, layered swimlane Macro Graph auto-arrange and one-click
+  SVG / high-DPI PNG / `.mmd` export for both diagrams.
+- **Phase 15** is the **planned next track** — a standards-compliant **Kodo MCP Server** for AI coding
+  agents. It is recorded at the end of this file as **Next Evolution (v1.0)** and is **not yet
+  delivered**.
 
-> **The v0.6+ roadmap (Phases 11–13) is complete.** All thirteen phases of that track are delivered;
-> Phase 13 is recorded at the end of this file with its Definition-of-Done evidence. The next planned
-> track is **v0.9+ (Phases 14–15)** — structured diagrams, image export and the MCP Server — recorded
-> below as design-only roadmap items awaiting a future implementation session.
+> **The v0.6+ roadmap (Phases 11–13) is complete and Phase 14 (v0.9.0) is delivered.** Fourteen of the
+> fifteen phases are live; Phase 13 and Phase 14 are recorded at the end of this file with their
+> Definition-of-Done evidence. The next planned track is **Phase 15 (v1.0)** — the Kodo MCP Server —
+> recorded below as a design-only roadmap item awaiting a future implementation session.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8–13 are delivered (v0.3.0–v0.8.0); **all thirteen delivered phases of the
-> roadmap are complete**. Phases 1–13 stay below as delivered history; the planned **v0.9+** track
-> (Phases 14–15) is appended at the end of this file.
+> by local and SaaS. Phases 8–14 are delivered (v0.3.0–v0.9.0); **all fourteen delivered phases of the
+> roadmap are complete**. Phases 1–14 stay below as delivered history; the planned **v1.0** track
+> (Phase 15) is appended at the end of this file.
 
 ---
 
@@ -649,52 +652,102 @@ runbook. Every guard defaults to *off/inert* in `KODO_MODE=local`.
 
 ---
 
-## Next Evolution (v0.9+ — Structured Diagrams, Image Export & MCP Server)
+## Delivered — Structured Layered Diagrams & Image Export (v0.9.0)
 
-**Status: planned — not yet implemented.** Phases 1–13 (v0.8.0) remain the active, binding delivered
-contract; nothing in this section is live yet and no source, Docker, workflow or test file should change
-for it until a future session explicitly activates the phase. Both phases below stay **unchecked** until
-their Definition of Done has been verified end to end.
-
-### Phase 14: Structured Layered UML/Graph Layout & Diagram Image Export
+### Phase 14: Structured Layered UML/Graph Layout & Diagram Image Export ✅ (v0.9.0)
 **Goal:** Turn Kodo's diagrams into presentation-ready architecture artifacts — layered, deterministic and
 exportable — instead of a flat class dump that has to be hand-arranged before it can be shared.
 
-- [ ] Upgrade Mermaid `classDiagram` generation (`services/api-python/app/services/mermaid.py`) from a
-      flat class dump to **layer-grouped `namespace` blocks** (`Controllers`, `Services`,
-      `Repositories`, `Entities`, `DTOs`, `UI`, `Other`), with deterministic alphabetical ordering
-      inside each group.
-  - Replace the single flat class/relation emit with a layer-bucketed renderer that reuses the existing
-    `ComponentNode.layer` classification (the same layer/kind mapping that drives the Macro Graph colour
-    scheme and the Phase 11 layer filter pills) instead of inventing a second taxonomy.
-  - Add an optional **layer-collapse / member-density toggle**: *compact* (class boxes only, relations
-    intact) vs. *full* (fields + methods + annotations), so very large repositories still render a
-    readable diagram.
-  - Add a configurable **layout direction** (`TB` top-to-bottom, default, or `LR` left-to-right) rendered
-    through the Mermaid `direction` directive in the diagram header.
-  - Keep the Phase 11 filtered-subset behaviour: exporting the UML for an active filter / **1-Hop Focus**
-    must render exactly the visible subset (and keep the >60-class guard) rather than the whole workspace.
-- [ ] Enhance the Macro Graph (React Flow) layout with clean **layer-aligned swimlanes** and an
-      **Auto-Arrange** button, so Controllers, Services, Repositories, Entities and DTOs line up
-      predictably without manual dragging.
-  - Extend `apps/web/src/lib/layout.ts` with a deterministic layer-banded pass (fixed lane per layer, stable
-    intra-lane ordering by name) and a one-shot **Auto-Arrange** action that preserves node identity,
-    selection, draft edits and the current filter state.
-  - Keep the existing graph interactions intact: `Ctrl+K` search, layer/stack pills, **Issues Only**,
-    **1-Hop Focus**, relation draft editing and the live audit preview must all survive a re-layout.
-- [ ] Add one-click **Image Export** for both the **Mermaid UML Diagram** and the **Macro Graph**:
+**Status:** Delivered — the Mermaid `classDiagram` is now grouped into fixed architectural namespaces,
+the Macro Graph renders deterministic swimlanes with Auto-Arrange and a `TB`/`LR` toggle, and both
+diagrams export to SVG, 2× PNG and `.mmd` **entirely in the browser**. Layout and export are pure
+read-only operations: no new API write path, no file touched in the scanned workspace.
+
+- [x] Upgrade Mermaid `classDiagram` generation (`services/api-python/app/services/mermaid.py`) from a
+      flat class dump to **layer-grouped `namespace` blocks** (`UI`, `Controllers`, `Services`,
+      `Repositories`, `Entities`, `DTOs`, `Other`), with deterministic alphabetical ordering inside each
+      group.
+  - `layer_bucket(node)` reuses the Core IR `layer`/`kind` taxonomy with the *same* roll-up as the
+    Macro Graph colours and the Phase 11 filter pills (`graphFilter.ts::layerGroupOf`); DTOs are
+    classified by name (`*Dto` / `*DTO` / `*Request` / `*Response`) **before** the layer, because
+    Python/TS payloads are analysed as `other` — so DTOs always cluster together in both renderers.
+  - Buckets emit in the fixed order `UI → Controllers → Services → Repositories → Entities → DTOs →
+    Other`; empty buckets are omitted, classes sort by `(name.lower(), id)`, members and relations are
+    emitted **after** every namespace block (one declaration per class, no duplicated nodes), and
+    relations sort by `(sourceId, targetId, type)` with duplicates collapsed.
+  - Optional **member-density toggle**: `full` (fields + methods, capped at 10 each), `compact`
+    (top 3 fields + a `+N more fields, M methods` summary line) and `names_only` (headers and
+    stereotypes only) — stereotypes render Mermaid `<<annotation>>` blocks.
+  - Configurable **layout direction** (`TB` default, `LR`) emitted through the `direction` directive.
+  - Phase 11 filtered-subset behaviour preserved: the UML tab still requests the visible subset from
+    `POST /api/v1/mermaid` (and now also whenever a non-default layout is requested), so exports always
+    follow active filters / **1-Hop Focus**, and the >60-class guard stays.
+- [x] Enhance the Macro Graph (React Flow) layout with clean **layer-aligned swimlanes** and an
+      **Auto-Arrange** button.
+  - `apps/web/src/lib/graphLayout.ts` implements the deterministic swimlane pass: fixed band order,
+    alphabetical ordering inside a band, and wide layers wrap into a compact grid (≤5 nodes per row in
+    `TB`, ≤8 per column in `LR`) with short last rows centred, so 25 DTOs form a tidy grid instead of a
+    10 000 px strip. `lib/layout.ts::buildGraph(nodes, relations, { direction })` turns it into React
+    Flow nodes plus non-interactive `layerBand` background guides (translucent, `pointer-events: none`,
+    label + count).
+  - **Auto-Arrange** button clears manual drag offsets and re-applies the layered layout with a smooth
+    `fitView`; a **TB/LR** toggle re-lays out the visible set. Band geometry is derived state, so
+    `Ctrl+K` search, layer/stack pills, **Issues Only**, **1-Hop Focus**, relation drafting and the live
+    audit preview all survive a re-layout.
+- [x] Add one-click **Image Export** for both the **Mermaid UML Diagram** and the **Macro Graph**:
       `SVG` and high-DPI `PNG`, plus a raw `.mmd` download, all respecting the active filters /
       **1-Hop Focus**.
-  - UML: export the server-rendered Mermaid source (`.mmd`) plus client-side `SVG` and rasterised
-    `PNG` at 2x/3x device scale; Macro Graph: serialise the React Flow viewport to `SVG`/`PNG` with the
-    current nodes, edges, colours and focus state.
-  - Offer a **light/dark background toggle** on export so the output is legible in PR descriptions,
-    wikis and architecture docs regardless of the app theme.
-  - Export is client-triggered and adds **no new write path**: it downloads a file in the browser and must
-    never write to the workspace root, the sandbox or the guarded apply pipeline.
+  - `apps/web/src/lib/diagramExport.ts` centralises the browser-only export: standalone SVG with
+    explicit `xmlns`/`viewBox`/`width`/`height` and a solid background rect, 2× canvas rasterisation
+    with blank-render and tainted-canvas detection (clear error message instead of a silent empty file),
+    filename slugging and Blob downloads.
+  - UML (`UmlDiagram.tsx`): **Grouped/Flat**, **TB/LR**, **Full/Compact/Names Only**, **Dark/Light**
+    export background, plus **Export SVG**, **Export PNG (2x)** and **Download .mmd**. Exports
+    re-render the currently displayed Mermaid source with the chosen theme (light uses a
+    white/slate, PR- and wiki-friendly palette).
+  - Macro Graph (`MacroGraph.tsx`): **Export PNG (2x)** / **Export SVG** with a Dark/Light background,
+    captured with `getNodesBounds` + `getViewportForBounds` over **every visible node** (band guides
+    included) at 2× `pixelRatio` via `html-to-image`, so the image is the full diagram rather than the
+    current pan/zoom window; React Flow controls, the minimap and the app toolbars live outside
+    `.react-flow__viewport` and are never captured.
+  - File names carry workspace + filter hints (`api-python-uml.svg`, `api-python-graph-1hop.png`).
+- [x] Backward-compatible API.
+  - `POST /api/v1/mermaid` gains optional `groupByLayer` / `direction` / `memberDetail` (defaults
+    `true` / `TB` / `full`): a payload with only `{ nodes, relations }` produces byte-identical output
+    to the explicit defaults. `POST /api/v1/scan` uses the same defaults, so the first scan already
+    renders grouped namespaces.
 - **Definition of Done:** Scanning a multi-layer project renders a cleanly grouped Mermaid `classDiagram`
   (DTOs, Controllers, Services, Repositories and Entities clustered in their own namespaces), and both the
   UML diagram and the Macro Graph export cleanly to crisp SVG and PNG files.
+  - `tests/test_mermaid.py` (12 cases) covers the fixed namespace order, empty-namespace omission,
+    relation placement after the namespaces with one declaration per class, `LR` vs `TB`,
+    `group_by_layer=False`, `compact` / `names_only` member density, DTO clustering for `other`-layer
+    payloads, Python subscript/parameter sanitisation (a regression found by rendering a real scan),
+    word-boundary clipping, and `POST /api/v1/mermaid` backward compatibility plus explicit overrides
+    (and a `422` for an invalid direction).
+  - Every generated variant (full / compact / names-only / flat / LR) was parsed with Mermaid 11 —
+    including the **208-component / 255-relation** self-scan of `services/api-python` — to confirm the
+    emitted `classDiagram` is valid syntax.
+  - `pytest` **303 passed / 5 skipped** (only the environment-dependent Roslyn-container skips),
+    `ruff check app tests`, `npm run build` (TypeScript + Vite, including `html-to-image`),
+    `dotnet build services/analyzer-csharp --configuration Release` and `docker compose config`
+    (base + prod + SaaS overlay) are green.
+  - Browser-verified: the UML tab renders the `Controllers` / `Entities` / `DTOs` / `Other` namespaces
+    for an issues-only subset and exports a 2× PNG (~577 KB), a standalone light-theme SVG (explicit
+    `xmlns`, `viewBox`, white background) and the raw `.mmd`; the Macro Graph renders the band guides
+    (`Controllers 10`, `Services 3`, `Entities 10`, `DTOs 50`, `Other 135`), flips `TB` ↔ `LR`, and
+    exports a 2× PNG / SVG covering every visible node.
+  - Zero-write posture unchanged: layout and export are 100% read-only / client-side downloads — no
+    workspace file, sandbox or audit-log entry is ever created by a render or an export.
+
+---
+
+## Next Evolution (v1.0 — Kodo MCP Server)
+
+**Status: Phase 14 delivered (v0.9.0); Phase 15 planned.** Phases 1–14 are the active, binding
+delivered contract. Phase 15 below is recorded as design intent — no source, Docker, workflow or test
+file changes for it until a future session explicitly activates it. It stays **unchecked** until its
+Definition of Done has been verified end to end.
 
 ### Phase 15: Kodo MCP Server (Model Context Protocol for AI Coding Agents)
 **Goal:** Make Kodo's architecture intelligence directly callable from inside an AI coding agent, so the

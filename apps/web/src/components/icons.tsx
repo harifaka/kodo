@@ -221,3 +221,13 @@ export function DecisionIcon({ className = 'h-4 w-4' }: IconProps) {
     </svg>
   );
 }
+
+/** Diagram image export (Phase 14). */
+export function DownloadIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M12 4v10.5M8 11l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 17.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-1.5" strokeLinecap="round" />
+    </svg>
+  );
+}

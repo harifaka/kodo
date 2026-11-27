@@ -51,6 +51,7 @@ import {
   type Draft,
 } from './lib/draft';
 import { buildGraph } from './lib/layout';
+import type { GraphDirection } from './lib/graphLayout';
 import type { AuthMeResponse, WorkspaceStorage, WorkspaceSummary } from './types/account';
 import type { PlanPreview } from './types/ai';
 import type {
@@ -58,6 +59,7 @@ import type {
   ComponentField,
   ComponentNode,
   ComponentRelation,
+  MermaidLayoutOptions,
   RelationType,
   WorkspaceIR,
 } from './types/core-ir';
@@ -68,6 +70,12 @@ const LAST_PATH_KEY = 'kodo:lastPath';
 // Stable empty arrays: useDraftAudit keys its effect on these inputs.
 const NO_NODES: ComponentNode[] = [];
 const NO_RELATIONS: ComponentRelation[] = [];
+// Phase 14: the API defaults (grouped / TB / full) — see `MermaidRequest` in routes.py.
+const DEFAULT_UML_LAYOUT: MermaidLayoutOptions = {
+  groupByLayer: true,
+  direction: 'TB',
+  memberDetail: 'full',
+};
 
 export default function App() {
   const [path, setPath] = useState(() => window.localStorage.getItem(LAST_PATH_KEY) ?? '');
@@ -94,6 +102,8 @@ export default function App() {
   const [centerRequest, setCenterRequest] = useState<{ id: string; token: number } | null>(null);
   const [subsetDiagram, setSubsetDiagram] = useState<string | null>(null);
   const [subsetLoading, setSubsetLoading] = useState(false);
+  const [graphDirection, setGraphDirection] = useState<GraphDirection>('TB');
+  const [umlLayout, setUmlLayout] = useState<MermaidLayoutOptions>(DEFAULT_UML_LAYOUT);
   const [aiServerConfigured, setAiServerConfigured] = useState(false);
   const [aiFixingId, setAiFixingId] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
@@ -210,15 +220,30 @@ export default function App() {
   const graph = useMemo(
     () =>
       filtered
-        ? buildGraph(filtered.nodes, filtered.relations)
+        ? buildGraph(filtered.nodes, filtered.relations, { direction: graphDirection })
         : { nodes: [], edges: [] },
-    [filtered],
+    [filtered, graphDirection],
   );
 
-  // The UML tab re-renders the Mermaid classDiagram server-side for the filtered/1-hop subset, so
-  // the diagram always matches what the graph shows.
+  // Diagram exports carry the active filter in their file name (Phase 14).
+  const filterHint = filtered?.focusActive
+    ? '1hop'
+    : graphFilter.filter.issuesOnly
+      ? 'issues'
+      : (filtered?.active ?? false)
+        ? 'filtered'
+        : null;
+
+  // The UML tab re-renders the Mermaid classDiagram server-side for the filtered/1-hop subset (and
+  // whenever a non-default layered layout is requested), so the diagram always matches the graph.
+  const subsetNeeded =
+    (filtered?.active ?? false) ||
+    umlLayout.groupByLayer !== DEFAULT_UML_LAYOUT.groupByLayer ||
+    umlLayout.direction !== DEFAULT_UML_LAYOUT.direction ||
+    umlLayout.memberDetail !== DEFAULT_UML_LAYOUT.memberDetail;
+
   useEffect(() => {
-    if (!filtered?.active || tab !== 'uml') {
+    if (!subsetNeeded || tab !== 'uml') {
       setSubsetDiagram(null);
       setSubsetLoading(false);
       return;
@@ -227,7 +252,7 @@ export default function App() {
     setSubsetLoading(true);
     const timer = window.setTimeout(() => {
       api
-        .mermaidSubset(filtered.nodes, filtered.relations, controller.signal)
+        .mermaidSubset(filtered?.nodes ?? NO_NODES, filtered?.relations ?? NO_RELATIONS, umlLayout, controller.signal)
         .then((result) => {
           if (!controller.signal.aborted) {
             setSubsetDiagram(result.diagram);
@@ -248,7 +273,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [filtered, tab]);
+  }, [filtered, tab, umlLayout, subsetNeeded]);
 
   const filterSummary = useMemo(() => {
     const parts: string[] = [];
@@ -791,6 +816,10 @@ export default function App() {
                         onPreviewDiff={handlePreviewDiff}
                         previewBusy={false}
                         centerRequest={centerRequest}
+                        direction={graphDirection}
+                        onDirectionChange={setGraphDirection}
+                        workspaceName={view.name}
+                        filterHint={filterHint}
                       />
                     </div>
                   </div>
@@ -798,8 +827,8 @@ export default function App() {
                 {tab === 'uml' && (
                   <UmlDiagram
                     key={`${view.rootPath}-uml`}
-                    diagram={filtered?.active ? (subsetDiagram ?? '') : view.mermaidClassDiagram}
-                    componentCount={filtered?.active ? (filtered?.nodes.length ?? 0) : view.nodes.length}
+                    diagram={subsetNeeded ? (subsetDiagram ?? '') : view.mermaidClassDiagram}
+                    componentCount={subsetNeeded ? (filtered?.nodes.length ?? 0) : view.nodes.length}
                     totalComponentCount={view.nodes.length}
                     draftPending={draftDirty}
                     filterActive={filtered?.active ?? false}
@@ -811,6 +840,9 @@ export default function App() {
                     onFocusSelected={() => graphFilter.setFocusOneHop(true)}
                     onShowIssuesOnly={() => graphFilter.setIssuesOnly(true)}
                     onResetFilters={graphFilter.reset}
+                    layout={umlLayout}
+                    onLayoutChange={setUmlLayout}
+                    projectName={view.name}
                   />
                 )}
                 {tab === 'code' && <CodeInspector rootPath={view.rootPath} node={selected} />}

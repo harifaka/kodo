@@ -122,3 +122,13 @@ export interface MermaidResponse {
   nodeCount: number;
   relationCount: number;
 }
+
+/** Layered `classDiagram` layout knobs (Phase 14). Every field is optional on the wire. */
+export type DiagramDirection = 'TB' | 'LR';
+export type DiagramMemberDetail = 'full' | 'compact' | 'names_only';
+
+export interface MermaidLayoutOptions {
+  groupByLayer: boolean;
+  direction: DiagramDirection;
+  memberDetail: DiagramMemberDetail;
+}
