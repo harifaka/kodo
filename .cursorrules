@@ -52,7 +52,15 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
 - **Phases 1–13 (v0.8.0) are the active delivered contract.** Everything below them is binding:
   do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane,
   the local-only folder browser, the Python stack or the SaaS migrations/quotas/rate limits.
-  The v0.6+ roadmap (Phases 11–13) is **complete**; new work starts from a new roadmap item.
+  The v0.6+ roadmap (Phases 11–13) is **complete**.
+- **Phases 14–15 (v0.9+) are planned only — not active for implementation.** Structured layered
+  UML/Graph layout with SVG/PNG image export (Phase 14) and the Kodo MCP Server (Phase 15) are recorded
+  in [ROADMAP.md](ROADMAP.md) as the next evolution track. Their unchecked sub-tasks and Definitions of
+  Done are **design intent, not a contract**: do not scaffold `/mcp` endpoints or MCP tools, export UI,
+  layout rewrites, a `stdio` bridge or any dependency for them until a future session explicitly
+  activates the phase (update §2 here and mark the roadmap task in progress at that point). When
+  activated they must **extend** — never bypass — the §3 write policy and guarded apply, §3h auth and
+  sandbox containment, §3j advisory System 1 rules and §3m SaaS guards/rate limits.
 
 ## 3. Write policy (hard rule)
 

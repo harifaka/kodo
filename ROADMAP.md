@@ -21,16 +21,21 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 13** is shipped as **v0.8.0 (Production SaaS Hardening)** — Alembic migrations with safe
   legacy-DB upgrades, per-user disk quotas / clone caps / TTL cleanup, per-bucket API rate limiting and
   a Caddy TLS + PostgreSQL VPS deployment overlay.
+- **Phases 14–15** form the **planned v0.9+ evolution track** — structured layered UML/Graph layout with
+  one-click SVG/PNG image export, and a standards-compliant **Kodo MCP Server** for AI coding agents.
+  They are recorded at the end of this file as **Next Evolution (v0.9+)** and are **not yet delivered**.
 
-> **The v0.6+ roadmap (Phases 11–13) is complete.** All thirteen phases are delivered; Phase 13 is
-> recorded at the end of this file with its Definition-of-Done evidence. There is no active planned
-> phase — future work starts from a new roadmap item.
+> **The v0.6+ roadmap (Phases 11–13) is complete.** All thirteen phases of that track are delivered;
+> Phase 13 is recorded at the end of this file with its Definition-of-Done evidence. The next planned
+> track is **v0.9+ (Phases 14–15)** — structured diagrams, image export and the MCP Server — recorded
+> below as design-only roadmap items awaiting a future implementation session.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
 > by local and SaaS. Phases 8–13 are delivered (v0.3.0–v0.8.0); **all thirteen delivered phases of the
-> roadmap are complete**. Phases 1–13 stay below as delivered history.
+> roadmap are complete**. Phases 1–13 stay below as delivered history; the planned **v0.9+** track
+> (Phases 14–15) is appended at the end of this file.
 
 ---
 
@@ -641,3 +646,89 @@ runbook. Every guard defaults to *off/inert* in `KODO_MODE=local`.
     0001_initial_schema` removes both columns on SQLite (batch mode).
   - Zero-friction local mode preserved: quotas/rate limits default off, TTL cleanup never runs, and
     deleting a workspace bookmark in local mode never removes the folder.
+
+---
+
+## Next Evolution (v0.9+ — Structured Diagrams, Image Export & MCP Server)
+
+**Status: planned — not yet implemented.** Phases 1–13 (v0.8.0) remain the active, binding delivered
+contract; nothing in this section is live yet and no source, Docker, workflow or test file should change
+for it until a future session explicitly activates the phase. Both phases below stay **unchecked** until
+their Definition of Done has been verified end to end.
+
+### Phase 14: Structured Layered UML/Graph Layout & Diagram Image Export
+**Goal:** Turn Kodo's diagrams into presentation-ready architecture artifacts — layered, deterministic and
+exportable — instead of a flat class dump that has to be hand-arranged before it can be shared.
+
+- [ ] Upgrade Mermaid `classDiagram` generation (`services/api-python/app/services/mermaid.py`) from a
+      flat class dump to **layer-grouped `namespace` blocks** (`Controllers`, `Services`,
+      `Repositories`, `Entities`, `DTOs`, `UI`, `Other`), with deterministic alphabetical ordering
+      inside each group.
+  - Replace the single flat class/relation emit with a layer-bucketed renderer that reuses the existing
+    `ComponentNode.layer` classification (the same layer/kind mapping that drives the Macro Graph colour
+    scheme and the Phase 11 layer filter pills) instead of inventing a second taxonomy.
+  - Add an optional **layer-collapse / member-density toggle**: *compact* (class boxes only, relations
+    intact) vs. *full* (fields + methods + annotations), so very large repositories still render a
+    readable diagram.
+  - Add a configurable **layout direction** (`TB` top-to-bottom, default, or `LR` left-to-right) rendered
+    through the Mermaid `direction` directive in the diagram header.
+  - Keep the Phase 11 filtered-subset behaviour: exporting the UML for an active filter / **1-Hop Focus**
+    must render exactly the visible subset (and keep the >60-class guard) rather than the whole workspace.
+- [ ] Enhance the Macro Graph (React Flow) layout with clean **layer-aligned swimlanes** and an
+      **Auto-Arrange** button, so Controllers, Services, Repositories, Entities and DTOs line up
+      predictably without manual dragging.
+  - Extend `apps/web/src/lib/layout.ts` with a deterministic layer-banded pass (fixed lane per layer, stable
+    intra-lane ordering by name) and a one-shot **Auto-Arrange** action that preserves node identity,
+    selection, draft edits and the current filter state.
+  - Keep the existing graph interactions intact: `Ctrl+K` search, layer/stack pills, **Issues Only**,
+    **1-Hop Focus**, relation draft editing and the live audit preview must all survive a re-layout.
+- [ ] Add one-click **Image Export** for both the **Mermaid UML Diagram** and the **Macro Graph**:
+      `SVG` and high-DPI `PNG`, plus a raw `.mmd` download, all respecting the active filters /
+      **1-Hop Focus**.
+  - UML: export the server-rendered Mermaid source (`.mmd`) plus client-side `SVG` and rasterised
+    `PNG` at 2x/3x device scale; Macro Graph: serialise the React Flow viewport to `SVG`/`PNG` with the
+    current nodes, edges, colours and focus state.
+  - Offer a **light/dark background toggle** on export so the output is legible in PR descriptions,
+    wikis and architecture docs regardless of the app theme.
+  - Export is client-triggered and adds **no new write path**: it downloads a file in the browser and must
+    never write to the workspace root, the sandbox or the guarded apply pipeline.
+- **Definition of Done:** Scanning a multi-layer project renders a cleanly grouped Mermaid `classDiagram`
+  (DTOs, Controllers, Services, Repositories and Entities clustered in their own namespaces), and both the
+  UML diagram and the Macro Graph export cleanly to crisp SVG and PNG files.
+
+### Phase 15: Kodo MCP Server (Model Context Protocol for AI Coding Agents)
+**Goal:** Make Kodo's architecture intelligence directly callable from inside an AI coding agent, so the
+editor can ask Kodo what the codebase looks like, what is wrong with it, which lane a task belongs to and
+whether a change would compile — without a human context-switching to the web UI.
+
+- [ ] Expose Kodo's deterministic architecture intelligence, the Laya System 1 layer and the sandboxed
+      verification path through a standards-compliant **MCP Server**.
+  - **Streamable HTTP** endpoint mounted at `/mcp` on the existing FastAPI app (same auth gate, CORS and
+    rate-limit middleware chain as `/api/v1`), plus an optional local **`stdio` bridge** so Cursor,
+    Claude Code and Windsurf can launch Kodo as a local MCP server process.
+  - Document both transports in `DEV_SETUP.md` (how to start them, required env vars, troubleshooting).
+- [ ] Ship **read-only / advisory** MCP tools, strictly zero disk writes, preserving Kodo's guarded-apply
+      contract (every mutation still flows through the Monaco diff + SHA-256 apply):
+  - `kodo_scan_workspace` — compact Core IR overview: detected stacks, component/relation counts, layer
+    counts, warnings and the Architecture Health Score.
+  - `kodo_audit_workspace` — deterministic Phase 2 findings, with optional **Laya System 1** triage
+    annotations (advisory only, degrading to deterministic output when Laya is offline).
+  - `kodo_get_component` — one component's fields, methods, annotations and its **1-hop neighbourhood**
+    relations (the MCP equivalent of the UI focus mode).
+  - `kodo_route_task` & `kodo_screen_diff` — Phase 10 System 1 advisory routing (deterministic tools vs.
+    DeepSeek) and a pre-diff safety pre-screen that returns findings without applying anything.
+  - `kodo_dry_run_patch` & `kodo_verify_build` — in-memory AST patch preview (no disk write, no SHA token
+    issuance) and `--network=none` sandboxed compile/test verification through the Phase 9 builders,
+    returning the streamed log tail and parsed diagnostics.
+- [ ] Enforce the Phase 8 security model and Phase 13 rate limits on the MCP surface.
+  - In `KODO_MODE=saas`, `/mcp` requires authenticated Bearer / API-key access and every tool call is
+    strictly confined to the caller's `<KODO_WORKSPACES_DIR>/<user_id>/` sandbox, with the same
+    `403 SAAS_PATH_FORBIDDEN` containment rules as `/api/v1`; MCP tool calls consume the existing
+    `scan`/`build`/`ai` rate-limit buckets.
+  - In `KODO_MODE=local`, the server works out of the box against local / mounted workspaces with no
+    extra configuration and no rate limiting.
+- [ ] Add a copy-paste **MCP Setup** snippet — Cursor (`.cursor/mcp.json`) and Claude Code config — in a
+      UI settings/docs surface and in `DEV_SETUP.md`.
+- **Definition of Done:** Cursor or Claude Code connects to Kodo via MCP, queries a repository's Core IR
+  and audit findings, runs Laya System 1 task routing, and triggers a sandboxed build check without
+  leaving the editor — with no file ever written to disk by an MCP tool.

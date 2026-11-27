@@ -449,6 +449,20 @@ browser with large-repo graph ergonomics, full Python stack support (FastAPI / D
 production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment).
 Full detail and DoD evidence: [ROADMAP.md](ROADMAP.md).
 
+## What's Next (v0.9+ Roadmap: Phases 14–15)
+
+The next evolution track is **planned, not shipped** — it is recorded in [ROADMAP.md](ROADMAP.md) with
+unchecked sub-tasks and Definitions of Done, and nothing from it is available in this release.
+**Phases 1–13 (v0.8.0) remain the active delivered contract.**
+
+| Phase | Track | What it adds | Status |
+| --- | --- | --- | --- |
+| **14** | Structured Layered UML/Graph Layout & Diagram Image Export | Layer-grouped Mermaid `classDiagram` `namespace` blocks (Controllers / Services / Repositories / Entities / DTOs / UI / Other) with deterministic ordering inside each group, a compact-vs-full member-density toggle and `TB`/`LR` layout direction; layer-aligned React Flow swimlanes with an **Auto-Arrange** button; one-click **SVG** / high-DPI **PNG** / raw `.mmd` export for both the UML diagram and the Macro Graph, respecting active filters and **1-Hop Focus**, with a light/dark export background. | 📋 Planned |
+| **15** | Kodo MCP Server | A standards-compliant **MCP Server** (Streamable HTTP `/mcp` in FastAPI plus an optional local `stdio` bridge) exposing read-only, zero-write tools — `kodo_scan_workspace`, `kodo_audit_workspace`, `kodo_get_component`, `kodo_route_task`, `kodo_screen_diff`, `kodo_dry_run_patch`, `kodo_verify_build` — behind the Phase 8 auth model and Phase 13 rate limits, with copy-paste Cursor / Claude Code setup snippets in the UI and `DEV_SETUP.md`. | 📋 Planned |
+
+Full scope, sub-tasks and Definitions of Done:
+[ROADMAP.md → Next Evolution (v0.9+)](ROADMAP.md#next-evolution-v09--structured-diagrams-image-export--mcp-server).
+
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see the [LICENSE](LICENSE) file for details.
