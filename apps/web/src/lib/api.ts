@@ -66,6 +66,7 @@ import type {
   TriageAuditResponse,
 } from '../types/decision';
 import type { BrowseResponse } from '../types/fs';
+import type { McpInfo } from '../types/mcp';
 
 // Docker/Nginx serves the UI and the API on one origin, so production builds default to relative
 // paths (`/api/v1/...`, `/health`) unless VITE_API_BASE_URL is set at build time.
@@ -246,6 +247,11 @@ export const api = {
 
   health(signal?: AbortSignal): Promise<HealthResponse> {
     return request<HealthResponse>('/health', { signal });
+  },
+
+  /** Phase 15: live MCP server status (enablement, endpoint, read-only tool catalog). */
+  mcpInfo(signal?: AbortSignal): Promise<McpInfo> {
+    return request<McpInfo>('/api/v1/mcp/info', { signal });
   },
 
   fetchAuthMe(signal?: AbortSignal): Promise<AuthMeResponse> {

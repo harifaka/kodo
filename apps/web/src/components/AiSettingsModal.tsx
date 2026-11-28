@@ -4,6 +4,7 @@ import { useSystemOneSettings } from '../hooks/useSystemOneSettings';
 import { api } from '../lib/api';
 import {
   AI_PRESETS,
+  CODE_MODEL_LABELS,
   EMPTY_AI_SETTINGS,
   clearAiSettings,
   providerLabel,
@@ -77,6 +78,8 @@ export function AiSettingsModal({ open, onClose }: AiSettingsModalProps) {
   }
 
   const update = (patch: Partial<AiSettings>) => setDraft((current) => ({ ...current, ...patch }));
+  const codeModelOptions =
+    AI_PRESETS.find((preset) => preset.baseUrl === draft.baseUrl.trim())?.codeModelOptions ?? [];
   const updateSystemOne = (patch: Partial<SystemOneSettings>) =>
     setSystemOneDraft((current) => ({ ...current, ...patch }));
 
@@ -294,6 +297,32 @@ export function AiSettingsModal({ open, onClose }: AiSettingsModalProps) {
               />
             </label>
           </div>
+
+          {codeModelOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Suggested
+              </span>
+              {codeModelOptions.map((model) => {
+                const active = draft.codeModel.trim() === model;
+                return (
+                  <button
+                    key={model}
+                    type="button"
+                    onClick={() => update({ codeModel: model })}
+                    title={model}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${
+                      active
+                        ? 'border-violet-400/60 bg-violet-400/10 text-violet-100'
+                        : 'border-ink-600 bg-ink-950/50 text-slate-400 hover:border-violet-400/40 hover:text-slate-200'
+                    }`}
+                  >
+                    {CODE_MODEL_LABELS[model] ?? model}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <p className="rounded-md border border-ink-700/70 bg-ink-950/50 px-2.5 py-2 text-[9.5px] leading-relaxed text-slate-500">
             The API key stays in this browser tab&apos;s <span className="text-slate-300">sessionStorage</span>{' '}

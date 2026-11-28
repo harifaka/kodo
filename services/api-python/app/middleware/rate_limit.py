@@ -12,6 +12,7 @@ Buckets (requests per 60s window, all configurable through ``KODO_RL_*`` env var
 ``build``         ``/api/v1/build/verify`` (+ ``/stream``)
 ``ai``            ``/api/v1/ai/*``, ``/api/v1/decision/*``
 ``auth``          ``/api/v1/auth/github/*`` (keyed by client IP)
+``mcp``           ``/mcp`` (Phase 15 MCP server)
 ================  ===============================================
 
 Limiting is on by default in ``KODO_MODE=saas`` and off in ``KODO_MODE=local`` unless
@@ -47,6 +48,7 @@ _BUCKET_PREFIXES: tuple[tuple[str, str], ...] = (
     ("/api/v1/ai", "ai"),
     ("/api/v1/decision", "ai"),
     ("/api/v1/auth/github", "auth"),
+    ("/mcp", "mcp"),
 )
 # Auth routes are unauthenticated by design, so they are keyed by client IP instead of user id.
 _IP_BUCKETS = frozenset({"auth"})

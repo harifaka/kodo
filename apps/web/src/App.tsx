@@ -10,6 +10,7 @@ import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { GraphFilterBar } from './components/GraphFilterBar';
 import { LoginScreen } from './components/LoginScreen';
 import { MacroGraph } from './components/MacroGraph';
+import { McpSetupModal } from './components/McpSetupModal';
 import { NodeDetailsPanel } from './components/NodeDetailsPanel';
 import { TopBar } from './components/TopBar';
 import { UmlDiagram } from './components/UmlDiagram';
@@ -98,6 +99,7 @@ export default function App() {
   const [plan, setPlan] = useState<PlanPreview | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
   const [centerRequest, setCenterRequest] = useState<{ id: string; token: number } | null>(null);
   const [subsetDiagram, setSubsetDiagram] = useState<string | null>(null);
@@ -673,6 +675,7 @@ export default function App() {
         systemOneLabel={systemOneBadge}
         systemOneEnabled={systemOneEnabled}
         onOpenAiSettings={() => setAiModalOpen(true)}
+        onOpenMcp={() => setMcpModalOpen(true)}
         mode={auth?.mode ?? 'local'}
         authenticated={auth?.authenticated ?? true}
         authUser={auth?.user ?? null}
@@ -937,6 +940,7 @@ export default function App() {
       </div>
 
       <AiSettingsModal open={aiModalOpen} onClose={() => setAiModalOpen(false)} />
+      <McpSetupModal open={mcpModalOpen} onClose={() => setMcpModalOpen(false)} />
       <FolderBrowserModal
         open={browseOpen}
         onClose={() => setBrowseOpen(false)}

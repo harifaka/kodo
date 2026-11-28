@@ -23,18 +23,8 @@ from app.db import repository
 from app.generators import GeneratorError
 from app.models.blueprint import BLUEPRINT_FILE_NAME, Blueprint, load_blueprint
 from app.models.ir import AuditReport, ComponentNode, ComponentRelation, WorkspaceIR
-from app.patching.csharp_patcher import patch_csharp
-from app.patching.java_patcher import patch_java
-from app.patching.models import (
-    DryRunRequest,
-    DryRunResponse,
-    PatchResult,
-    sha256_hex,
-    summarize,
-)
-from app.patching.paths import PatchRejected, build_targets
-from app.patching.python_patcher import patch_python
-from app.patching.ts_patcher import patch_script
+from app.patching.models import DryRunRequest, DryRunResponse
+from app.patching.paths import PatchRejected
 from app.services.apply_service import (
     ApplyRejected,
     ApplyRequest,
@@ -45,6 +35,7 @@ from app.services.apply_service import (
     rollback,
 )
 from app.services.csharp_client import check_health
+from app.services.dry_run import compute_dry_run
 from app.services.git_safety import GitStatus, inspect_git_status
 from app.services.mermaid import generate_class_diagram
 from app.services.paths import enforce_workspace_access
@@ -262,34 +253,9 @@ async def dry_run(
     """Compute proposed file contents in memory. No file is created, modified or deleted."""
     try:
         root = enforce_workspace_access(request.root_path, user)
-        targets = build_targets(str(root), request.operations)
+        return await compute_dry_run(root, request.operations)
     except PatchRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-    patches: list[PatchResult] = []
-    for target in targets:
-        if target.language == "java":
-            outcome = patch_java(target.content, target.operations)
-        elif target.language in {"typescript", "javascript"}:
-            outcome = patch_script(target.content, target.operations, target.file_path)
-        elif target.language == "python":
-            outcome = patch_python(target.content, target.operations)
-        else:
-            outcome = await patch_csharp(target.file_path, target.content, target.operations)
-
-        patches.append(
-            PatchResult(
-                file_path=target.file_path,
-                language=target.language,
-                original_content=target.content,
-                original_sha256=sha256_hex(target.raw),
-                proposed_content=outcome.content,
-                summary=summarize(outcome),
-                warnings=outcome.warnings,
-            )
-        )
-
-    return DryRunResponse(patches=patches, warnings=[])
 
 
 @router.get("/api/v1/blueprint", response_model=BlueprintResponse, tags=["builder"])

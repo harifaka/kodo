@@ -27,6 +27,7 @@ from app.config import (
     ConfigurationError,
     cors_origins,
     get_settings,
+    mcp_enabled,
     ttl_cleanup_enabled,
     validate_startup,
 )
@@ -35,6 +36,9 @@ from app.db.repository import LOCAL_USER_ID
 from app.decision.routes import router as decision_router
 from app.deploy.routes import router as deploy_router
 from app.llm.routes import router as ai_router
+from app.mcp import MCP_ENDPOINT_PATH
+from app.mcp.http_routes import info_router as mcp_info_router
+from app.mcp.http_routes import router as mcp_router
 from app.middleware.rate_limit import RateLimitMiddleware, SlidingWindowRateLimiter
 from app.services.quota import run_cleanup_loop
 
@@ -77,7 +81,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="Kodo API",
     description=(
-        "Kodo Architecture Control Center — Phases 1–14. "
+        "Kodo Architecture Control Center — Phases 1–15. "
         "Analyzes Spring Boot, Node.js, .NET and Python workspaces into the Core IR, runs the "
         "deterministic audit, computes dry-run AST patches in memory, scaffolds multi-stack vertical "
         "slices from a versioned blueprint, proposes AI patches through an OpenAI-compatible "
@@ -88,7 +92,9 @@ app = FastAPI(
         "local host/mount folders in place (zero-copy, SaaS-disabled) and renders layer-grouped "
         "Mermaid/UML diagrams ready for SVG/PNG export — all applied to disk behind "
         "path-containment, SHA-256 optimistic concurrency and Git working-tree guards. SaaS mode adds "
-        "Alembic migrations, per-user storage quotas, TTL cleanup and per-bucket rate limiting."
+        "Alembic migrations, per-user storage quotas, TTL cleanup and per-bucket rate limiting. "
+        "Phase 15 exposes the same intelligence to AI coding agents over a strictly read-only MCP "
+        "server (Streamable HTTP at /mcp plus a local stdio bridge)."
     ),
     version=__version__,
 )
@@ -112,9 +118,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-def]
-    """SaaS fail-closed gate: session auth for every API call, no host Docker control."""
+    """SaaS fail-closed gate: session auth for every API/MCP call, no host Docker control."""
     path = request.url.path
-    if not path.startswith("/api/v1"):
+    is_api = path.startswith("/api/v1")
+    is_mcp = path == MCP_ENDPOINT_PATH or path.startswith(MCP_ENDPOINT_PATH + "/")
+    if not is_api and not is_mcp:
         return await call_next(request)
 
     try:
@@ -123,6 +131,18 @@ async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-
         return JSONResponse(
             status_code=503,
             content={"detail": {"code": "CONFIGURATION_ERROR", "message": str(exc)}},
+        )
+
+    if is_mcp and not mcp_enabled():
+        # Phase 15: a disabled MCP surface is indistinguishable from an absent one.
+        return JSONResponse(
+            status_code=404,
+            content={
+                "detail": {
+                    "code": "MCP_DISABLED",
+                    "message": "The Kodo MCP server is disabled (KODO_MCP_ENABLED=false).",
+                }
+            },
         )
 
     if settings.is_saas and path.startswith("/api/v1/fs/browse"):
@@ -157,14 +177,14 @@ async def tenant_guard(request: Request, call_next):  # type: ignore[no-untyped-
     is_auth_route = path.startswith("/api/v1/auth/")
     user = None if is_auth_route else authenticate_request(request)
     if settings.is_saas and not is_auth_route and user is None:
+        message = (
+            "MCP requires a session cookie or Bearer token in SaaS mode."
+            if is_mcp
+            else "Sign in with GitHub to use this Kodo instance."
+        )
         return JSONResponse(
             status_code=401,
-            content={
-                "detail": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Sign in with GitHub to use this Kodo instance.",
-                }
-            },
+            content={"detail": {"code": "UNAUTHORIZED", "message": message}},
         )
     if user is not None:
         request.state.user = user
@@ -185,6 +205,8 @@ app.include_router(git_router)
 app.include_router(auth_router)
 app.include_router(account_router)
 app.include_router(decision_router)
+app.include_router(mcp_info_router)
+app.include_router(mcp_router)
 
 
 @app.get("/", tags=["system"])
@@ -230,6 +252,8 @@ async def root() -> dict[str, str]:
         "systemOneScreenDiff": "POST /api/v1/decision/screen-diff",
         "decisions": "GET /api/v1/decisions",
         "decisionsTrainingExport": "GET /api/v1/decisions/export-training",
+        "mcp": f"POST {MCP_ENDPOINT_PATH}",
+        "mcpInfo": "GET /api/v1/mcp/info",
     }
 
 

@@ -77,6 +77,9 @@ KODO_RL_CLONE_PER_MIN=10
 KODO_RL_BUILD_PER_MIN=10
 KODO_RL_AI_PER_MIN=20
 KODO_RL_AUTH_PER_MIN=20
+KODO_RL_MCP_PER_MIN=60
+# Phase 15 MCP server: set to false to remove /mcp entirely (answers 404 MCP_DISABLED).
+KODO_MCP_ENABLED=true
 ```
 
 `.env` is git-ignored; never commit real secrets. `.env.example` stays placeholder-only.
@@ -273,9 +276,13 @@ Internet ──TLS──► caddy:443 ──► web:8080 (Nginx, SPA + same-orig
 * **Storage governance.** Quotas are measured on disk under the user's sandbox, oversized clones are
   deleted immediately (`CLONE_SIZE_LIMIT_EXCEEDED`), and a background sweep removes workspaces
   untouched for `KODO_WORKSPACE_TTL_HOURS`, writing a `workspace_ttl_cleanup` audit event.
-* **Abuse protection.** Sliding-window rate limits per bucket return `429 RATE_LIMITED` with
-  `Retry-After` and `X-RateLimit-*` headers. `KODO_TRUST_PROXY=true` (set by the SaaS overlay) makes
-  the limiter key auth attempts on the real client IP from `X-Forwarded-For`.
+* **Abuse protection.** Sliding-window rate limits per bucket (`scan`, `clone`, `build`, `ai`, `auth`,
+  `mcp`) return `429 RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers.
+  `KODO_TRUST_PROXY=true` (set by the SaaS overlay) makes the limiter key auth attempts on the real
+  client IP from `X-Forwarded-For`.
+* **MCP surface.** The Phase 15 read-only MCP server (`/mcp`) is behind the same authentication gate and
+  confined to the caller's sandbox (`SAAS_PATH_FORBIDDEN` for host/foreign paths); it is metered by
+  `KODO_RL_MCP_PER_MIN` and can be removed entirely with `KODO_MCP_ENABLED=false`.
 * **Secrets.** Git tokens supplied to `/git/clone` and `/git/export` live only in the request: they are
   passed as transient `git -c http.extraHeader=…` arguments, never written to `.git/config`, never
   logged and never stored.

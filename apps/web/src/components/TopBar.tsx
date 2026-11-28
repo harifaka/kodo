@@ -4,7 +4,7 @@ import { STACK_META } from '../lib/layers';
 import type { AuthUser, WorkspaceStorage, WorkspaceSummary } from '../types/account';
 import type { WorkspaceIR } from '../types/core-ir';
 import type { HealthState } from '../hooks/useHealth';
-import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner, DecisionIcon } from './icons';
+import { FolderIcon, LogoMark, ScanIcon, SparkIcon, Spinner, DecisionIcon, ShieldIcon } from './icons';
 import { HealthChip } from './HealthScore';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
@@ -24,6 +24,8 @@ interface TopBarProps {
   systemOneLabel: string;
   systemOneEnabled: boolean;
   onOpenAiSettings: () => void;
+  /** Opens the Phase 15 MCP setup drawer (read-only server for AI coding agents). */
+  onOpenMcp: () => void;
   mode: string;
   authenticated: boolean;
   authUser: AuthUser | null;
@@ -50,6 +52,7 @@ export function TopBar({
   systemOneLabel,
   systemOneEnabled,
   onOpenAiSettings,
+  onOpenMcp,
   mode,
   authenticated,
   authUser,
@@ -199,6 +202,16 @@ export function TopBar({
               }`}
             />
             <span className="text-[10px] text-sky-200/80">{systemOneLabel}</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenMcp}
+            title="MCP server — connect Cursor, Claude Code or Windsurf to Kodo's read-only architecture tools"
+            className="flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/[0.06] px-2.5 py-1 transition hover:border-emerald-400/60 hover:bg-emerald-400/[0.12]"
+          >
+            <ShieldIcon className="h-3 w-3 text-emerald-300" />
+            <span className="text-[10.5px] font-medium text-slate-300">MCP</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
           </button>
           <StatusPill
             label="FastAPI"

@@ -1,9 +1,9 @@
 {
   "name": "kodo-web",
   "private": true,
-  "version": "0.9.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Kodo — Architecture Control Center (scan, audit, guarded apply, multi-stack builder)",
+  "description": "Kodo â€” Architecture Control Center (scan, audit, guarded apply, multi-stack builder)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

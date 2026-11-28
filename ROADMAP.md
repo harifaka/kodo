@@ -24,21 +24,18 @@ Blueprint -> Audit -> Edit -> Deploy platform.
 - **Phase 14** is shipped as **v0.9.0 (Structured Layered Diagrams & Image Export)** — layer-grouped
   Mermaid `classDiagram` namespaces, layered swimlane Macro Graph auto-arrange and one-click
   SVG / high-DPI PNG / `.mmd` export for both diagrams.
-- **Phase 15** is the **planned next track** — a standards-compliant **Kodo MCP Server** for AI coding
-  agents. It is recorded at the end of this file as **Next Evolution (v1.0)** and is **not yet
-  delivered**.
+- **Phase 15** is shipped as **v1.0.0 (Kodo MCP Server)** — a standards-compliant, strictly read-only
+  **Model Context Protocol** server (stateless Streamable HTTP `/mcp` plus a local `stdio` bridge) with
+  seven read-only tools behind the Phase 8 auth model and Phase 13 rate limits.
 
-> **The v0.6+ roadmap (Phases 11–13) is complete and Phase 14 (v0.9.0) is delivered.** Fourteen of the
-> fifteen phases are live; Phase 13 and Phase 14 are recorded at the end of this file with their
-> Definition-of-Done evidence. The next planned track is **Phase 15 (v1.0)** — the Kodo MCP Server —
-> recorded below as a design-only roadmap item awaiting a future implementation session.
+> **All fifteen phases are complete — Kodo is v1.0.0.** Phase 15 is recorded at the end of this file
+> with its Definition-of-Done evidence, next to the Phase 14 delivery.
 
 > **Architectural pivot (post-MVP, delivered in Phase 7).** Kodo is a **Docker-first web
 > application**. The **Tauri desktop wrapper has been deleted** (`apps/web/src-tauri/` is gone, no
 > `@tauri-apps/*` dependencies, no desktop origins) in favour of one unified container deployment shared
-> by local and SaaS. Phases 8–14 are delivered (v0.3.0–v0.9.0); **all fourteen delivered phases of the
-> roadmap are complete**. Phases 1–14 stay below as delivered history; the planned **v1.0** track
-> (Phase 15) is appended at the end of this file.
+> by local and SaaS. Phases 8–15 are delivered (v0.3.0–v1.0.0); **all fifteen phases of the
+> roadmap are complete**. Phases 1–15 below stay as delivered history.
 
 ---
 
@@ -742,46 +739,102 @@ read-only operations: no new API write path, no file touched in the scanned work
 
 ---
 
-## Next Evolution (v1.0 — Kodo MCP Server)
+## Delivered — Kodo MCP Server (v1.0.0)
 
-**Status: Phase 14 delivered (v0.9.0); Phase 15 planned.** Phases 1–14 are the active, binding
-delivered contract. Phase 15 below is recorded as design intent — no source, Docker, workflow or test
-file changes for it until a future session explicitly activates it. It stays **unchecked** until its
-Definition of Done has been verified end to end.
+**Status: Phase 15 delivered (v1.0.0). All 15 phases delivered — Kodo v1.0.0.** Kodo's deterministic
+architecture intelligence, the Laya System 1 layer and the sandboxed verification path are now callable
+from inside an AI coding agent. The MCP surface is **strictly read-only**: no tool can write, apply,
+roll back, deploy or export anything, and every tool advertises `readOnlyHint: true`,
+`destructiveHint: false`.
 
-### Phase 15: Kodo MCP Server (Model Context Protocol for AI Coding Agents)
+### Phase 15: Kodo MCP Server (Model Context Protocol for AI Coding Agents) ✅ (v1.0.0)
 **Goal:** Make Kodo's architecture intelligence directly callable from inside an AI coding agent, so the
 editor can ask Kodo what the codebase looks like, what is wrong with it, which lane a task belongs to and
 whether a change would compile — without a human context-switching to the web UI.
 
-- [ ] Expose Kodo's deterministic architecture intelligence, the Laya System 1 layer and the sandboxed
+- [x] Expose Kodo's deterministic architecture intelligence, the Laya System 1 layer and the sandboxed
       verification path through a standards-compliant **MCP Server**.
-  - **Streamable HTTP** endpoint mounted at `/mcp` on the existing FastAPI app (same auth gate, CORS and
-    rate-limit middleware chain as `/api/v1`), plus an optional local **`stdio` bridge** so Cursor,
-    Claude Code and Windsurf can launch Kodo as a local MCP server process.
-  - Document both transports in `DEV_SETUP.md` (how to start them, required env vars, troubleshooting).
-- [ ] Ship **read-only / advisory** MCP tools, strictly zero disk writes, preserving Kodo's guarded-apply
+  - **Streamable HTTP** `POST /mcp` mounted on the existing FastAPI app (same `tenant_guard`, CORS and
+    rate-limit middleware chain as `/api/v1`), plus a local **`stdio` bridge**
+    (`python -m app.mcp.stdio_server`) so Cursor, Claude Code and Windsurf can launch Kodo as a local
+    MCP server process.
+    - `app/mcp/protocol.py` — JSON-RPC 2.0 envelopes/errors and protocol negotiation for
+      `2026-07-28`, `2025-06-18` (default) and `2025-03-26`.
+    - `app/mcp/server.py` — stateless dispatcher for `initialize`, `notifications/initialized` (`202`
+      with no body), `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`; invalid
+      arguments and unknown methods return spec-compliant `-32602`/`-32601` envelopes, tool-execution
+      failures return `isError: true` content carrying the machine-readable code.
+    - `app/mcp/http_routes.py` — `POST /mcp` returns plain JSON, or one SSE `event: message` when the
+      client prefers `text/event-stream`; `GET`/`DELETE` answer `405` (no server-initiated stream, no
+      session to terminate). No `Mcp-Session-Id` is ever issued, so the endpoint is clean behind Nginx,
+      Caddy and multiple replicas; `Mcp-Protocol-Version` is echoed when sent.
+    - `app/mcp/stdio_server.py` — newline-delimited JSON-RPC on stdin/stdout, always local-user
+      context, logs to **stderr only** so stdout stays a clean protocol channel.
+  - Both transports documented in [DEV_SETUP.md](DEV_SETUP.md#14-mcp-server-phase-15) with Cursor /
+    Claude Code / stdio setup and troubleshooting.
+- [x] Ship **read-only / advisory** MCP tools, strictly zero disk writes, preserving Kodo's guarded-apply
       contract (every mutation still flows through the Monaco diff + SHA-256 apply):
-  - `kodo_scan_workspace` — compact Core IR overview: detected stacks, component/relation counts, layer
-    counts, warnings and the Architecture Health Score.
-  - `kodo_audit_workspace` — deterministic Phase 2 findings, with optional **Laya System 1** triage
-    annotations (advisory only, degrading to deterministic output when Laya is offline).
-  - `kodo_get_component` — one component's fields, methods, annotations and its **1-hop neighbourhood**
-    relations (the MCP equivalent of the UI focus mode).
+  - `kodo_scan_workspace` — compact Core IR: stacks, component/relation counts, layer counts,
+    deterministic warnings, the Architecture Health Score, a bounded component list
+    (`id, name, layer, kind, stack, filePath`) and an optional Phase 14 layered `namespace` Mermaid
+    diagram (`includeMermaid`, `groupByLayer`, `direction`, `memberDetail`).
+  - `kodo_audit_workspace` — deterministic Phase 2 score/summary/findings plus optional **Laya System 1**
+    triage annotations (`includeLayaTriage`), degrading to `layaAvailable: false` when Laya is offline.
+  - `kodo_get_component` — exact id / exact name / case-insensitive substring match, full component
+    detail, its **1-hop** `incoming`/`outgoing` relations and every audit finding referencing it.
   - `kodo_route_task` & `kodo_screen_diff` — Phase 10 System 1 advisory routing (deterministic tools vs.
-    DeepSeek) and a pre-diff safety pre-screen that returns findings without applying anything.
-  - `kodo_dry_run_patch` & `kodo_verify_build` — in-memory AST patch preview (no disk write, no SHA token
-    issuance) and `--network=none` sandboxed compile/test verification through the Phase 9 builders,
-    returning the streamed log tail and parsed diagnostics.
-- [ ] Enforce the Phase 8 security model and Phase 13 rate limits on the MCP surface.
-  - In `KODO_MODE=saas`, `/mcp` requires authenticated Bearer / API-key access and every tool call is
-    strictly confined to the caller's `<KODO_WORKSPACES_DIR>/<user_id>/` sandbox, with the same
-    `403 SAAS_PATH_FORBIDDEN` containment rules as `/api/v1`; MCP tool calls consume the existing
-    `scan`/`build`/`ai` rate-limit buckets.
+    DeepSeek vs. human) and a pre-diff safety pre-screen; both persist a tenant-scoped ADR and never
+    apply anything.
+  - `kodo_dry_run_patch` & `kodo_verify_build` — in-memory AST patch preview (Java/TS/JS/Python/C#, exact
+    `originalSha256`, no SHA token issuance, no write) and `--network=none` sandboxed compile/test
+    verification through the Phase 9 builders, returning parsed diagnostics and a bounded log tail.
+  - Implemented once in `app/services/dry_run.py`, shared by `POST /api/v1/dry-run` and the MCP tool, so
+    there is no duplicated business logic.
+- [x] Enforce the Phase 8 security model and Phase 13 rate limits on the MCP surface.
+  - In `KODO_MODE=saas`, `/mcp` requires an authenticated session / `Authorization: Bearer` token
+    (`401 UNAUTHORIZED` otherwise; gated before the route, exactly like `/api/v1`). Every tool resolves
+    its `rootPath` through `enforce_workspace_access`, so host and foreign-tenant paths are rejected
+    with `SAAS_PATH_FORBIDDEN` (reported as `isError: true` content with `error.code`).
+  - The Phase 13 `SlidingWindowRateLimiter` gains an `mcp` bucket: `KODO_RL_MCP_PER_MIN` (default 60)
+    → `429 RATE_LIMITED` with `Retry-After` + `X-RateLimit-*`. `Mcp-Method` / `Mcp-Name` request headers
+    feed the MCP log for observability.
   - In `KODO_MODE=local`, the server works out of the box against local / mounted workspaces with no
-    extra configuration and no rate limiting.
-- [ ] Add a copy-paste **MCP Setup** snippet — Cursor (`.cursor/mcp.json`) and Claude Code config — in a
+    extra configuration and no rate limiting. `KODO_MCP_ENABLED=false` answers `404 MCP_DISABLED` for
+    `POST`/`GET`/`DELETE` and reports `enabled: false` on `GET /api/v1/mcp/info`.
+- [x] Add a copy-paste **MCP Setup** snippet — Cursor (`.cursor/mcp.json`) and Claude Code config — in a
       UI settings/docs surface and in `DEV_SETUP.md`.
+  - `apps/web/src/components/McpSetupModal.tsx` (opened by the new **MCP** pill in `TopBar.tsx`) shows
+    the live `GET /api/v1/mcp/info` status (enabled, protocol, tool count, mode, rate limit), the
+    endpoint built from the browser origin, one-click copies of the Cursor JSON, the
+    `claude mcp add --transport http kodo <origin>/mcp` command and the local stdio JSON — plus the
+    `Authorization` placeholder and sandbox note when `KODO_MODE=saas`, and the read-only tool catalog.
+  - Reverse proxies: `apps/web/nginx.conf` gains a dedicated `location /mcp` (`proxy_http_version 1.1`,
+    `proxy_buffering off`, `proxy_read_timeout 180s`, forwarded `Authorization`/`Mcp-*`/`X-Forwarded-*`)
+    and `deploy/caddy/Caddyfile` a `handle /mcp*` block with `flush_interval -1`.
+  - `AiSettingsModal.tsx` / `lib/aiSettings.ts` add **DeepSeek V4.1 Flash** (`deepseek-flash`) as a
+    suggested code model next to `deepseek-chat` and `deepseek-reasoner` in the DeepSeek Cloud preset.
 - **Definition of Done:** Cursor or Claude Code connects to Kodo via MCP, queries a repository's Core IR
   and audit findings, runs Laya System 1 task routing, and triggers a sandboxed build check without
   leaving the editor — with no file ever written to disk by an MCP tool.
+  - `tests/test_mcp_server.py` (**37 hermetic cases**, zero network / Docker daemon): the `initialize`
+    handshake across all three protocol versions, `tools/list` (all 7 tools, all `readOnlyHint: true`,
+    `destructiveHint: false`, and no name containing apply/rollback/deploy/export/write/delete/scaffold/
+    clone), `notifications/initialized` → `202`, `ping`, SSE + `405` transport handling, parse/
+    protocol error envelopes, every `tools/call` (`kodo_scan_workspace` incl. layered `namespace`
+    output and byte-identical rescans, `kodo_audit_workspace` deterministic + mocked Laya triage with
+    persisted ADRs + offline degradation, `kodo_get_component` 1-hop relations, `kodo_route_task`
+    mocked routing + ADR, `kodo_screen_diff` mocked screen, `kodo_dry_run_patch` exact
+    `originalSha256` + zero disk mutation, `kodo_verify_build` mocked Docker CLI with hardened
+    `--network none`/`--cap-drop` flags and guaranteed `rm -f`), both resources, the stdio bridge
+    (shared registry, notification silence, JSON-only stdout), and SaaS hardening (`401`
+    unauthenticated, `SAAS_PATH_FORBIDDEN` for host + foreign paths with the owner's own sandbox still
+    working, `429 RATE_LIMITED` via `KODO_RL_MCP_PER_MIN`, `404 MCP_DISABLED`, `GET /api/v1/mcp/info`).
+  - `pytest` **340 passed / 5 skipped** (only the environment-dependent Roslyn-container skips),
+    `ruff check app tests`, `npm run build` (TypeScript + Vite), `dotnet build
+    services/analyzer-csharp --configuration Release` and `docker compose config --quiet` for the base,
+    prod, SaaS, builders and ai-local variants are green.
+  - Version bumped to **1.0.0** in `services/api-python/app/__init__.py`, `apps/web/package.json` and
+    the lockfile.
+  - Zero-write posture unchanged: MCP tools read the workspace, return in-memory text, and the only
+    persisted rows are tenant-scoped ADRs plus one `verify_build` audit event — a workspace file is
+    never created, modified or deleted by any MCP call.

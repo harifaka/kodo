@@ -94,6 +94,10 @@ services:
       KODO_RL_BUILD_PER_MIN: ${KODO_RL_BUILD_PER_MIN:-10}
       KODO_RL_AI_PER_MIN: ${KODO_RL_AI_PER_MIN:-20}
       KODO_RL_AUTH_PER_MIN: ${KODO_RL_AUTH_PER_MIN:-20}
+      # Phase 15 MCP server (strictly read-only Streamable HTTP at /mcp + local stdio bridge).
+      # `false` makes /mcp answer 404 MCP_DISABLED; the rate limit only applies in KODO_MODE=saas.
+      KODO_MCP_ENABLED: ${KODO_MCP_ENABLED:-true}
+      KODO_RL_MCP_PER_MIN: ${KODO_RL_MCP_PER_MIN:-60}
     volumes:
       - kodo-data:/data/kodo
       # Host folder exposed as /projects for scanning; override with KODO_LOCAL_PROJECTS_DIR.

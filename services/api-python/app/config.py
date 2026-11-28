@@ -96,6 +96,7 @@ DEFAULT_RATE_LIMITS = {
     "build": 10,
     "ai": 20,
     "auth": 20,
+    "mcp": 60,
 }
 _RATE_LIMIT_ENV = {
     "scan": "KODO_RL_SCAN_PER_MIN",
@@ -103,7 +104,11 @@ _RATE_LIMIT_ENV = {
     "build": "KODO_RL_BUILD_PER_MIN",
     "ai": "KODO_RL_AI_PER_MIN",
     "auth": "KODO_RL_AUTH_PER_MIN",
+    "mcp": "KODO_RL_MCP_PER_MIN",
 }
+
+# Phase 15 MCP server. The surface is strictly read-only / dry-run / sandbox-only and on by default.
+DEFAULT_MCP_ENABLED = True
 
 
 class ConfigurationError(RuntimeError):
@@ -330,6 +335,14 @@ def rate_limit_per_minute(bucket: str) -> int:
 def trust_proxy_headers() -> bool:
     """Trust ``X-Forwarded-For`` for client IPs (default: only behind a SaaS reverse proxy)."""
     return _env_flag("KODO_TRUST_PROXY", _mode() == MODE_SAAS)
+
+
+# ------------------------------------------------------------------------------ Phase 15 MCP
+
+
+def mcp_enabled() -> bool:
+    """Expose the MCP server (``/mcp`` + stdio bridge); ``false`` answers ``404 MCP_DISABLED``."""
+    return _env_flag("KODO_MCP_ENABLED", DEFAULT_MCP_ENABLED)
 
 
 _ephemeral_jwt_secret: str | None = None

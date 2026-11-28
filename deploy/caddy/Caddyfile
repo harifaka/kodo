@@ -31,6 +31,15 @@
 		}
 	}
 
+	# Phase 15 MCP server: same unbuffered treatment so Streamable HTTP (and any SSE response) is
+	# never delayed by Caddy, including a 180s sandboxed `kodo_verify_build`.
+	handle /mcp* {
+		reverse_proxy web:8080 {
+			flush_interval -1
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
 	# Everything else: the UI bundle and the same-origin API proxy.
 	handle {
 		reverse_proxy web:8080 {

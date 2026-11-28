@@ -16,6 +16,13 @@ export const EMPTY_AI_SETTINGS: AiSettings = {
   reasoningModel: 'deepseek-reasoner',
 };
 
+/** Human labels for the suggested code models; unknown ids render verbatim. */
+export const CODE_MODEL_LABELS: Record<string, string> = {
+  'deepseek-flash': 'DeepSeek V4.1 Flash',
+  'deepseek-chat': 'DeepSeek Chat',
+  'deepseek-reasoner': 'DeepSeek Reasoner',
+};
+
 export interface AiPreset {
   id: AiProviderKind;
   label: string;
@@ -25,6 +32,8 @@ export interface AiPreset {
   reasoningModel: string;
   requiresKey: boolean;
   hint: string;
+  /** Suggested code-model ids for this provider (Phase 15: DeepSeek V4.1 Flash). */
+  codeModelOptions?: string[];
 }
 
 export const AI_PRESETS: AiPreset[] = [
@@ -37,6 +46,7 @@ export const AI_PRESETS: AiPreset[] = [
     reasoningModel: 'deepseek-reasoner',
     requiresKey: true,
     hint: 'Needs a DeepSeek API key. Prompts leave this machine for DeepSeek.',
+    codeModelOptions: ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner'],
   },
   {
     id: 'local',

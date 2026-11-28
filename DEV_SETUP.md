@@ -1,4 +1,4 @@
-# Kodo — Developer Setup (Phases 1–14: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack, Production SaaS Hardening, Structured Layered Diagrams & Image Export)
+# Kodo — Developer Setup (Phases 1–15: X-Ray, Audit, Draft Editing, Guarded Apply, Multi-Stack Builder, AI Copilot, Docker Studio, Docker-First Packaging & CI/CD, SaaS Foundation, Ephemeral Builders, Laya Decision Layer, Local Folder Browser & Large-Repo UX, Full Python Stack, Production SaaS Hardening, Structured Layered Diagrams & Image Export, Kodo MCP Server)
 
 Phases 1–3b are **zero-write** with respect to the scanned project. Kodo scans a folder, maps Java,
 TypeScript, JavaScript, C# **and Python** sources onto the Core IR, runs a deterministic audit over that
@@ -59,14 +59,22 @@ Macro Graph renders the same bands as swimlanes with **Auto-Arrange**, and both 
 [§12](#12-saas-hardening-migrations-quotas-ttl-cleanup--rate-limits-phase-13) and
 [§13](#13-layered-diagrams--image-export-phase-14).
 
+Phase 15 (**v1.0.0**) adds the **Kodo MCP Server**: a standards-compliant, strictly **read-only**
+Model Context Protocol surface — stateless Streamable HTTP at `POST /mcp` plus a local
+`python -m app.mcp.stdio_server` bridge — that hands Kodo's Core IR, audit findings, advisory System 1
+answers, in-memory AST diffs and sandbox build results to Cursor, Claude Code and Windsurf. There is no
+apply, rollback, deploy or export tool: every tool returns `readOnlyHint: true`. See
+[§14](#14-mcp-server-phase-15).
+
 ```
 Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root nginx)
-                     │  same-origin: /api/ and /health
+                     │  same-origin: /api/, /mcp and /health
                      ▼
              services/api-python (FastAPI :8088)   ← Core IR, audit, dry-run + scaffold orchestrator,
                      │  HTTP/JSON                    blueprint store, AI Copilot, Deploy Studio,
                      │  HTTPS/JSON (OpenAI-compatible) guarded apply (the only writer),
-                     │                              local-only zero-copy folder browser (Phase 11)
+                     │                              local-only zero-copy folder browser (Phase 11),
+                     │                              read-only MCP server /mcp + stdio (Phase 15)
                      ├──▶ DeepSeek Cloud or local Ollama / vLLM (optional, :11434 / :8000)
                      ├──▶ Docker CLI + daemon (compose up/down/ps/logs, list args, shell=False)
                      ├──▶ GitHub API (pull requests, only when you provide a session token)
@@ -75,6 +83,7 @@ Browser ──▶ :3000  apps/web image (Nginx + static Vite bundle, non-root ng
                                                          (also re-audits generated WPF slices)
 
 Non-Docker dev: Vite :5173 ──HTTP/JSON──▶ FastAPI :8088 ──▶ Roslyn :5050 (the same three processes).
+MCP clients: Cursor / Claude Code ──JSON-RPC 2.0──▶ FastAPI :8088 /mcp (or stdio, same tool registry).
 ```
 
 ---
@@ -856,7 +865,9 @@ docker compose down                                   # add -v to drop the kodo-
 # builder config; no network, Docker daemon or host toolchain), the Phase 13 hardening suite
 # (Alembic fresh + legacy upgrades, storage quotas, clone caps, TTL cleanup, rate limits) and the
 # Phase 14 Mermaid suite (namespace order, relation placement, direction, member detail, route
-# backward compatibility; no disk or network access)
+# backward compatibility; no disk or network access) and the Phase 15 MCP suite (7 read-only tools,
+# no mutating tool, resources, SSE + 405 transport, stdio bridge, SaaS 401/SAAS_PATH_FORBIDDEN/429 and
+# KODO_MCP_ENABLED=false; Laya via httpx.MockTransport and Docker CLI mocked)
 cd services/api-python
 pip install -r requirements-dev.txt
 python -m pytest
@@ -1497,7 +1508,121 @@ workspace must stay clean.
 
 ---
 
-## 14. Repository layout
+## 14. MCP server (Phase 15)
+
+Kodo is a **Model Context Protocol** server for AI coding agents (Cursor, Claude Code, Windsurf). It is
+**strictly read-only**: there is no apply, rollback, deploy or export tool, and each tool advertises
+`readOnlyHint: true` / `destructiveHint: false`. Every change an agent proposes still has to go through
+the diff review and the SHA-256 guarded apply in the UI.
+
+### Two transports, one registry
+
+| Transport | Where | Notes |
+| --- | --- | --- |
+| **Streamable HTTP** | `POST /mcp` on the FastAPI app | Stateless JSON-RPC 2.0 — no `Mcp-Session-Id` is issued, so it works behind Nginx, Caddy and several replicas. Answers plain JSON, or one SSE `event: message` when the client prefers `text/event-stream`. `GET`/`DELETE` answer `405` (no server-initiated stream, no session to terminate). Negotiates `2026-07-28`, `2025-06-18` and `2025-03-26`. |
+| **stdio** | `python -m app.mcp.stdio_server` | Newline-delimited JSON-RPC on stdin/stdout for local, non-Docker editors. Always local-user context; logs go to **stderr only**. Same tool registry, argument validation and containment gates. |
+
+```powershell
+# HTTP (Docker stack): the UI origin proxies /mcp, or hit FastAPI directly
+curl.exe -s http://localhost:8088/mcp `
+  -H "Content-Type: application/json" `
+  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'
+
+# Local stdio bridge (from services/api-python, no Docker needed)
+python -m app.mcp.stdio_server
+```
+
+### MCP setup in Cursor / Claude Code
+
+The **MCP** pill in the top bar opens the setup drawer, which reads `GET /api/v1/mcp/info`, shows the
+live endpoint + read-only tool catalog and copies each snippet below.
+
+**Cursor** — `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "kodo": { "url": "http://localhost:3000/mcp" }
+  }
+}
+```
+
+**Claude Code** (CLI):
+
+```powershell
+claude mcp add --transport http kodo http://localhost:3000/mcp
+```
+
+**Local stdio (non-Docker):**
+
+```json
+{
+  "mcpServers": {
+    "kodo": {
+      "command": "python",
+      "args": ["-m", "app.mcp.stdio_server"],
+      "cwd": "services/api-python"
+    }
+  }
+}
+```
+
+In `KODO_MODE=saas` add `"headers": { "Authorization": "Bearer <YOUR_SESSION_TOKEN>" }` (or
+`--header "Authorization: Bearer <token>"` for Claude Code).
+
+### Tool catalog (all read-only)
+
+| Tool | What it returns |
+| --- | --- |
+| `kodo_scan_workspace` | Compact Core IR: stacks, layer counts, component/relation counts, health score, audit summary, bounded component list, optional layer-grouped `mermaidClassDiagram` (`includeMermaid`, `groupByLayer`, `direction`, `memberDetail`). |
+| `kodo_audit_workspace` | Deterministic Phase 2 `score`, `summary`, `findings`; `includeLayaTriage=true` adds advisory System 1 triage and degrades with `layaAvailable: false` when Laya is offline. |
+| `kodo_get_component` | One component's fields, methods, annotations, file path, its **1-hop** `incoming`/`outgoing` relations and any audit findings referencing it (exact id → exact name → case-insensitive substring). |
+| `kodo_route_task` | Advisory System 1 router: `recommendedRoute`, `blastRadius`, `confidence`, `escalateToSystem2`, `rationale` and the persisted `adrId`. |
+| `kodo_screen_diff` | Advisory pre-diff safety gate: `status` (`pass`/`caution`/`high_risk`), `confidence`, `flags`, `advisoryNote` and its `adrId`. |
+| `kodo_dry_run_patch` | Phase 3b in-memory AST dry-run (java/ts/js/python/csharp, same contract as `POST /api/v1/dry-run`): `filePath`, `summary`, exact `originalSha256`, `proposedContent`, `warnings`. Zero disk writes, no apply token issued. |
+| `kodo_verify_build` | Phase 9 `--network=none` ephemeral builder result: `status`, `stack`, `exitCode`, `durationMs`, parsed `diagnostics`, bounded `output`, `warnings`. The workspace is never mounted. |
+
+Two resources speed up discovery: `kodo://health` (version, mode, Roslyn reachability, builder image
+readiness, System 1 config) and `kodo://stacks` (supported stacks + the audit rule catalog).
+
+Errors are explicit: invalid arguments/unknown methods return JSON-RPC `-32602`/`-32601`; a tool that
+refuses (e.g. a forbidden path) returns `isError: true` with
+`{"error": {"code": "SAAS_PATH_FORBIDDEN", "message": "…"}}` as its text content.
+
+### SaaS posture: auth, sandbox and rate limits
+
+- `KODO_MODE=local` — `/mcp` works with no configuration and is never rate limited.
+- `KODO_MODE=saas` — `/mcp` requires a session cookie or `Authorization: Bearer <session JWT>`
+  (`401 UNAUTHORIZED` otherwise, before routing). Every tool resolves its `rootPath` through
+  `enforce_workspace_access`, so host paths and other tenants' sandboxes are rejected with
+  `SAAS_PATH_FORBIDDEN`.
+- The Phase 13 limiter meters `/mcp` in its own `mcp` bucket (`KODO_RL_MCP_PER_MIN`, default 60) and
+  answers `429 RATE_LIMITED` with `Retry-After` + `X-RateLimit-*`. `Mcp-Method` / `Mcp-Name` request
+  headers are logged for observability.
+
+### Configuration
+
+```powershell
+# .env (docker-compose.yml passes both through to api-python)
+KODO_MCP_ENABLED=true      # false => POST/GET/DELETE /mcp answer 404 MCP_DISABLED
+KODO_RL_MCP_PER_MIN=60     # SaaS-only bucket for /mcp (local mode is never limited)
+```
+
+### Verify it
+
+```powershell
+cd services/api-python
+python -m pytest tests/test_mcp_server.py -q   # 37 hermetic cases: no network, no Docker daemon
+python -m ruff check app tests
+```
+
+Manual pass: open the **MCP** pill, copy the Cursor config into `.cursor/mcp.json`, then ask the agent
+to call `kodo_scan_workspace` on a local repository and `kodo_audit_workspace` on it. `git status` in
+the scanned workspace must stay clean — no MCP tool ever writes there.
+
+---
+
+## 15. Repository layout
 
 ```
 .cursorrules                      Architecture rules (Core IR, layers, guarded writes, generators, Phase 7 Docker)
@@ -1530,6 +1655,11 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   repository.py (tenant-scoped queries)
   app/middleware/                 rate_limit.py (Phase 13 sliding-window limiter ASGI middleware)
   app/services/quota.py           Phase 13 storage accounting, clone caps, TTL cleanup loop
+  app/mcp/                        Phase 15 MCP server: protocol.py (JSON-RPC 2.0 + version
+                                  negotiation), tools.py (7 read-only tools + registry + annotations),
+                                  resources.py (kodo://health, kodo://stacks), server.py (stateless
+                                  dispatcher shared by both transports), http_routes.py (POST /mcp +
+                                  GET /api/v1/mcp/info), stdio_server.py (local bridge, stderr-only logs)
   app/analyzers/                  java.py, typescript.py, python_analyzer.py, python_imports.py,
                                   python_layers.py, scanner.py, common.py
   app/audit/                      engine.py, context.py + rules/ (one file per audit rule)
@@ -1557,6 +1687,7 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   routes.py (/decision/*, /decisions*), models.py (wire contracts)
   app/services/                   csharp_client.py, relations.py, mermaid.py, workspace.py,
                                   git_safety.py (read-only git), apply_service.py (the only writer),
+                                  dry_run.py (Phase 15 shared in-memory dry-run for API + MCP),
                                   scaffold_service.py (blueprint → create-only dry-run),
                                   audit_log.py (append-only JSONL), git_remote.py (clone/export),
                                   github_client.py (pull requests), git_errors.py,
@@ -1574,13 +1705,14 @@ services/api-python/              FastAPI orchestrator, tree-sitter analyzers (p
                                   and the Phase 14 layered Mermaid/export suite (test_mermaid.py)
 apps/web/                         React + TypeScript + Vite + Tailwind UI
   Dockerfile                      node:22-alpine build → nginx-unprivileged runtime (non-root nginx)
-  nginx.conf                      SPA fallback + /api/ and /health reverse proxy to api-python:8088
+  nginx.conf                      SPA fallback + /api/, /mcp and /health reverse proxy to api-python:8088
   src/components/                 MacroGraph, UmlDiagram, CodeInspector, BuilderPanel, SliceEditor,
                                   DeployStudio, DockerControlPanel, GitExportPanel, AuditLogPanel,
                                   NodeDetailsPanel, DiffPreview, DraftToolbar, AuditPanel, HealthScore,
                                   AiSettingsModal, MethodsSection, BuildVerificationPanel,
                                   DecisionsPanel (Phase 10 ADR tab), FolderBrowserModal +
-                                  GraphFilterBar + ProjectStackBadges (Phase 11)
+                                  GraphFilterBar + ProjectStackBadges (Phase 11),
+                                  McpSetupModal (Phase 15 MCP setup drawer)
   src/lib/graphLayout.ts          Phase 14 layered swimlane geometry (fixed bands, wrapping, TB/LR)
   src/lib/diagramExport.ts        Phase 14 SVG/PNG/MMD export helpers (standalone SVG, 2x raster, Blob download)
 ```

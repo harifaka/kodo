@@ -4,7 +4,7 @@
 Visualize, audit, safely edit, verify in a sandbox, and containerize modern multi-stack codebases (Spring Boot, C# WPF/ASP.NET, Node.js, Python/FastAPI) — self-hosted locally with `docker compose up --build` or as a cloud SaaS. Kodo is **Docker-first**: one Nginx + React UI, one FastAPI orchestrator, one Roslyn analyzer image and four optional ephemeral builder images.
 
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
-![Status: Layered Diagrams](https://img.shields.io/badge/Status%20v0.9%20%C2%B7%20Phases%201--14%20delivered-brightgreen.svg)
+![Status: v1.0 MCP Server](https://img.shields.io/badge/Status%20v1.0%20%C2%B7%20Phases%201--15%20delivered-brightgreen.svg)
 ![Deployment: Docker-First](https://img.shields.io/badge/Deployment-Docker--First%20%C2%B7%20Local%20%2B%20SaaS-blue.svg)
 
 ---
@@ -26,6 +26,7 @@ AI-assisted ("vibe") coding makes generating code trivial, but keeping architect
 - **Full Python Stack Support (Phase 12):** Python web apps are a first-class stack end to end. The **Tree-sitter Python** analyzer maps FastAPI `APIRouter`/`FastAPI`, Flask `Blueprint` and Django `APIView`/`views.py` modules onto the Macro Graph as `router` components, plus Pydantic v2 DTOs, SQLAlchemy 2 / Django ORM entities, repositories and services with package-root-aware `import` relations. The deterministic audit recognises Pydantic `Field(...)` validation, Python layer leaks and circular imports; the byte-offset patcher edits attributes and decorators while preserving docstrings and methods; the Builder renders a **FastAPI + Pydantic + SQLAlchemy** vertical slice; Deploy Studio and the pre-warmed `kodo-builder-python` image complete the loop. Verified by scanning Kodo's own `services/api-python`.
 - **Production SaaS Hardening (Phase 13):** the database is now **Alembic-managed** — `alembic upgrade head` runs at startup, legacy `create_all()` databases are stamped at the baseline revision and upgraded in place, and `render_as_batch` keeps SQLite `ALTER TABLE` migrations safe. Tenants get **per-user disk quotas** (`500 MB` default), a **per-repo clone cap** (`200 MB`, oversized clones deleted immediately), a **workspace count cap** and **TTL cleanup** of untouched cloned repos with `workspace_ttl_cleanup` audit events. Expensive endpoints (`/scan`, `/git/clone`, `/git/export`, `/build/verify`, `/ai/*`, `/auth/github/*`) are protected by a **sliding-window rate limiter** returning `429 RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers, and `docker-compose.saas.yml` adds a **Caddy** TLS ingress plus PostgreSQL for one-command VPS deployment ([docs/SAAS_DEPLOYMENT.md](docs/SAAS_DEPLOYMENT.md)). All of it is **off by default in `KODO_MODE=local`**.
 - **Layered Diagrams & Image Export (Phase 14):** diagrams are now presentation-ready artifacts. The Mermaid `classDiagram` groups every component into fixed architectural **namespaces** — `UI`, `Controllers`, `Services`, `Repositories`, `Entities`, `DTOs`, `Other` (the same order, and the same layer/kind mapping, as the Macro Graph and the filter pills) — with deterministic ordering, `TB`/`LR` direction and **Full / Compact / Names Only** member density, while `POST /api/v1/mermaid` stays backward compatible (`{ nodes, relations }` still works). The Macro Graph renders the same bands as **swimlanes** (wide layers wrap into a tidy grid) with an **Auto-Arrange** button and a direction toggle, and both diagrams export in one click to **SVG**, **2× PNG** and raw **`.mmd`** — with a **Dark/Light** background and the active filter / **1-Hop Focus** respected. Export is a pure browser download: **zero new write paths**, nothing ever touches the scanned workspace.
+- **MCP Server for AI Agents (Phase 15):** Kodo's intelligence is now callable from **Cursor, Claude Code and Windsurf** through a standards-compliant **Model Context Protocol** server — stateless Streamable HTTP at `/mcp` (mounted on the same FastAPI app, so it inherits the Phase 8 auth gate and the Phase 13 rate limiter) plus a local `python -m app.mcp.stdio_server` bridge that shares one registry. Seven **strictly read-only** tools (`kodo_scan_workspace`, `kodo_audit_workspace`, `kodo_get_component`, `kodo_route_task`, `kodo_screen_diff`, `kodo_dry_run_patch`, `kodo_verify_build`) and two resources (`kodo://health`, `kodo://stacks`) let an agent read a repository's Core IR, audit findings, Laya routing advice, in-memory AST diffs and sandbox build results **without leaving the editor** — and without ever writing a file: there is no apply, rollback, deploy or export tool, and every tool advertises `readOnlyHint: true` / `destructiveHint: false`.
 
 ---
 
@@ -39,7 +40,7 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
     Web image: Nginx + static React/TypeScript bundle (non-root nginx, :8080)
     React Flow (Macro) | Mermaid (UML) | Monaco (Code/Diff)
             |
-            | same-origin proxy: /api/ and /health
+            | same-origin proxy: /api/, /mcp and /health
             v
     Orchestrator API (Python FastAPI, :8088)
     Core IR | Tree-sitter (Java/TS/JS/Python) | DeepSeek / Ollama (OpenAI-compatible) | Docker
@@ -86,9 +87,24 @@ Kodo is **Docker-first**: one unified container stack serves both local self-hos
       api-python startup: validate config -> `alembic upgrade head` -> seed -> TTL cleanup loop
       Middleware order: auth gate (tenant) -> sliding-window rate limiter -> routes.
 
+    MCP lane (Phase 15, strictly read-only, no write path):
+      Cursor / Claude Code / Windsurf
+        -> POST /mcp (stateless Streamable HTTP JSON-RPC 2.0; JSON or SSE)  [tenant_guard + mcp bucket]
+        |  or `python -m app.mcp.stdio_server` (local editors, stderr-only logs, same registry)
+        v
+      app/mcp: 7 read-only tools + 2 resources, all reusing the existing services
+        kodo_scan_workspace   -> app/services/workspace.py (compact Core IR, optional Mermaid)
+        kodo_audit_workspace  -> app/audit (+ optional Phase 10 triage)
+        kodo_get_component    -> Core IR + 1-hop relations + audit findings
+        kodo_route_task       -> app/decision/route_task (advisory, ADR persisted)
+        kodo_screen_diff      -> app/decision/screen_diff (advisory, ADR persisted)
+        kodo_dry_run_patch    -> app/services/dry_run.py (in-memory AST, originalSha256, zero writes)
+        kodo_verify_build     -> app/builders/runner.py (--network=none ephemeral container)
+      No apply / rollback / deploy / export tool exists: writes stay in the guarded UI pipeline.
+
 ---
 
-## Quick Start (Phases 1–14, local + SaaS)
+## Quick Start (Phases 1–15, local + SaaS)
 
 ```powershell
 # One command: builds and starts web (Nginx) + api-python + analyzer-csharp
@@ -234,18 +250,19 @@ Full instructions, configuration and troubleshooting: [DEV_SETUP.md](DEV_SETUP.m
 
 ---
 
-## Delivered Roadmap (v0.1.0 MVP + Phases 7–14)
+## Delivered Roadmap (v0.1.0 MVP + Phases 7–15)
 
 **Phases 1–6 are the v0.1.0 MVP, Phase 7 is the Docker-first delivery, Phase 8 is the SaaS foundation
 (v0.3.0), Phase 9 is the sandbox-verified build loop (v0.4.0), Phase 10 is the advisory System 1
 decision layer (v0.5.0), Phase 11 is the local UX / large-repo ergonomics pass (v0.6.0), Phase 12 is
-the full Python stack (v0.7.0), Phase 13 is production SaaS hardening (v0.8.0) and Phase 14 is
-structured layered diagrams with image export (v0.9.0)** — Kodo now covers
+the full Python stack (v0.7.0), Phase 13 is production SaaS hardening (v0.8.0), Phase 14 is
+structured layered diagrams with image export (v0.9.0) and Phase 15 is the read-only MCP server for AI
+coding agents (v1.0.0)** — Kodo now covers
 the full **Blueprint → Audit → Safe Edit → Sandbox Verify → Deploy** loop for Java, C#, Node.js
 **and Python**, plus a **System 1 → System 2** AI decision path, ships as one container stack for both
 local self-hosting and multi-tenant SaaS, can browse your real folders in place from either runtime,
-runs a hardened multi-tenant service behind automatic HTTPS, and produces shareable layered
-architecture diagrams.
+runs a hardened multi-tenant service behind automatic HTTPS, produces shareable layered
+architecture diagrams, and hands all of it to an AI agent over MCP — with zero write access.
 
 ### Phase 1: Vibe-Code X-Ray (Read-Only Visualizer) - Delivered
 - Stack-agnostic **Core IR** schema (Pydantic + TypeScript + C#).
@@ -489,28 +506,105 @@ architecture diagrams.
 
 ---
 
-## Roadmap Complete (Phases 1–14 delivered)
+### Phase 15: Kodo MCP Server (Model Context Protocol for AI Coding Agents) - Delivered (v1.0.0)
+- **Stateless Streamable HTTP + stdio.** `app/mcp/` implements JSON-RPC 2.0 with the MCP method set
+  (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`,
+  `resources/read`) and negotiates `2026-07-28`, `2025-06-18` and `2025-03-26`. `POST /mcp` answers
+  plain JSON or a single SSE `event: message` when the client prefers `text/event-stream`;
+  `GET`/`DELETE` answer `405` because there is no server-initiated stream and no session to
+  terminate — so no sticky state is needed behind Nginx or Caddy. `python -m app.mcp.stdio_server`
+  reuses the exact same registry for local, non-Docker editors and logs to **stderr only**.
+- **Seven read-only tools**, each reusing the existing service (no duplicated business logic) and
+  advertising `readOnlyHint: true` / `destructiveHint: false`: `kodo_scan_workspace` (compact Core IR
+  + optional layer-grouped Mermaid), `kodo_audit_workspace` (deterministic findings + optional Laya
+  triage), `kodo_get_component` (fields/methods/annotations + 1-hop neighbourhood),
+  `kodo_route_task` and `kodo_screen_diff` (Phase 10 advisory System 1, ADR persisted),
+  `kodo_dry_run_patch` (Phase 3b in-memory AST dry-run with `originalSha256`, zero writes) and
+  `kodo_verify_build` (Phase 9 `--network=none` sandbox). Two resources: `kodo://health` and
+  `kodo://stacks`.
+- **Same security model as the API.** `/mcp` passes through `tenant_guard` (session or
+  `Authorization: Bearer` required in `KODO_MODE=saas`, `401 UNAUTHORIZED` otherwise), every tool
+  resolves its `rootPath` through `enforce_workspace_access` (host and foreign-tenant paths rejected
+  with `SAAS_PATH_FORBIDDEN`) and the Phase 13 limiter meters it in its own `mcp` bucket
+  (`KODO_RL_MCP_PER_MIN`, default 60 → `429 RATE_LIMITED`). `KODO_MCP_ENABLED=false` answers
+  `404 MCP_DISABLED`; local mode needs no configuration and is never rate limited.
+- **Frontend.** A **MCP** pill in the top bar opens the setup drawer, which reads
+  `GET /api/v1/mcp/info`, shows the live endpoint/tool catalog and copies ready-to-paste configs for
+  Cursor (`.cursor/mcp.json`), Claude Code (`claude mcp add --transport http kodo <origin>/mcp`) and
+  the local stdio bridge — plus the `Authorization` header placeholder and the workspace-sandbox note
+  in SaaS mode. The DeepSeek Cloud preset also suggests **DeepSeek V4.1 Flash** (`deepseek-flash`)
+  next to `deepseek-chat` and `deepseek-reasoner`.
+- **Evidence:** `tests/test_mcp_server.py` (**37 hermetic cases**) — handshake across all three
+  protocol versions, the seven read-only tools and the absence of any mutating tool, every
+  `tools/call`, resources, SSE + `405` handling, error envelopes, the stdio bridge, mocked Laya
+  triage/routing/screening with persisted ADRs, a mocked-Docker sandbox build, SaaS `401`,
+  `SAAS_PATH_FORBIDDEN`, `429 RATE_LIMITED` and `404 MCP_DISABLED`. `pytest` **340 passed /
+  5 skipped**, `ruff check app tests`, `npm run build`, `dotnet build services/analyzer-csharp
+  --configuration Release` and every `docker compose config` variant are green.
 
-All fourteen phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
+---
+
+## Roadmap Complete (Phases 1–15 delivered — v1.0.0)
+
+All fifteen phases are shipped: the original X-Ray visualizer, deterministic audit, guarded
 AST edit/apply/rollback, multi-stack builder, DeepSeek Copilot, Deploy Studio, Docker-first packaging,
 SaaS foundation, ephemeral builders, the Laya System 1 decision layer, the local dual-mode folder
 browser with large-repo graph ergonomics, full Python stack support (FastAPI / Django / Flask),
-production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment) and structured
-layered diagrams with SVG/PNG/MMD export.
+production SaaS hardening (Alembic, quotas, TTL cleanup, rate limiting, TLS deployment), structured
+layered diagrams with SVG/PNG/MMD export, and the read-only MCP server for AI coding agents.
 Full detail and DoD evidence: [ROADMAP.md](ROADMAP.md).
 
-## What's Next (v1.0 Roadmap: Phase 15)
+## MCP Server (v1.0.0) — connect Cursor / Claude Code
 
-The next evolution track is **planned, not shipped** — it is recorded in [ROADMAP.md](ROADMAP.md) with
-unchecked sub-tasks and a Definition of Done, and nothing from it is available in this release.
-**Phases 1–14 (v0.9.0) remain the active delivered contract.**
+Kodo exposes a **strictly read-only** MCP server at `/mcp`. Any file change still has to go through
+the diff review and the SHA-256 guarded apply in the UI — no MCP tool can apply, roll back, deploy or
+export anything. Click the **MCP** pill in the top bar for live status and copy-paste configs.
+
+**Cursor** — `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "kodo": { "url": "http://localhost:3000/mcp" }
+  }
+}
+```
+
+**Claude Code** (CLI):
+
+```powershell
+claude mcp add --transport http kodo http://localhost:3000/mcp
+```
+
+**Local stdio (no Docker):**
+
+```powershell
+cd services/api-python
+python -m app.mcp.stdio_server
+```
+
+```json
+{
+  "mcpServers": {
+    "kodo": {
+      "command": "python",
+      "args": ["-m", "app.mcp.stdio_server"],
+      "cwd": "services/api-python"
+    }
+  }
+}
+```
+
+In `KODO_MODE=saas` add `"headers": { "Authorization": "Bearer <YOUR_SESSION_TOKEN>" }` (or
+`--header` for Claude Code): every call is sandboxed to the authenticated user's workspaces, and
+tool calls are metered by `KODO_RL_MCP_PER_MIN`. Set `KODO_MCP_ENABLED=false` to remove the surface
+entirely (`/mcp` then answers `404 MCP_DISABLED`).
 
 | Phase | Track | What it adds | Status |
 | --- | --- | --- | --- |
-| **15** | Kodo MCP Server | A standards-compliant **MCP Server** (Streamable HTTP `/mcp` in FastAPI plus an optional local `stdio` bridge) exposing read-only, zero-write tools — `kodo_scan_workspace`, `kodo_audit_workspace`, `kodo_get_component`, `kodo_route_task`, `kodo_screen_diff`, `kodo_dry_run_patch`, `kodo_verify_build` — behind the Phase 8 auth model and Phase 13 rate limits, with copy-paste Cursor / Claude Code setup snippets in the UI and `DEV_SETUP.md`. | 📋 Planned |
+| **1–15** | Kodo v1.0.0 | X-Ray → Audit → Guarded Edit/Apply/Rollback → Multi-Stack Builder → DeepSeek Copilot → Deploy Studio → Docker-first CI/CD → SaaS Foundation → Ephemeral Builders → Laya System 1 → Local UX → Full Python Stack → SaaS Hardening → Layered Diagrams/Export → **read-only MCP Server** | ✅ Delivered |
 
-Full scope, sub-tasks and the Definition of Done:
-[ROADMAP.md → Next Evolution (v1.0)](ROADMAP.md#next-evolution-v10--kodo-mcp-server).
+Full scope and DoD evidence: [ROADMAP.md](ROADMAP.md) (Phase 15 — Kodo MCP Server).
 
 ## License
 

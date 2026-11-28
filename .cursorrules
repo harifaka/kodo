@@ -51,17 +51,15 @@ apps/web  ──HTTP/JSON──▶  services/api-python  ──HTTP/JSON──�
   active** — rules live in §3m.
 - **Phase 14 (structured layered UML/Graph layout + SVG/PNG/MMD diagram export) is active** — rules
   live in §3n.
-- **Phases 1–14 (v0.9.0) are the active delivered contract.** Everything below them is binding:
+- **Phase 15 (Kodo MCP Server, v1.0.0) is active** — rules live in §3o. `/mcp` is a stateless,
+  strictly read-only Streamable HTTP JSON-RPC surface plus a local `stdio` bridge, mounted behind the
+  Phase 8 auth gate and the Phase 13 `mcp` rate-limit bucket. It **extends** — never bypasses — the §3
+  write policy, §3h auth/sandbox containment, §3j advisory System 1 rules, §3i sandbox containment and
+  §3n read-only diagram rules.
+- **Phases 1–15 (v1.0.0) are the active delivered contract.** Everything below them is binding:
   do not regress the Core IR, the guarded apply, the sandbox verifier, the advisory System 1 lane,
-  the local-only folder browser, the Python stack, the SaaS migrations/quotas/rate limits or the
-  layered diagrams/export. The v0.6+ roadmap (Phases 11–13) is **complete**.
-- **Phase 15 (v1.0 — Kodo MCP Server) is planned only — not active for implementation.** The MCP
-  Server is recorded in [ROADMAP.md](ROADMAP.md) as the next evolution track. Its unchecked sub-tasks
-  and Definition of Done are **design intent, not a contract**: do not scaffold `/mcp` endpoints or MCP
-  tools, a `stdio` bridge or any dependency for them until a future session explicitly activates the
-  phase (update §2 here and mark the roadmap task in progress at that point). When activated it must
-  **extend** — never bypass — the §3 write policy and guarded apply, §3h auth and sandbox containment,
-  §3j advisory System 1 rules, §3m SaaS guards/rate limits and §3n read-only diagram rules.
+  the local-only folder browser, the Python stack, the SaaS migrations/quotas/rate limits, the
+  layered diagrams/export or the read-only MCP tools. **The roadmap is complete at v1.0.0.**
 
 ## 3. Write policy (hard rule)
 
@@ -108,6 +106,8 @@ Allowed:
   cloning/exporting through `app/services/git_remote.py` (§3f).
 - Streaming an **in-memory** tar snapshot into a disposable, non-root, network-isolated builder
   container through `app/builders/runner.py` (§3i) — the workspace is never mounted or written.
+- Serving the **read-only** MCP surface (`app/mcp/`, §3o) — every tool only reads, patches in memory,
+  screens advisorily or verifies in a sandbox, and reuses the services above.
 - Serving cached in-memory analysis results and rollback snapshots to the UI.
 
 ## 3a. Audit engine rules
@@ -546,6 +546,48 @@ Allowed:
   relation placement/declaration uniqueness, direction, flat mode, member detail and route backward
   compatibility without any disk or network access.
 
+## 3o. MCP server rules (Phase 15 — active)
+
+- **Zero write paths over MCP. This is non-negotiable.** No MCP tool may write, apply, roll back,
+  deploy, clone, export, scaffold or delete anything — not to a workspace, a sandbox, Git or a remote.
+  A tool that mutates user source code must never exist on the MCP surface (`app/mcp/tools.py`).
+  Mutations still flow exclusively through the §3c guarded apply in the UI.
+- **Annotations are part of the contract.** Every tool advertises `readOnlyHint: true`,
+  `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` through
+  `app/mcp/tools.py::tool_annotations`. Adding a tool without those annotations, or adding any name
+  containing `apply` / `rollback` / `deploy` / `export` / `write` / `delete` / `scaffold` / `clone`,
+  is a regression that `tests/test_mcp_server.py` must fail on.
+- **One registry, two transports.** `kodo_scan_workspace`, `kodo_audit_workspace`, `kodo_get_component`,
+  `kodo_route_task`, `kodo_screen_diff`, `kodo_dry_run_patch` and `kodo_verify_build` are declared once
+  in `app/mcp/tools.py`. The HTTP route (`app/mcp/http_routes.py`) and the stdio bridge
+  (`app/mcp/stdio_server.py`) must both call `app/mcp/server.py::McpServer`; never fork argument
+  validation or tool behaviour per transport.
+- **Reuse services, never duplicate business logic.** MCP tools call the same code as the HTTP API:
+  `app/services/workspace.py`, `app/audit/`, `app/decision/service.py`, `app/services/dry_run.py`
+  (shared with `POST /api/v1/dry-run`) and `app/builders/runner.py`. Do not re-implement scanning,
+  auditing, patching, the protected-path checks or container hardening inside `app/mcp/`.
+- **Tenant isolation is mandatory.** Every tool resolves its `rootPath` through
+  `app/services/paths.py::enforce_workspace_access` **before** touching the filesystem, so a SaaS caller
+  can never read a host path or another tenant's sandbox (`SAAS_PATH_FORBIDDEN`). Rejections surface as
+  `isError: true` tool content with a machine-readable `error.code`; they are never silently swallowed
+  and never become a protocol-level crash.
+- **Auth and rate limits are shared with the API.** `/mcp` must pass through the same
+  `tenant_guard` middleware as `/api/v1` (session or `Authorization: Bearer` in `KODO_MODE=saas`,
+  `401 UNAUTHORIZED` otherwise) and the Phase 13 `SlidingWindowRateLimiter` `mcp` bucket
+  (`KODO_RL_MCP_PER_MIN` → `429 RATE_LIMITED`). `KODO_MCP_ENABLED=false` must answer
+  `404 MCP_DISABLED` without leaking the tool catalog.
+- **Stateless Streamable HTTP only.** Do not introduce server-side session state or an
+  `Mcp-Session-Id` handshake: `/mcp` must stay answerable by any replica. Support
+  `2026-07-28` / `2025-06-18` / `2025-03-26`, answer notifications with `202` and no body, and keep
+  `GET`/`DELETE` at `405`.
+- **stdio stdout is a protocol channel.** `app/mcp/stdio_server.py` writes JSON-RPC to stdout and
+  **nothing else** — every log line, warning and traceback goes to stderr.
+- **Compact, bounded payloads.** Cap component/finding lists, clip messages and bound build output
+  (`output`, `diagnostics`) so an agent never receives a multi-megabyte dump.
+- **Deterministic tests.** `tests/test_mcp_server.py` must stay hermetic: Laya through
+  `httpx.MockTransport`, Docker through the builder runner seams, temporary SQLite/sandboxes only — no
+  live network, no Docker daemon and no workspace writes.
+
 ## 4. Filesystem safety
 
 - Every path coming from the client is untrusted. Resolve it, then verify it is inside the requested root
@@ -665,3 +707,14 @@ Allowed:
   workspace file mtime must stay unchanged (export is a browser download, never a write path).
   Press **Auto-Arrange** after dragging nodes and confirm the layered layout returns with a smooth
   `fitView` while filters, selection and draft edits survive.
+- For MCP changes: `pytest services/api-python/tests/test_mcp_server.py` must stay green with **no
+  network and no Docker daemon** (Laya via `httpx.MockTransport`, the builder through its runner
+  seams). Confirm `tools/list` returns exactly the seven read-only tools, every one carries
+  `readOnlyHint: true` / `destructiveHint: false`, and no apply/rollback/deploy/export tool exists. In
+  `KODO_MODE=saas` verify `POST /mcp` without a token answers `401`, a host or foreign-tenant
+  `rootPath` answers `SAAS_PATH_FORBIDDEN`, and `KODO_RL_MCP_PER_MIN` produces `429 RATE_LIMITED` with
+  `Retry-After`; with `KODO_MCP_ENABLED=false` `POST`/`GET`/`DELETE /mcp` answer `404 MCP_DISABLED`.
+  Connect Cursor or Claude Code to `/mcp` (or the stdio bridge), run `kodo_scan_workspace` +
+  `kodo_audit_workspace`, then confirm every workspace file mtime and `git status` are unchanged —
+  MCP is strictly read-only. `GET /api/v1/mcp/info` and the **MCP** drawer must mirror the same
+  catalog.
